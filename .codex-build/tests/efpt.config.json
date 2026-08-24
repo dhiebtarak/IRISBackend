@@ -1,0 +1,174 @@
+﻿{
+   "CodeGenerationMode": 4,
+   "ContextClassName": "IRISBackendContext",
+   "ContextNamespace": null,
+   "FilterSchemas": false,
+   "IncludeConnectionString": false,
+   "IrregularWords": null,
+   "MinimumProductVersion": "2.6.1604",
+   "ModelNamespace": null,
+   "OutputContextPath": null,
+   "OutputPath": "Models",
+   "PluralRules": null,
+   "PreserveCasingWithRegex": true,
+   "ProjectRootNamespace": "IRISBackend",
+   "Schemas": null,
+   "SelectedHandlebarsLanguage": 2,
+   "SelectedToBeGenerated": 0,
+   "SingularRules": null,
+   "T4TemplatePath": null,
+   "Tables": [
+      {
+         "Name": "[dbo].[AspNetRoleClaims]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[AspNetRoles]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[AspNetUserClaims]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[AspNetUserLogins]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[AspNetUserRoles]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[AspNetUsers]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[AspNetUserTokens]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[BANK_RECEIPT]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[CLAIM]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[COLLECTION_NOTE]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[CONTRACT]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[CONTRACT_FAC]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[CONTRACT_PANEL]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[CONTRACT_SUB_RISK]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[CONTRACT_TREATY_NONPROP]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[CONTRACT_TREATY_PROP]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[CONTRACT_TREATY_PROP_QUOTA_SHARE]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[CONTRACT_TREATY_PROP_SURPLUS]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[Counterparties]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[COUNTERPARTY_BANK_ACCOUNT]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[CURRENCY]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[DISBURSEMENT]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[DOCUMENT_ATTACHMENT]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[ENDORSEMENT]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[INVOICE]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[PREMIUM_REF]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[RECEIPT_ALLOCATION]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[REMITTANCE_REF]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[RISK_NATURE]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[SUB_RISK]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[UserLoginAudits]",
+         "ObjectType": 0
+      }
+   ],
+   "UiHint": null,
+   "UncountableWords": null,
+   "UseAsyncStoredProcedureCalls": true,
+   "UseBoolPropertiesWithoutDefaultSql": false,
+   "UseDatabaseNames": false,
+   "UseDatabaseNamesForRoutines": true,
+   "UseDateOnlyTimeOnly": true,
+   "UseDbContextSplitting": false,
+   "UseDecimalDataAnnotationForSprocResult": true,
+   "UseFluentApiOnly": true,
+   "UseHandleBars": false,
+   "UseHierarchyId": false,
+   "UseInflector": true,
+   "UseInternalAccessModifiersForSprocsAndFunctions": false,
+   "UseLegacyPluralizer": false,
+   "UseManyToManyEntity": false,
+   "UseNoDefaultConstructor": false,
+   "UseNoNavigations": false,
+   "UseNoObjectFilter": false,
+   "UseNodaTime": false,
+   "UseNullableReferences": false,
+   "UsePrefixNavigationNaming": false,
+   "UseSchemaFolders": false,
+   "UseSchemaNamespaces": false,
+   "UseSpatial": false,
+   "UseT4": false,
+   "UseT4Split": false,
+   "UseTypedTvpParameters": true
+}

@@ -4,6 +4,7 @@ using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using SecurityClaim = System.Security.Claims.Claim;
 
 namespace IRISBackend.Services
 {
@@ -32,7 +33,7 @@ namespace IRISBackend.Services
                 throw new InvalidOperationException("JWT settings are not configured.");
             }
 
-            var claims = new List<Claim>
+            var claims = new List<SecurityClaim>
             {
                 new(JwtRegisteredClaimNames.Sub, user.Id),
                 new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
@@ -45,7 +46,7 @@ namespace IRISBackend.Services
             };
 
             var roles = await _userManager.GetRolesAsync(user);
-            claims.AddRange(roles.Select(role => new Claim(ClaimTypes.Role, role)));
+            claims.AddRange(roles.Select(role => new SecurityClaim(ClaimTypes.Role, role)));
 
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(signingKey));
             var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);

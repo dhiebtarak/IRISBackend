@@ -1,16 +1,18 @@
-using IRISBackend.Data;
 using IRISBackend.Models;
+using IRISBackend.Repositories;
 
 namespace IRISBackend.Services
 {
     public class LoginAuditService : ILoginAuditService
     {
-        private readonly AppDbContext _dbContext;
+        private readonly ILoginAuditRepository _loginAuditRepository;
         private readonly IHttpContextAccessor _httpContextAccessor;
 
-        public LoginAuditService(AppDbContext dbContext, IHttpContextAccessor httpContextAccessor)
+        public LoginAuditService(
+            ILoginAuditRepository loginAuditRepository,
+            IHttpContextAccessor httpContextAccessor)
         {
-            _dbContext = dbContext;
+            _loginAuditRepository = loginAuditRepository;
             _httpContextAccessor = httpContextAccessor;
         }
 
@@ -18,7 +20,7 @@ namespace IRISBackend.Services
         {
             var httpContext = _httpContextAccessor.HttpContext;
 
-            _dbContext.UserLoginAudits.Add(new UserLoginAudit
+            await _loginAuditRepository.AddAsync(new UserLoginAudit
             {
                 UserId = userId,
                 EmailOrUsername = emailOrUsername,
@@ -29,7 +31,7 @@ namespace IRISBackend.Services
                 CreatedAtUtc = DateTime.UtcNow
             });
 
-            await _dbContext.SaveChangesAsync();
+            await _loginAuditRepository.SaveChangesAsync();
         }
     }
 }

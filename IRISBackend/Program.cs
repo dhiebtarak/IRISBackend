@@ -1,16 +1,25 @@
-using IRISBackend.Data;
 using IRISBackend.DTOs;
 using IRISBackend.Middleware;
 using IRISBackend.Models;
+using IRISBackend.Repositories;
 using IRISBackend.Services;
+using IRISBackend.Validators;
+using FluentValidation;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi;
+using Microsoft.Extensions.Logging;
 using System.Text;
+using System.Reflection;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+builder.Logging.AddDebug();
 
 builder.Services.AddControllersWithViews()
     .ConfigureApiBehaviorOptions(options =>
@@ -31,9 +40,38 @@ builder.Services.AddControllersWithViews()
     });
 
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+        Name = "Authorization",
+        In = ParameterLocation.Header,
+        Description = "Enter the JWT token returned by /api/auth/login. Swagger will send it as: Authorization: Bearer {token}"
+    });
 
-builder.Services.AddDbContext<AppDbContext>(options =>
+    options.AddSecurityRequirement(document => new OpenApiSecurityRequirement
+    {
+        [new OpenApiSecuritySchemeReference("Bearer", document, null)] = []
+    });
+
+    var xmlFile = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
+    var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+    if (File.Exists(xmlPath))
+    {
+        options.IncludeXmlComments(xmlPath, includeControllerXmlComments: true);
+    }
+});
+builder.Services.AddAutoMapper(_ => { }, typeof(Program).Assembly);
+builder.Services.AddValidatorsFromAssemblyContaining<CounterpartyCreateDtoValidator>();
+builder.Services.Configure<CounterpartyAttachmentStorageOptions>(
+    builder.Configuration.GetSection(CounterpartyAttachmentStorageOptions.SectionName));
+
+builder.Services.AddDbContext<IRISBackendContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DevDB")));
+builder.Services.AddDbContext<AppIdentityContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DevDB")));
 
 builder.Services
@@ -44,7 +82,7 @@ builder.Services
         options.Password.RequireLowercase = false;
         options.User.RequireUniqueEmail = true;
     })
-    .AddEntityFrameworkStores<AppDbContext>()
+    .AddEntityFrameworkStores<AppIdentityContext>()
     .AddDefaultTokenProviders();
 
 var jwtIssuer = builder.Configuration["Jwt:Issuer"];
@@ -84,6 +122,15 @@ builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IWorkspaceAccessService, WorkspaceAccessService>();
 builder.Services.AddScoped<ILoginAuditService, LoginAuditService>();
+builder.Services.AddScoped<ICounterpartyService, CounterpartyService>();
+builder.Services.AddScoped<ICounterpartyAttachmentStorageService, CounterpartyAttachmentStorageService>();
+builder.Services.AddScoped<IReferenceDataService, ReferenceDataService>();
+builder.Services.AddScoped<IFacultativeContractService, FacultativeContractService>();
+builder.Services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
+builder.Services.AddScoped<ILoginAuditRepository, LoginAuditRepository>();
+builder.Services.AddScoped<ICounterpartyRepository, CounterpartyRepository>();
+builder.Services.AddScoped<IReferenceDataRepository, ReferenceDataRepository>();
+builder.Services.AddScoped<IContractRepository, ContractRepository>();
 builder.Services.AddHttpContextAccessor();
 
 builder.Services.AddCors(options =>
@@ -98,8 +145,6 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-await IdentityRoleSeeder.SeedAsync(app.Services);
-
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseMiddleware<RequestLoggingMiddleware>();
 
@@ -111,9 +156,8 @@ if (app.Environment.IsDevelopment())
 else
 {
     app.UseHsts();
+    app.UseHttpsRedirection();
 }
-
-app.UseHttpsRedirection();
 app.UseStaticFiles();
 
 app.UseRouting();
