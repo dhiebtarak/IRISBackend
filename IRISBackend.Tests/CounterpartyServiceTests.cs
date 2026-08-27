@@ -378,9 +378,21 @@ namespace IRISBackend.Tests
                     (!excludedId.HasValue || counterparty.Id != excludedId.Value)));
             }
 
-            public Task<(IEnumerable<Counterparty> Items, int TotalCount)> ListAsync(CounterpartyQueryDto query, CancellationToken cancellationToken = default)
+            public Task<(IReadOnlyList<CounterpartyListItemDto> Items, int TotalCount)> ListAsync(CounterpartyQueryDto query, CancellationToken cancellationToken = default)
             {
-                IEnumerable<Counterparty> items = Items;
+                IReadOnlyList<CounterpartyListItemDto> items = Items.Select(counterparty => new CounterpartyListItemDto
+                {
+                    Id = counterparty.Id,
+                    LegacyClientId = counterparty.LegacyClientId,
+                    LegacyCompanyCode = counterparty.LegacyCompanyCode,
+                    Name = counterparty.Name,
+                    Type = counterparty.Type,
+                    Email = counterparty.Email,
+                    Country = counterparty.Country,
+                    City = counterparty.City,
+                    Status = counterparty.Status,
+                    IsActive = counterparty.IsActive
+                }).ToList();
                 return Task.FromResult((items, Items.Count));
             }
         }

@@ -39,7 +39,7 @@ namespace IRISBackend.Services
                 return MapFailure(currentUserResult);
             }
 
-            if (!IsFrontOfficer(currentUserResult.Value!))
+            if (!FrontOfficerAccessRules.IsFrontOfficer(currentUserResult.Value!))
             {
                 return Forbidden("Only Front Officers can create facultative contract drafts.");
             }
@@ -115,7 +115,7 @@ namespace IRISBackend.Services
                 return MapFailure(currentUserResult);
             }
 
-            if (!IsFrontOfficer(currentUserResult.Value!))
+            if (!FrontOfficerAccessRules.IsFrontOfficer(currentUserResult.Value!))
             {
                 return Forbidden("Only Front Officers can update facultative contract drafts.");
             }
@@ -299,13 +299,6 @@ namespace IRISBackend.Services
                 userResult.Error?.Message ?? "Unable to resolve the current user.",
                 userResult.Error?.Errors,
                 userResult.StatusCode);
-        }
-
-        private static bool IsFrontOfficer(UserProfileResponseDto user)
-        {
-            return user.Roles.Contains(IdentityRoles.Employee, StringComparer.OrdinalIgnoreCase) &&
-                   string.Equals(user.Department, ContractConstants.FrontOfficerDepartment, StringComparison.OrdinalIgnoreCase) &&
-                   string.Equals(user.Position, ContractConstants.FrontOfficerPosition, StringComparison.OrdinalIgnoreCase);
         }
 
         private static decimal? CalculateNetPremium(decimal? grossPremium, decimal? cedentCommissionPct)

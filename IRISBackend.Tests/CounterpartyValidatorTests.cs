@@ -119,7 +119,7 @@ namespace IRISBackend.Tests
 
             Assert.False(result.IsValid);
             Assert.Contains(result.Errors, error => error.PropertyName == nameof(CounterpartyQueryDto.PageSize));
-            Assert.Contains(result.Errors, error => error.ErrorMessage == "pageSize must be between 1 and 50.");
+            Assert.Contains(result.Errors, error => error.ErrorMessage == "pageSize must be between 1 and 100.");
         }
 
         [Fact]

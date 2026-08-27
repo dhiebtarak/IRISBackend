@@ -516,6 +516,21 @@ namespace IRISBackend.Tests
                 return Task.FromResult<Contract?>(materialized);
             }
 
+            public Task<(IReadOnlyList<ContractListItemDto> Items, int TotalCount)> ListAsync(
+                ContractListQueryDto query,
+                string userId,
+                CancellationToken cancellationToken = default)
+            {
+                return Task.FromResult(((IReadOnlyList<ContractListItemDto>)Array.Empty<ContractListItemDto>(), 0));
+            }
+
+            public Task<ContractDashboardData> GetDashboardDataAsync(
+                string userId,
+                CancellationToken cancellationToken = default)
+            {
+                return Task.FromResult(new ContractDashboardData());
+            }
+
             public RepositorySnapshot CaptureSnapshot()
             {
                 return new RepositorySnapshot(

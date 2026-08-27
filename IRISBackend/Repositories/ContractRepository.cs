@@ -1,4 +1,5 @@
 using IRISBackend.Models;
+using IRISBackend.DTOs;
 using IRISBackend.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -70,6 +71,61 @@ namespace IRISBackend.Repositories
             }
 
             return query.SingleOrDefaultAsync(cancellationToken);
+        }
+
+        public async Task<(IReadOnlyList<ContractListItemDto> Items, int TotalCount)> ListAsync(
+            ContractListQueryDto query,
+            string userId,
+            CancellationToken cancellationToken = default)
+        {
+            var contracts = AccessibleContracts(userId);
+            var filteredContracts = ContractQueryBuilder.ApplyFilters(contracts, query);
+            var totalCount = await filteredContracts.CountAsync(cancellationToken);
+            var projectedContracts = ContractQueryBuilder.ProjectListItems(filteredContracts);
+            var items = await ContractQueryBuilder.ApplySorting(projectedContracts, query)
+                .Skip((query.PageNumber - 1) * query.PageSize)
+                .Take(query.PageSize)
+                .ToListAsync(cancellationToken);
+
+            return (items, totalCount);
+        }
+
+        public async Task<ContractDashboardData> GetDashboardDataAsync(
+            string userId,
+            CancellationToken cancellationToken = default)
+        {
+            var contracts = AccessibleContracts(userId);
+            var totalContracts = await contracts.CountAsync(cancellationToken);
+            var actionRequiredContracts = await contracts.CountAsync(contract => contract.Flag, cancellationToken);
+            var statusCounts = await contracts
+                .GroupBy(contract => contract.Status)
+                .Select(group => new ContractStatusCount
+                {
+                    Status = group.Key,
+                    Count = group.Count()
+                })
+                .OrderBy(item => item.Status)
+                .ToListAsync(cancellationToken);
+
+            var recentContracts = await ContractQueryBuilder.ProjectRecentContracts(
+                    contracts.OrderByDescending(contract => contract.UpdatedAt ?? contract.CreatedAt))
+                .Take(5)
+                .ToListAsync(cancellationToken);
+
+            return new ContractDashboardData
+            {
+                TotalContracts = totalContracts,
+                ActionRequiredContracts = actionRequiredContracts,
+                StatusCounts = statusCounts,
+                RecentContracts = recentContracts
+            };
+        }
+
+        private IQueryable<Contract> AccessibleContracts(string userId)
+        {
+            return _dbContext.Contracts
+                .AsNoTracking()
+                .Where(contract => contract.IsCurrent && contract.IdUser == userId);
         }
     }
 }

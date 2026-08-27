@@ -36,43 +36,18 @@ namespace IRISBackend.Repositories
                     cancellationToken);
         }
 
-        public async Task<(IEnumerable<Counterparty> Items, int TotalCount)> ListAsync(CounterpartyQueryDto query, CancellationToken cancellationToken = default)
+        public async Task<(IReadOnlyList<CounterpartyListItemDto> Items, int TotalCount)> ListAsync(CounterpartyQueryDto query, CancellationToken cancellationToken = default)
         {
             var pageNumber = Math.Max(query.PageNumber, 1);
             var pageSize = Math.Clamp(query.PageSize, 1, 100);
 
-            var counterparties = _dbContext.Counterparties.AsNoTracking();
-
-            if (!string.IsNullOrWhiteSpace(query.Search))
-            {
-                var search = query.Search.Trim();
-                counterparties = counterparties.Where(counterparty =>
-                    (counterparty.LegacyClientId.HasValue && counterparty.LegacyClientId.Value.ToString().Contains(search)) ||
-                    (counterparty.LegacyCompanyCode != null && counterparty.LegacyCompanyCode.Contains(search)) ||
-                    counterparty.Name.Contains(search) ||
-                    (counterparty.Email != null && counterparty.Email.Contains(search)));
-            }
-
-            if (!string.IsNullOrWhiteSpace(query.Type))
-            {
-                var type = query.Type.Trim();
-                counterparties = counterparties.Where(counterparty => counterparty.Type == type);
-            }
-
-            if (query.IsActive.HasValue)
-            {
-                counterparties = counterparties.Where(counterparty => counterparty.IsActive == query.IsActive.Value);
-            }
-
-            if (!string.IsNullOrWhiteSpace(query.Status))
-            {
-                var status = query.Status.Trim();
-                counterparties = counterparties.Where(counterparty => counterparty.Status == status);
-            }
+            var counterparties = CounterpartyQueryBuilder.ApplyFilters(
+                _dbContext.Counterparties.AsNoTracking(),
+                query);
 
             var totalCount = await counterparties.CountAsync(cancellationToken);
-            var items = await counterparties
-                .OrderBy(counterparty => counterparty.Name)
+            var sortedCounterparties = CounterpartyQueryBuilder.ApplySorting(counterparties, query);
+            var items = await CounterpartyQueryBuilder.ProjectListItems(sortedCounterparties)
                 .Skip((pageNumber - 1) * pageSize)
                 .Take(pageSize)
                 .ToListAsync(cancellationToken);

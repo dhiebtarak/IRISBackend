@@ -54,6 +54,10 @@ namespace IRISBackend.Controllers
             return FromServiceResult(result);
         }
 
+        /// <summary>Returns a filtered and paginated Counterparty list.</summary>
+        /// <remarks>
+        /// Example: GET /api/counterparties?search=axa&amp;type=Cedent&amp;status=Active&amp;country=Tunisie&amp;city=Tunis&amp;pageNumber=1&amp;pageSize=25&amp;sortBy=name&amp;sortDirection=asc
+        /// </remarks>
         [HttpGet]
         [ProducesResponseType(typeof(PagedResponseDto<CounterpartyListItemDto>), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status400BadRequest)]

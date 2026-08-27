@@ -1,3 +1,4 @@
+using IRISBackend.DTOs;
 using IRISBackend.Models;
 using Microsoft.EntityFrameworkCore.Storage;
 
@@ -20,6 +21,15 @@ namespace IRISBackend.Repositories
         Task<Contract?> GetFacultativeContractByIdAsync(
             int contractId,
             bool asNoTracking = false,
+            CancellationToken cancellationToken = default);
+
+        Task<(IReadOnlyList<ContractListItemDto> Items, int TotalCount)> ListAsync(
+            ContractListQueryDto query,
+            string userId,
+            CancellationToken cancellationToken = default);
+
+        Task<ContractDashboardData> GetDashboardDataAsync(
+            string userId,
             CancellationToken cancellationToken = default);
     }
 }

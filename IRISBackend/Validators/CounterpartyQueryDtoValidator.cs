@@ -5,6 +5,12 @@ namespace IRISBackend.Validators
 {
     public class CounterpartyQueryDtoValidator : AbstractValidator<CounterpartyQueryDto>
     {
+        private static readonly string[] SortFields =
+        [
+            "name", "type", "email", "status", "country", "city",
+            "legacyCompanyCode", "createdAt", "updatedAt"
+        ];
+
         public CounterpartyQueryDtoValidator()
         {
             RuleFor(query => query.PageNumber)
@@ -23,6 +29,20 @@ namespace IRISBackend.Validators
 
             RuleFor(query => query.Status)
                 .MaximumLength(64);
+
+            RuleFor(query => query.Country)
+                .MaximumLength(100);
+
+            RuleFor(query => query.City)
+                .MaximumLength(100);
+
+            RuleFor(query => query.SortBy)
+                .Must(value => SortFields.Contains(value, StringComparer.OrdinalIgnoreCase))
+                .WithMessage($"sortBy must be one of: {string.Join(", ", SortFields)}.");
+
+            RuleFor(query => query.SortDirection)
+                .Must(value => value.Equals("asc", StringComparison.OrdinalIgnoreCase) || value.Equals("desc", StringComparison.OrdinalIgnoreCase))
+                .WithMessage("sortDirection must be either asc or desc.");
         }
     }
 }

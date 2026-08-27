@@ -96,14 +96,18 @@ namespace IRISBackend.Services
                 Search = query.Search,
                 Type = query.Type,
                 Status = query.Status,
-                IsActive = query.IsActive
+                IsActive = query.IsActive,
+                Country = query.Country,
+                City = query.City,
+                SortBy = query.SortBy,
+                SortDirection = query.SortDirection
             };
 
             var (items, totalCount) = await _counterpartyRepository.ListAsync(normalizedQuery, cancellationToken);
 
             return ServiceResult<PagedResponseDto<CounterpartyListItemDto>>.Success(new PagedResponseDto<CounterpartyListItemDto>
             {
-                Items = _mapper.Map<IEnumerable<CounterpartyListItemDto>>(items),
+                Items = items,
                 PageNumber = pageNumber,
                 PageSize = pageSize,
                 TotalCount = totalCount,

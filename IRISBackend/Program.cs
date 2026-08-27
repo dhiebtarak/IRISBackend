@@ -126,6 +126,7 @@ builder.Services.AddScoped<ICounterpartyService, CounterpartyService>();
 builder.Services.AddScoped<ICounterpartyAttachmentStorageService, CounterpartyAttachmentStorageService>();
 builder.Services.AddScoped<IReferenceDataService, ReferenceDataService>();
 builder.Services.AddScoped<IFacultativeContractService, FacultativeContractService>();
+builder.Services.AddScoped<IContractReadService, ContractReadService>();
 builder.Services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
 builder.Services.AddScoped<ILoginAuditRepository, LoginAuditRepository>();
 builder.Services.AddScoped<ICounterpartyRepository, CounterpartyRepository>();
