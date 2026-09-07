@@ -115,6 +115,28 @@ namespace IRISBackend.Services
             });
         }
 
+        public async Task<ServiceResult<PagedResponseDto<CounterpartyLookupItemDto>>> SearchReinsurersAsync(
+            CounterpartyLookupQueryDto query,
+            CancellationToken cancellationToken = default)
+        {
+            var page = Math.Max(query.Page, 1);
+            var pageSize = Math.Clamp(query.PageSize, 1, 50);
+            var (items, totalCount) = await _counterpartyRepository.SearchActiveReinsurersAsync(
+                query.Search,
+                page,
+                pageSize,
+                cancellationToken);
+
+            return ServiceResult<PagedResponseDto<CounterpartyLookupItemDto>>.Success(new PagedResponseDto<CounterpartyLookupItemDto>
+            {
+                Items = items,
+                PageNumber = page,
+                PageSize = pageSize,
+                TotalCount = totalCount,
+                TotalPages = totalCount == 0 ? 0 : (int)Math.Ceiling(totalCount / (double)pageSize)
+            });
+        }
+
         public async Task<ServiceResult<CounterpartyDetailsDto>> UpdateAsync(int id, CounterpartyUpdateDto request, CancellationToken cancellationToken = default)
         {
             var counterparty = await _counterpartyRepository.GetByIdAsync(id, cancellationToken);

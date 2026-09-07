@@ -57,11 +57,7 @@ public partial class Contract
 
     public decimal? NetPremiumCedent { get; set; }
 
-#nullable enable
-    public string? Umr { get; set; }
-
-    public string? CedentPremiumReference { get; set; }
-#nullable disable
+    public string Umr { get; set; }
 
     public string FrontingReference { get; set; }
 
@@ -69,13 +65,15 @@ public partial class Contract
 
     public decimal? SignedSharePctCedent { get; set; }
 
+    public string CedentPremiumReference { get; set; }
+
     public virtual ICollection<Claim> Claims { get; set; } = new List<Claim>();
+
+    public virtual ICollection<ContractCoverageSelection> ContractCoverageSelections { get; set; } = new List<ContractCoverageSelection>();
 
     public virtual ContractFac ContractFac { get; set; }
 
     public virtual ICollection<ContractPanel> ContractPanels { get; set; } = new List<ContractPanel>();
-
-    public virtual ICollection<ContractSubRisk> ContractSubRisks { get; set; } = new List<ContractSubRisk>();
 
     public virtual ICollection<ContractTreatyNonprop> ContractTreatyNonprops { get; set; } = new List<ContractTreatyNonprop>();
 

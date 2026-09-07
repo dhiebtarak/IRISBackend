@@ -1,0 +1,99 @@
+namespace IRISBackend.DTOs
+{
+    public sealed class ContractOverviewDto
+    {
+        public int IdContract { get; set; }
+
+        public string? Umr { get; set; }
+
+        public string Name { get; set; } = string.Empty;
+
+        public string? ContractType { get; set; }
+
+        public string TypeOfBusiness { get; set; } = string.Empty;
+
+        public string Status { get; set; } = string.Empty;
+
+        public int CounterpartyId { get; set; }
+
+        public CedentSummaryDto Cedent { get; set; } = new();
+
+        public int CurrencyId { get; set; }
+
+        public CurrencyReferenceDto Currency { get; set; } = new();
+
+        public DateOnly CreationDate { get; set; }
+
+        public DateOnly? ReceptionDate { get; set; }
+
+        public DateOnly InceptionDate { get; set; }
+
+        public DateOnly ExpiryDate { get; set; }
+
+        public decimal? WrittenSharePct { get; set; }
+
+        public decimal? SignedSharePct { get; set; }
+
+        public decimal? Tsi { get; set; }
+
+        public decimal? SumInsured { get; set; }
+
+        public decimal? Deductible { get; set; }
+
+        public decimal? PremiumRate { get; set; }
+
+        public decimal? Fees { get; set; }
+
+        public decimal? GrossPremium { get; set; }
+
+        public decimal? CedentCommissionPct { get; set; }
+
+        public decimal? NetPremiumCedent { get; set; }
+
+        public bool IsFronting { get; set; }
+
+        public string? FrontingReference { get; set; }
+
+        public bool IsHighPriority { get; set; }
+
+        public bool ActionRequired { get; set; }
+
+        public ContractAuditUserDto? CreatedBy { get; set; }
+
+        public DateTime CreatedAt { get; set; }
+
+        public ContractAuditUserDto? UpdatedBy { get; set; }
+
+        public DateTime? UpdatedAt { get; set; }
+
+        public ContractCoverageSelectionResponseDto? CoverageSelection { get; set; }
+
+        public ContractSlipAvailabilityDto SlipAvailability { get; set; } = new();
+
+        public IReadOnlyList<ContractPanelResponseDto> Panels { get; set; } = [];
+    }
+
+    public sealed class ContractAuditUserDto
+    {
+        public string? Id { get; set; }
+
+        public string? FullName { get; set; }
+
+        public string? UserName { get; set; }
+
+        public string? Email { get; set; }
+    }
+
+    public sealed class ContractSlipAvailabilityDto
+    {
+        public int SelectedCoverageItemCount { get; set; }
+
+        public int AvailableSlipCount { get; set; }
+
+        public int MissingSlipCount { get; set; }
+
+        public bool HasAnySlip => AvailableSlipCount > 0;
+
+        public bool HasAllSlips => SelectedCoverageItemCount > 0 && MissingSlipCount == 0;
+    }
+}

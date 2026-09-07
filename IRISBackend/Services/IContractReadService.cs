@@ -10,5 +10,13 @@ namespace IRISBackend.Services
 
         Task<ServiceResult<ContractDashboardSummaryDto>> GetDashboardSummaryAsync(
             CancellationToken cancellationToken = default);
+
+        Task<ServiceResult<ContractOverviewDto>> GetOverviewAsync(
+            int contractId,
+            CancellationToken cancellationToken = default);
+
+        Task<ServiceResult<SlipDownloadResult>> DownloadSlipsAsync(
+            int contractId,
+            CancellationToken cancellationToken = default);
     }
 }

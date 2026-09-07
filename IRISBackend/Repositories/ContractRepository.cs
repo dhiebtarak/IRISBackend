@@ -59,8 +59,17 @@ namespace IRISBackend.Repositories
         {
             IQueryable<Contract> query = _dbContext.Contracts
                 .Include(contract => contract.ContractFac)
+                .Include(contract => contract.ContractTreatyProp)
+                    .ThenInclude(treaty => treaty.ContractTreatyPropQuotaShare)
+                .Include(contract => contract.ContractTreatyProp)
+                    .ThenInclude(treaty => treaty.ContractTreatyPropSurplu)
+                .Include(contract => contract.ContractTreatyNonprops)
                 .Include(contract => contract.IdCounterpartyNavigation)
                 .Include(contract => contract.IdCurrencyNavigation)
+                .Include(contract => contract.CreatedByNavigation)
+                .Include(contract => contract.UpdatedByNavigation)
+                .Include(contract => contract.ContractCoverageSelections)
+                    .ThenInclude(selection => selection.IdCoverageItemNavigation)
                 .Where(contract =>
                     contract.IdContract == contractId &&
                     contract.TypeOfBusiness == ContractConstants.FacultativeType);
@@ -71,6 +80,73 @@ namespace IRISBackend.Repositories
             }
 
             return query.SingleOrDefaultAsync(cancellationToken);
+        }
+
+        public Task<Contract?> GetAccessibleContractByIdAsync(
+            int contractId,
+            string userId,
+            CancellationToken cancellationToken = default)
+        {
+            return _dbContext.Contracts
+                .AsNoTracking()
+                .Include(contract => contract.ContractFac)
+                .Include(contract => contract.ContractTreatyProp)
+                    .ThenInclude(treaty => treaty.ContractTreatyPropQuotaShare)
+                .Include(contract => contract.ContractTreatyProp)
+                    .ThenInclude(treaty => treaty.ContractTreatyPropSurplu)
+                .Include(contract => contract.ContractTreatyNonprops)
+                .Include(contract => contract.IdCounterpartyNavigation)
+                .Include(contract => contract.IdCurrencyNavigation)
+                .Include(contract => contract.CreatedByNavigation)
+                .Include(contract => contract.UpdatedByNavigation)
+                .Include(contract => contract.ContractPanels)
+                    .ThenInclude(panel => panel.IdCounterpartyNavigation)
+                .Include(contract => contract.ContractCoverageSelections)
+                    .ThenInclude(selection => selection.IdCoverageItemNavigation)
+                .Where(contract =>
+                    contract.IdContract == contractId &&
+                    contract.IsCurrent &&
+                    contract.IdUser == userId)
+                .SingleOrDefaultAsync(cancellationToken);
+        }
+
+        public Task MarkDraftReadyForPlacementAsync(
+            int contractId,
+            string userId,
+            CancellationToken cancellationToken = default)
+        {
+            return _dbContext.Contracts
+                .Where(contract =>
+                    contract.IdContract == contractId &&
+                    contract.IdUser == userId &&
+                    contract.Status == ContractConstants.DraftStatus)
+                .ExecuteUpdateAsync(updates => updates
+                    .SetProperty(contract => contract.Status, ContractConstants.ReadyForPlacementStatus)
+                    .SetProperty(contract => contract.UpdatedAt, DateTime.UtcNow)
+                    .SetProperty(contract => contract.UpdatedBy, userId), cancellationToken);
+        }
+
+        public async Task<IReadOnlyList<SlipTemplate>> ListActiveCurrentSlipTemplatesForContractAsync(
+            int contractId,
+            string userId,
+            CancellationToken cancellationToken = default)
+        {
+            return await _dbContext.ContractCoverageSelections
+                .AsNoTracking()
+                .Where(selection =>
+                    selection.IdContract == contractId &&
+                    selection.IdContractNavigation.IsCurrent &&
+                    selection.IdContractNavigation.IdUser == userId)
+                .SelectMany(selection => _dbContext.SlipTemplates
+                    .Where(slip =>
+                        slip.IdCoverageItem == selection.IdCoverageItem &&
+                        slip.IsActive &&
+                        slip.IsCurrent))
+                .GroupBy(slip => slip.IdSlipTemplate)
+                .Select(group => group.First())
+                .OrderBy(slip => slip.IdCoverageItemNavigation.DisplayOrder ?? int.MaxValue)
+                .ThenBy(slip => slip.IdCoverageItemNavigation.CoverageName)
+                .ToListAsync(cancellationToken);
         }
 
         public async Task<(IReadOnlyList<ContractListItemDto> Items, int TotalCount)> ListAsync(

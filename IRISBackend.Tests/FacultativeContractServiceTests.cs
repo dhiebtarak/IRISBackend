@@ -48,6 +48,21 @@ namespace IRISBackend.Tests
         }
 
         [Fact]
+        public async Task CreateDraftAsync_WhenRequestHasCoverage_CreatesCoverageSelectionsInSameWorkflow()
+        {
+            var referenceDataRepository = new FakeReferenceDataRepository();
+            var contractRepository = new FakeContractRepository(referenceDataRepository);
+            var coverageSelectionService = new FakeCoverageSelectionService();
+            var service = CreateService(contractRepository, referenceDataRepository, coverageSelectionService: coverageSelectionService);
+
+            var result = await service.CreateDraftAsync(CreateValidRequest());
+
+            Assert.True(result.Succeeded);
+            Assert.Equal(1, coverageSelectionService.CreatedContractIds.Single());
+            Assert.Equal("user-1", coverageSelectionService.CreatedByUserIds.Single());
+        }
+
+        [Fact]
         public async Task CreateDraftAsync_WhenContractFacSaveFails_RollsBackContract()
         {
             var referenceDataRepository = new FakeReferenceDataRepository();
@@ -56,6 +71,23 @@ namespace IRISBackend.Tests
                 FailOnNextContractFacSave = true
             };
             var service = CreateService(contractRepository, referenceDataRepository);
+
+            await Assert.ThrowsAsync<DbUpdateException>(() => service.CreateDraftAsync(CreateValidRequest()));
+
+            Assert.Empty(contractRepository.Contracts);
+            Assert.Empty(contractRepository.ContractFacs);
+        }
+
+        [Fact]
+        public async Task CreateDraftAsync_WhenCoverageSaveFails_RollsBackContractAndFacultativeDetails()
+        {
+            var referenceDataRepository = new FakeReferenceDataRepository();
+            var contractRepository = new FakeContractRepository(referenceDataRepository);
+            var coverageSelectionService = new FakeCoverageSelectionService
+            {
+                FailCreate = true
+            };
+            var service = CreateService(contractRepository, referenceDataRepository, coverageSelectionService: coverageSelectionService);
 
             await Assert.ThrowsAsync<DbUpdateException>(() => service.CreateDraftAsync(CreateValidRequest()));
 
@@ -164,6 +196,23 @@ namespace IRISBackend.Tests
             Assert.Equal(StatusCodes.Status409Conflict, result.StatusCode);
         }
 
+        [Theory]
+        [InlineData("Ready for Placement")]
+        [InlineData("Placement In Progress")]
+        public async Task UpdateDraftAsync_WhenContractIsInEditableWorkflowState_ReturnsSuccess(string status)
+        {
+            var referenceDataRepository = new FakeReferenceDataRepository();
+            var contractRepository = new FakeContractRepository(referenceDataRepository);
+            SeedDraft(contractRepository, status: status);
+            var service = CreateService(contractRepository, referenceDataRepository);
+
+            var result = await service.UpdateDraftAsync(1, CreateValidRequest());
+
+            Assert.True(result.Succeeded);
+            Assert.Equal(StatusCodes.Status200OK, result.StatusCode);
+            Assert.Equal(status, contractRepository.Contracts[0].Status);
+        }
+
         [Fact]
         public async Task GetByIdAsync_WhenFacultativeDraftExists_ReturnsCombinedResponse()
         {
@@ -186,9 +235,11 @@ namespace IRISBackend.Tests
         private static FacultativeContractService CreateService(
             FakeContractRepository contractRepository,
             FakeReferenceDataRepository referenceDataRepository,
-            UserProfileResponseDto? currentUser = null)
+            UserProfileResponseDto? currentUser = null,
+            FakeCoverageSelectionService? coverageSelectionService = null)
         {
             currentUser ??= CreateFrontOfficerProfile();
+            coverageSelectionService ??= new FakeCoverageSelectionService();
 
             var mapper = new MapperConfiguration(configuration =>
             {
@@ -210,6 +261,7 @@ namespace IRISBackend.Tests
             return new FacultativeContractService(
                 contractRepository,
                 referenceDataRepository,
+                coverageSelectionService,
                 new FakeUserService(currentUser),
                 mapper,
                 httpContextAccessor);
@@ -237,7 +289,13 @@ namespace IRISBackend.Tests
                 CedentCommissionPct = 20m,
                 CedentPremiumReference = "REF-8892-AXA",
                 IsFronting = false,
-                MemoText = "Internal underwriting notes."
+                MemoText = "Internal underwriting notes.",
+                CoverageSelection = new CoverageSelectionRequestDto
+                {
+                    MainCoverId = 1,
+                    SectionIds = [2, 2, 3],
+                    ExtensionIds = [7]
+                }
             };
         }
 
@@ -305,6 +363,71 @@ namespace IRISBackend.Tests
             public Task<ServiceResult<UserProfileResponseDto>> GetCurrentUserAsync(ClaimsPrincipal principal)
             {
                 return Task.FromResult(ServiceResult<UserProfileResponseDto>.Success(_user));
+            }
+        }
+
+        private sealed class FakeCoverageSelectionService : ICoverageSelectionService
+        {
+            public List<int> CreatedContractIds { get; } = [];
+
+            public List<string> CreatedByUserIds { get; } = [];
+
+            public bool FailCreate { get; set; }
+
+            public Task<ServiceResult<CoverageSelectionPlan>> ValidateAsync(
+                CoverageSelectionRequestDto? request,
+                CancellationToken cancellationToken = default)
+            {
+                if (request is null || request.MainCoverId <= 0)
+                {
+                    return Task.FromResult(ServiceResult<CoverageSelectionPlan>.Failure(
+                        "Validation failed.",
+                        ["coverageSelection.mainCoverId is required."],
+                        StatusCodes.Status400BadRequest));
+                }
+
+                var sectionIds = request.SectionIds.Distinct().ToArray();
+                var extensionIds = request.ExtensionIds.Distinct().ToArray();
+                return Task.FromResult(ServiceResult<CoverageSelectionPlan>.Success(new CoverageSelectionPlan
+                {
+                    MainCoverId = request.MainCoverId,
+                    SectionIds = sectionIds,
+                    ExtensionIds = extensionIds,
+                    SlipTemplateIdsByCoverageItemId = new Dictionary<int, int>
+                    {
+                        [request.MainCoverId] = 10,
+                        [extensionIds.SingleOrDefault()] = 11
+                    }.Where(item => item.Key > 0).ToDictionary(item => item.Key, item => item.Value)
+                }));
+            }
+
+            public Task CreateSelectionsAsync(
+                int contractId,
+                CoverageSelectionPlan plan,
+                string userId,
+                DateTime now,
+                CancellationToken cancellationToken = default)
+            {
+                if (FailCreate)
+                {
+                    throw new DbUpdateException("Failed to save coverage selections.", new Exception("Simulated failure"));
+                }
+
+                CreatedContractIds.Add(contractId);
+                CreatedByUserIds.Add(userId);
+                return Task.CompletedTask;
+            }
+
+            public Task ReplaceSelectionsAsync(
+                int contractId,
+                CoverageSelectionPlan plan,
+                string userId,
+                DateTime now,
+                CancellationToken cancellationToken = default)
+            {
+                CreatedContractIds.Add(contractId);
+                CreatedByUserIds.Add(userId);
+                return Task.CompletedTask;
             }
         }
 
@@ -529,6 +652,30 @@ namespace IRISBackend.Tests
                 CancellationToken cancellationToken = default)
             {
                 return Task.FromResult(new ContractDashboardData());
+            }
+
+            public Task<Contract?> GetAccessibleContractByIdAsync(
+                int contractId,
+                string userId,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            public Task MarkDraftReadyForPlacementAsync(
+                int contractId,
+                string userId,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
+            }
+
+            public Task<IReadOnlyList<SlipTemplate>> ListActiveCurrentSlipTemplatesForContractAsync(
+                int contractId,
+                string userId,
+                CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
             }
 
             public RepositorySnapshot CaptureSnapshot()

@@ -33,11 +33,11 @@ public partial class IRISBackendContext : DbContext
 
     public virtual DbSet<Contract> Contracts { get; set; }
 
+    public virtual DbSet<ContractCoverageSelection> ContractCoverageSelections { get; set; }
+
     public virtual DbSet<ContractFac> ContractFacs { get; set; }
 
     public virtual DbSet<ContractPanel> ContractPanels { get; set; }
-
-    public virtual DbSet<ContractSubRisk> ContractSubRisks { get; set; }
 
     public virtual DbSet<ContractTreatyNonprop> ContractTreatyNonprops { get; set; }
 
@@ -50,6 +50,10 @@ public partial class IRISBackendContext : DbContext
     public virtual DbSet<Counterparty> Counterparties { get; set; }
 
     public virtual DbSet<CounterpartyBankAccount> CounterpartyBankAccounts { get; set; }
+
+    public virtual DbSet<CoverageItem> CoverageItems { get; set; }
+
+    public virtual DbSet<CoverageRelation> CoverageRelations { get; set; }
 
     public virtual DbSet<Currency> Currencies { get; set; }
 
@@ -67,9 +71,7 @@ public partial class IRISBackendContext : DbContext
 
     public virtual DbSet<RemittanceRef> RemittanceRefs { get; set; }
 
-    public virtual DbSet<RiskNature> RiskNatures { get; set; }
-
-    public virtual DbSet<SubRisk> SubRisks { get; set; }
+    public virtual DbSet<SlipTemplate> SlipTemplates { get; set; }
 
     public virtual DbSet<UserLoginAudit> UserLoginAudits { get; set; }
 
@@ -409,10 +411,17 @@ public partial class IRISBackendContext : DbContext
 
             entity.HasIndex(e => e.Status, "IX_CONTRACT_status");
 
+            entity.HasIndex(e => e.Umr, "UX_CONTRACT_UMR")
+                .IsUnique()
+                .HasFilter("([Umr] IS NOT NULL)");
+
             entity.Property(e => e.IdContract).HasColumnName("Id_contract");
             entity.Property(e => e.CedentCommission)
                 .HasColumnType("decimal(19, 4)")
                 .HasColumnName("Cedent_commission");
+            entity.Property(e => e.CedentPremiumReference)
+                .HasMaxLength(100)
+                .HasColumnName("Cedent_premium_reference");
             entity.Property(e => e.CreatedAt)
                 .HasDefaultValueSql("(sysutcdatetime())")
                 .HasAnnotation("Relational:DefaultConstraintName", "DF_CONTRACT_created_at")
@@ -464,6 +473,7 @@ public partial class IRISBackendContext : DbContext
                 .IsRequired()
                 .HasMaxLength(50)
                 .HasColumnName("Type_of_business");
+            entity.Property(e => e.Umr).HasMaxLength(100);
             entity.Property(e => e.UnderwritingYearBasis)
                 .HasMaxLength(255)
                 .HasColumnName("Underwriting_year_basis");
@@ -504,6 +514,62 @@ public partial class IRISBackendContext : DbContext
                 .HasConstraintName("FK_CONTRACT_updated_by_USER");
         });
 
+        modelBuilder.Entity<ContractCoverageSelection>(entity =>
+        {
+            entity.HasKey(e => e.IdContractCoverageSelection);
+
+            entity.ToTable("CONTRACT_COVERAGE_SELECTION", tb =>
+                {
+                    tb.HasTrigger("TR_CONTRACT_COVERAGE_SELECTION_prevent_orphans");
+                    tb.HasTrigger("TR_CONTRACT_COVERAGE_SELECTION_require_parent");
+                });
+
+            entity.HasIndex(e => e.IdContract, "IX_CONTRACT_COVERAGE_SELECTION_contract");
+
+            entity.HasIndex(e => new { e.IdContract, e.IdCoverageItem }, "UQ_CONTRACT_COVERAGE_SELECTION_contract_item").IsUnique();
+
+            entity.Property(e => e.IdContractCoverageSelection).HasColumnName("id_contract_coverage_selection");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("(sysutcdatetime())")
+                .HasAnnotation("Relational:DefaultConstraintName", "DF_CONTRACT_COVERAGE_SELECTION_created_at")
+                .HasColumnName("created_at");
+            entity.Property(e => e.CreatedBy)
+                .IsRequired()
+                .HasMaxLength(450)
+                .HasColumnName("created_by");
+            entity.Property(e => e.IdContract).HasColumnName("id_contract");
+            entity.Property(e => e.IdCoverageItem).HasColumnName("id_coverage_item");
+            entity.Property(e => e.IdSlipTemplate).HasColumnName("id_slip_template");
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
+            entity.Property(e => e.UpdatedBy)
+                .HasMaxLength(450)
+                .HasColumnName("updated_by");
+
+            entity.HasOne(d => d.CreatedByNavigation).WithMany(p => p.ContractCoverageSelectionCreatedByNavigations)
+                .HasForeignKey(d => d.CreatedBy)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_CONTRACT_COVERAGE_SELECTION_created_by_USER");
+
+            entity.HasOne(d => d.IdContractNavigation).WithMany(p => p.ContractCoverageSelections)
+                .HasForeignKey(d => d.IdContract)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_CONTRACT_COVERAGE_SELECTION_contract");
+
+            entity.HasOne(d => d.IdCoverageItemNavigation).WithMany(p => p.ContractCoverageSelections)
+                .HasForeignKey(d => d.IdCoverageItem)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_CONTRACT_COVERAGE_SELECTION_item");
+
+            entity.HasOne(d => d.UpdatedByNavigation).WithMany(p => p.ContractCoverageSelectionUpdatedByNavigations)
+                .HasForeignKey(d => d.UpdatedBy)
+                .HasConstraintName("FK_CONTRACT_COVERAGE_SELECTION_updated_by_USER");
+
+            entity.HasOne(d => d.SlipTemplate).WithMany(p => p.ContractCoverageSelections)
+                .HasPrincipalKey(p => new { p.IdSlipTemplate, p.IdCoverageItem })
+                .HasForeignKey(d => new { d.IdSlipTemplate, d.IdCoverageItem })
+                .HasConstraintName("FK_CONTRACT_COVERAGE_SELECTION_slip_item");
+        });
+
         modelBuilder.Entity<ContractFac>(entity =>
         {
             entity.HasKey(e => e.IdContractFac);
@@ -540,6 +606,9 @@ public partial class IRISBackendContext : DbContext
             entity.Property(e => e.BrokeragePct)
                 .HasColumnType("decimal(19, 8)")
                 .HasColumnName("Brokerage_pct");
+            entity.Property(e => e.Deductible)
+                .HasColumnType("decimal(19, 4)")
+                .HasColumnName("Deductible");
             entity.Property(e => e.GrossPremium)
                 .HasColumnType("decimal(19, 4)")
                 .HasColumnName("Gross_premium");
@@ -554,10 +623,20 @@ public partial class IRISBackendContext : DbContext
             entity.Property(e => e.PremiumReference)
                 .HasMaxLength(100)
                 .HasColumnName("Premium_reference");
+            entity.Property(e => e.PremiumRatePct)
+                .HasColumnType("decimal(19, 8)")
+                .HasColumnName("Premium_rate_pct");
             entity.Property(e => e.Role).HasMaxLength(255);
             entity.Property(e => e.SignedSharePct)
                 .HasColumnType("decimal(19, 8)")
                 .HasColumnName("Signed_share_pct");
+            entity.Property(e => e.Status)
+                .HasMaxLength(50)
+                .HasDefaultValue("Draft")
+                .HasColumnName("Status");
+            entity.Property(e => e.Tsi)
+                .HasColumnType("decimal(19, 4)")
+                .HasColumnName("Tsi");
             entity.Property(e => e.WrittenSharePct)
                 .HasColumnType("decimal(19, 8)")
                 .HasColumnName("Written_share_pct");
@@ -571,50 +650,6 @@ public partial class IRISBackendContext : DbContext
                 .HasForeignKey(d => d.IdCounterparty)
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_CONTRACT_PANEL_id_counterparty");
-        });
-
-        modelBuilder.Entity<ContractSubRisk>(entity =>
-        {
-            entity.HasKey(e => e.IdContractSubRisk);
-
-            entity.ToTable("CONTRACT_SUB_RISK");
-
-            entity.HasIndex(e => new { e.IdContract, e.IdSubRisk }, "UQ_CONTRACT_SUB_RISK").IsUnique();
-
-            entity.Property(e => e.IdContractSubRisk).HasColumnName("Id_contract_sub_risk");
-            entity.Property(e => e.CreatedAt)
-                .HasDefaultValueSql("(sysutcdatetime())")
-                .HasAnnotation("Relational:DefaultConstraintName", "DF_CONTRACT_SUB_RISK_created_at")
-                .HasColumnName("Created_at");
-            entity.Property(e => e.CreatedBy)
-                .IsRequired()
-                .HasMaxLength(450)
-                .HasColumnName("Created_by");
-            entity.Property(e => e.IdContract).HasColumnName("Id_contract");
-            entity.Property(e => e.IdSubRisk).HasColumnName("Id_sub_risk");
-            entity.Property(e => e.UpdatedAt).HasColumnName("Updated_at");
-            entity.Property(e => e.UpdatedBy)
-                .HasMaxLength(450)
-                .HasColumnName("Updated_by");
-
-            entity.HasOne(d => d.CreatedByNavigation).WithMany(p => p.ContractSubRiskCreatedByNavigations)
-                .HasForeignKey(d => d.CreatedBy)
-                .OnDelete(DeleteBehavior.ClientSetNull)
-                .HasConstraintName("FK_CONTRACT_SUB_RISK_created_by_USER");
-
-            entity.HasOne(d => d.IdContractNavigation).WithMany(p => p.ContractSubRisks)
-                .HasForeignKey(d => d.IdContract)
-                .OnDelete(DeleteBehavior.ClientSetNull)
-                .HasConstraintName("FK_CONTRACT_SUB_RISK_id_contract");
-
-            entity.HasOne(d => d.IdSubRiskNavigation).WithMany(p => p.ContractSubRisks)
-                .HasForeignKey(d => d.IdSubRisk)
-                .OnDelete(DeleteBehavior.ClientSetNull)
-                .HasConstraintName("FK_CONTRACT_SUB_RISK_id_sub_risk");
-
-            entity.HasOne(d => d.UpdatedByNavigation).WithMany(p => p.ContractSubRiskUpdatedByNavigations)
-                .HasForeignKey(d => d.UpdatedBy)
-                .HasConstraintName("FK_CONTRACT_SUB_RISK_updated_by_USER");
         });
 
         modelBuilder.Entity<ContractTreatyNonprop>(entity =>
@@ -906,6 +941,120 @@ public partial class IRISBackendContext : DbContext
             entity.HasOne(d => d.UpdatedByNavigation).WithMany(p => p.CounterpartyBankAccountUpdatedByNavigations)
                 .HasForeignKey(d => d.UpdatedBy)
                 .HasConstraintName("FK_COUNTERPARTY_BANK_ACCOUNT_updated_by_USER");
+        });
+
+        modelBuilder.Entity<CoverageItem>(entity =>
+        {
+            entity.HasKey(e => e.IdCoverageItem);
+
+            entity.ToTable("COVERAGE_ITEM");
+
+            entity.HasIndex(e => new { e.CoverageLevel, e.IsActive }, "IX_COVERAGE_ITEM_level_active");
+
+            entity.HasIndex(e => e.CoverageName, "IX_COVERAGE_ITEM_name");
+
+            entity.HasIndex(e => e.CoverageCode, "UQ_COVERAGE_ITEM_code").IsUnique();
+
+            entity.Property(e => e.IdCoverageItem).HasColumnName("id_coverage_item");
+            entity.Property(e => e.CoverageCode)
+                .IsRequired()
+                .HasMaxLength(50)
+                .HasColumnName("coverage_code");
+            entity.Property(e => e.CoverageLevel)
+                .IsRequired()
+                .HasMaxLength(20)
+                .HasColumnName("coverage_level");
+            entity.Property(e => e.CoverageName)
+                .IsRequired()
+                .HasMaxLength(255)
+                .HasColumnName("coverage_name");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("(sysutcdatetime())")
+                .HasAnnotation("Relational:DefaultConstraintName", "DF_COVERAGE_ITEM_created_at")
+                .HasColumnName("created_at");
+            entity.Property(e => e.CreatedBy)
+                .IsRequired()
+                .HasMaxLength(450)
+                .HasColumnName("created_by");
+            entity.Property(e => e.Description).HasColumnName("description");
+            entity.Property(e => e.DisplayOrder).HasColumnName("display_order");
+            entity.Property(e => e.IsActive)
+                .HasDefaultValue(true)
+                .HasAnnotation("Relational:DefaultConstraintName", "DF_COVERAGE_ITEM_is_active")
+                .HasColumnName("is_active");
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
+            entity.Property(e => e.UpdatedBy)
+                .HasMaxLength(450)
+                .HasColumnName("updated_by");
+
+            entity.HasOne(d => d.CreatedByNavigation).WithMany(p => p.CoverageItemCreatedByNavigations)
+                .HasForeignKey(d => d.CreatedBy)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_COVERAGE_ITEM_created_by_USER");
+
+            entity.HasOne(d => d.UpdatedByNavigation).WithMany(p => p.CoverageItemUpdatedByNavigations)
+                .HasForeignKey(d => d.UpdatedBy)
+                .HasConstraintName("FK_COVERAGE_ITEM_updated_by_USER");
+        });
+
+        modelBuilder.Entity<CoverageRelation>(entity =>
+        {
+            entity.HasKey(e => e.IdCoverageRelation);
+
+            entity.ToTable("COVERAGE_RELATION", tb => tb.HasTrigger("TR_COVERAGE_RELATION_validate_levels"));
+
+            entity.HasIndex(e => new { e.IdChildCoverageItem, e.IsActive }, "IX_COVERAGE_RELATION_child");
+
+            entity.HasIndex(e => new { e.IdParentCoverageItem, e.RelationType, e.IsActive }, "IX_COVERAGE_RELATION_parent");
+
+            entity.HasIndex(e => new { e.IdParentCoverageItem, e.IdChildCoverageItem, e.RelationType }, "UQ_COVERAGE_RELATION_parent_child_type").IsUnique();
+
+            entity.Property(e => e.IdCoverageRelation).HasColumnName("id_coverage_relation");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("(sysutcdatetime())")
+                .HasAnnotation("Relational:DefaultConstraintName", "DF_COVERAGE_RELATION_created_at")
+                .HasColumnName("created_at");
+            entity.Property(e => e.CreatedBy)
+                .IsRequired()
+                .HasMaxLength(450)
+                .HasColumnName("created_by");
+            entity.Property(e => e.DisplayOrder).HasColumnName("display_order");
+            entity.Property(e => e.IdChildCoverageItem).HasColumnName("id_child_coverage_item");
+            entity.Property(e => e.IdParentCoverageItem).HasColumnName("id_parent_coverage_item");
+            entity.Property(e => e.IsActive)
+                .HasDefaultValue(true)
+                .HasAnnotation("Relational:DefaultConstraintName", "DF_COVERAGE_RELATION_is_active")
+                .HasColumnName("is_active");
+            entity.Property(e => e.IsMandatory)
+                .HasAnnotation("Relational:DefaultConstraintName", "DF_COVERAGE_RELATION_is_mandatory")
+                .HasColumnName("is_mandatory");
+            entity.Property(e => e.RelationType)
+                .IsRequired()
+                .HasMaxLength(20)
+                .HasColumnName("relation_type");
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
+            entity.Property(e => e.UpdatedBy)
+                .HasMaxLength(450)
+                .HasColumnName("updated_by");
+
+            entity.HasOne(d => d.CreatedByNavigation).WithMany(p => p.CoverageRelationCreatedByNavigations)
+                .HasForeignKey(d => d.CreatedBy)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_COVERAGE_RELATION_created_by_USER");
+
+            entity.HasOne(d => d.IdChildCoverageItemNavigation).WithMany(p => p.CoverageRelationIdChildCoverageItemNavigations)
+                .HasForeignKey(d => d.IdChildCoverageItem)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_COVERAGE_RELATION_child");
+
+            entity.HasOne(d => d.IdParentCoverageItemNavigation).WithMany(p => p.CoverageRelationIdParentCoverageItemNavigations)
+                .HasForeignKey(d => d.IdParentCoverageItem)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_COVERAGE_RELATION_parent");
+
+            entity.HasOne(d => d.UpdatedByNavigation).WithMany(p => p.CoverageRelationUpdatedByNavigations)
+                .HasForeignKey(d => d.UpdatedBy)
+                .HasConstraintName("FK_COVERAGE_RELATION_updated_by_USER");
         });
 
         modelBuilder.Entity<Currency>(entity =>
@@ -1461,44 +1610,73 @@ public partial class IRISBackendContext : DbContext
                 .HasConstraintName("FK_REMITTANCE_REF_updated_by_USER");
         });
 
-        modelBuilder.Entity<RiskNature>(entity =>
+        modelBuilder.Entity<SlipTemplate>(entity =>
         {
-            entity.HasKey(e => e.IdRiskNature);
+            entity.HasKey(e => e.IdSlipTemplate);
 
-            entity.ToTable("RISK_NATURE");
+            entity.ToTable("SLIP_TEMPLATE");
 
-            entity.Property(e => e.IdRiskNature).HasColumnName("Id_risk_nature");
+            entity.HasIndex(e => new { e.IdSlipTemplate, e.IdCoverageItem }, "UQ_SLIP_TEMPLATE_id_item").IsUnique();
+
+            entity.HasIndex(e => new { e.IdCoverageItem, e.VersionNumber }, "UQ_SLIP_TEMPLATE_item_version").IsUnique();
+
+            entity.HasIndex(e => e.IdCoverageItem, "UX_SLIP_TEMPLATE_current")
+                .IsUnique()
+                .HasFilter("([is_current]=(1) AND [is_active]=(1))");
+
+            entity.Property(e => e.IdSlipTemplate).HasColumnName("id_slip_template");
+            entity.Property(e => e.FileContent)
+                .IsRequired()
+                .HasColumnName("file_content");
+            entity.Property(e => e.FileExtension)
+                .IsRequired()
+                .HasMaxLength(10)
+                .HasColumnName("file_extension");
+            entity.Property(e => e.FileSizeBytes).HasColumnName("file_size_bytes");
+            entity.Property(e => e.IdCoverageItem).HasColumnName("id_coverage_item");
             entity.Property(e => e.IsActive)
                 .HasDefaultValue(true)
-                .HasAnnotation("Relational:DefaultConstraintName", "DF_RISK_NATURE_is_active")
-                .HasColumnName("Is_active");
-            entity.Property(e => e.RiskNatureCode)
-                .IsRequired()
-                .HasMaxLength(100)
-                .HasColumnName("Risk_nature_code");
-        });
-
-        modelBuilder.Entity<SubRisk>(entity =>
-        {
-            entity.HasKey(e => e.IdSubRisk);
-
-            entity.ToTable("SUB_RISK");
-
-            entity.Property(e => e.IdSubRisk).HasColumnName("Id_sub_risk");
-            entity.Property(e => e.IdRiskNature).HasColumnName("Id_risk_nature");
-            entity.Property(e => e.IsActive)
+                .HasAnnotation("Relational:DefaultConstraintName", "DF_SLIP_TEMPLATE_is_active")
+                .HasColumnName("is_active");
+            entity.Property(e => e.IsCurrent)
                 .HasDefaultValue(true)
-                .HasAnnotation("Relational:DefaultConstraintName", "DF_SUB_RISK_is_active")
-                .HasColumnName("Is_active");
-            entity.Property(e => e.SubRiskCode)
+                .HasAnnotation("Relational:DefaultConstraintName", "DF_SLIP_TEMPLATE_is_current")
+                .HasColumnName("is_current");
+            entity.Property(e => e.MimeType)
                 .IsRequired()
                 .HasMaxLength(100)
-                .HasColumnName("Sub_risk_code");
+                .HasColumnName("mime_type");
+            entity.Property(e => e.OriginalFileName)
+                .IsRequired()
+                .HasMaxLength(260)
+                .HasColumnName("original_file_name");
+            entity.Property(e => e.Sha256Hash)
+                .HasMaxLength(64)
+                .IsUnicode(false)
+                .IsFixedLength()
+                .HasColumnName("sha256_hash");
+            entity.Property(e => e.UploadedAt)
+                .HasDefaultValueSql("(sysutcdatetime())")
+                .HasAnnotation("Relational:DefaultConstraintName", "DF_SLIP_TEMPLATE_uploaded_at")
+                .HasColumnName("uploaded_at");
+            entity.Property(e => e.UploadedBy)
+                .IsRequired()
+                .HasMaxLength(450)
+                .HasColumnName("uploaded_by");
+            entity.Property(e => e.VersionNumber)
+                .HasDefaultValue(1)
+                .HasAnnotation("Relational:DefaultConstraintName", "DF_SLIP_TEMPLATE_version_number")
+                .HasColumnName("version_number");
 
-            entity.HasOne(d => d.IdRiskNatureNavigation).WithMany(p => p.SubRisks)
-                .HasForeignKey(d => d.IdRiskNature)
+            entity.HasOne(d => d.IdCoverageItemNavigation).WithOne(p => p.SlipTemplate)
+                .HasForeignKey<SlipTemplate>(d => d.IdCoverageItem)
                 .OnDelete(DeleteBehavior.ClientSetNull)
-                .HasConstraintName("FK_SUB_RISK_id_risk_nature");
+                .HasConstraintName("FK_SLIP_TEMPLATE_coverage_item");
+
+            entity.HasOne(d => d.UploadedByNavigation).WithMany(p => p.SlipTemplates)
+                .HasForeignKey(d => d.UploadedBy)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_SLIP_TEMPLATE_uploaded_by_USER");
         });
 
         modelBuilder.Entity<UserLoginAudit>(entity =>

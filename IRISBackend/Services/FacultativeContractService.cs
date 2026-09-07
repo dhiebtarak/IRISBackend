@@ -11,6 +11,7 @@ namespace IRISBackend.Services
     {
         private readonly IContractRepository _contractRepository;
         private readonly IReferenceDataRepository _referenceDataRepository;
+        private readonly ICoverageSelectionService _coverageSelectionService;
         private readonly IUserService _userService;
         private readonly IMapper _mapper;
         private readonly IHttpContextAccessor _httpContextAccessor;
@@ -18,12 +19,14 @@ namespace IRISBackend.Services
         public FacultativeContractService(
             IContractRepository contractRepository,
             IReferenceDataRepository referenceDataRepository,
+            ICoverageSelectionService coverageSelectionService,
             IUserService userService,
             IMapper mapper,
             IHttpContextAccessor httpContextAccessor)
         {
             _contractRepository = contractRepository;
             _referenceDataRepository = referenceDataRepository;
+            _coverageSelectionService = coverageSelectionService;
             _userService = userService;
             _mapper = mapper;
             _httpContextAccessor = httpContextAccessor;
@@ -57,6 +60,12 @@ namespace IRISBackend.Services
                 return validationResult;
             }
 
+            var coverageValidationResult = await _coverageSelectionService.ValidateAsync(request.CoverageSelection, cancellationToken);
+            if (!coverageValidationResult.Succeeded)
+            {
+                return MapCoverageFailure(coverageValidationResult);
+            }
+
             var now = DateTime.UtcNow;
             var contract = BuildContractEntity(request, currentUserResult.Value!, normalizedUmr, now);
             var contractFac = BuildContractFacEntity(request);
@@ -71,6 +80,13 @@ namespace IRISBackend.Services
                 contractFac.IdContract = contract.IdContract;
                 await _contractRepository.AddFacultativeDetailsAsync(contractFac, cancellationToken);
                 await _contractRepository.SaveChangesAsync(cancellationToken);
+
+                await _coverageSelectionService.CreateSelectionsAsync(
+                    contract.IdContract,
+                    coverageValidationResult.Value!,
+                    currentUserResult.Value!.Id,
+                    now,
+                    cancellationToken);
 
                 await transaction.CommitAsync(cancellationToken);
             }
@@ -126,9 +142,9 @@ namespace IRISBackend.Services
                 return NotFound();
             }
 
-            if (!string.Equals(contract.Status, ContractConstants.DraftStatus, StringComparison.OrdinalIgnoreCase))
+            if (!CanUpdateContract(contract.Status))
             {
-                return Conflict("Only DRAFT facultative contracts can be updated.");
+                return Conflict($"Facultative contract cannot be updated while its status is '{contract.Status}'.");
             }
 
             if (!string.Equals(contract.IdUser, currentUserResult.Value!.Id, StringComparison.Ordinal))
@@ -149,6 +165,12 @@ namespace IRISBackend.Services
                 return validationResult;
             }
 
+            var coverageValidationResult = await _coverageSelectionService.ValidateAsync(request.CoverageSelection, cancellationToken);
+            if (!coverageValidationResult.Succeeded)
+            {
+                return MapCoverageFailure(coverageValidationResult);
+            }
+
             ApplyRequest(contract, request, currentUserResult.Value!.Id, DateTime.UtcNow, normalizedUmr);
 
             if (contract.ContractFac is null)
@@ -163,15 +185,30 @@ namespace IRISBackend.Services
             contract.ContractFac.Deductible = request.Deductible;
             contract.ContractFac.PremiumRate = request.PremiumRate;
 
-            _contractRepository.Update(contract);
-
+            await using IDbContextTransaction transaction = await _contractRepository.BeginTransactionAsync(cancellationToken);
             try
             {
+                _contractRepository.Update(contract);
                 await _contractRepository.SaveChangesAsync(cancellationToken);
+
+                await _coverageSelectionService.ReplaceSelectionsAsync(
+                    contract.IdContract,
+                    coverageValidationResult.Value!,
+                    currentUserResult.Value!.Id,
+                    contract.UpdatedAt ?? DateTime.UtcNow,
+                    cancellationToken);
+
+                await transaction.CommitAsync(cancellationToken);
             }
             catch (DbUpdateException exception) when (IsUmrConflict(exception))
             {
+                await transaction.RollbackAsync(cancellationToken);
                 return Conflict("A contract with the same UMR already exists.");
+            }
+            catch
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                throw;
             }
 
             var refreshedContract = await _contractRepository.GetFacultativeContractByIdAsync(contractId, asNoTracking: true, cancellationToken);
@@ -301,6 +338,14 @@ namespace IRISBackend.Services
                 userResult.StatusCode);
         }
 
+        private static ServiceResult<FacultativeContractResponseDto> MapCoverageFailure(ServiceResult<CoverageSelectionPlan> coverageResult)
+        {
+            return ServiceResult<FacultativeContractResponseDto>.Failure(
+                coverageResult.Error?.Message ?? "Coverage selection is invalid.",
+                coverageResult.Error?.Errors,
+                coverageResult.StatusCode);
+        }
+
         private static decimal? CalculateNetPremium(decimal? grossPremium, decimal? cedentCommissionPct)
         {
             if (!grossPremium.HasValue)
@@ -315,6 +360,13 @@ namespace IRISBackend.Services
         private static string? NormalizeOptionalValue(string? value)
         {
             return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        }
+
+        private static bool CanUpdateContract(string? status)
+        {
+            return string.Equals(status, ContractConstants.DraftStatus, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(status, ContractConstants.ReadyForPlacementStatus, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(status, ContractConstants.PlacementInProgressStatus, StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool IsUmrConflict(DbUpdateException exception)

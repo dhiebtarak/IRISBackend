@@ -28,7 +28,13 @@ builder.Services.AddControllersWithViews()
         {
             var errors = context.ModelState
                 .Where(entry => entry.Value?.Errors.Count > 0)
-                .SelectMany(entry => entry.Value!.Errors.Select(error => error.ErrorMessage))
+                .SelectMany(entry => entry.Value!.Errors.Select(error =>
+                {
+                    var fieldName = NormalizeModelStateKey(entry.Key);
+                    return string.IsNullOrWhiteSpace(fieldName)
+                        ? error.ErrorMessage
+                        : $"{fieldName}: {error.ErrorMessage}";
+                }))
                 .Where(message => !string.IsNullOrWhiteSpace(message));
 
             return new BadRequestObjectResult(new ApiErrorResponseDto
@@ -127,11 +133,16 @@ builder.Services.AddScoped<ICounterpartyAttachmentStorageService, CounterpartyAt
 builder.Services.AddScoped<IReferenceDataService, ReferenceDataService>();
 builder.Services.AddScoped<IFacultativeContractService, FacultativeContractService>();
 builder.Services.AddScoped<IContractReadService, ContractReadService>();
+builder.Services.AddScoped<IContractPlacementService, ContractPlacementService>();
+builder.Services.AddScoped<ICoverageCatalogService, CoverageCatalogService>();
+builder.Services.AddScoped<ICoverageSelectionService, CoverageSelectionService>();
 builder.Services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
 builder.Services.AddScoped<ILoginAuditRepository, LoginAuditRepository>();
 builder.Services.AddScoped<ICounterpartyRepository, CounterpartyRepository>();
 builder.Services.AddScoped<IReferenceDataRepository, ReferenceDataRepository>();
 builder.Services.AddScoped<IContractRepository, ContractRepository>();
+builder.Services.AddScoped<IContractPlacementRepository, ContractPlacementRepository>();
+builder.Services.AddScoped<ICoverageRepository, CoverageRepository>();
 builder.Services.AddHttpContextAccessor();
 
 builder.Services.AddCors(options =>
@@ -173,3 +184,16 @@ app.MapControllerRoute(
     pattern: "{controller=Home}/{action=Index}/{id?}");
 
 app.Run();
+
+static string NormalizeModelStateKey(string key)
+{
+    if (string.IsNullOrWhiteSpace(key))
+    {
+        return string.Empty;
+    }
+
+    var lastSegment = key[(key.LastIndexOf('.') + 1)..];
+    return lastSegment.Length == 0
+        ? string.Empty
+        : char.ToLowerInvariant(lastSegment[0]) + lastSegment[1..];
+}

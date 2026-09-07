@@ -395,6 +395,43 @@ namespace IRISBackend.Tests
                 }).ToList();
                 return Task.FromResult((items, Items.Count));
             }
+
+            public Task<(IReadOnlyList<CounterpartyLookupItemDto> Items, int TotalCount)> SearchActiveReinsurersAsync(
+                string? search,
+                int page,
+                int pageSize,
+                CancellationToken cancellationToken = default)
+            {
+                var normalizedSearch = search?.Trim();
+                var query = Items.Where(counterparty =>
+                    counterparty.IsActive &&
+                    !string.IsNullOrWhiteSpace(counterparty.Type) &&
+                    counterparty.Type.Trim().Equals("Reinsurer", StringComparison.OrdinalIgnoreCase));
+
+                if (!string.IsNullOrWhiteSpace(normalizedSearch))
+                {
+                    query = query.Where(counterparty =>
+                        counterparty.Name.Contains(normalizedSearch, StringComparison.OrdinalIgnoreCase) ||
+                        (!string.IsNullOrWhiteSpace(counterparty.Country) && counterparty.Country.Contains(normalizedSearch, StringComparison.OrdinalIgnoreCase)) ||
+                        (!string.IsNullOrWhiteSpace(counterparty.City) && counterparty.City.Contains(normalizedSearch, StringComparison.OrdinalIgnoreCase)));
+                }
+
+                var filtered = query.ToList();
+                IReadOnlyList<CounterpartyLookupItemDto> items = filtered
+                    .Skip((page - 1) * pageSize)
+                    .Take(pageSize)
+                    .Select(counterparty => new CounterpartyLookupItemDto
+                    {
+                        Id = counterparty.Id,
+                        Name = counterparty.Name,
+                        Type = counterparty.Type,
+                        Country = counterparty.Country,
+                        City = counterparty.City
+                    })
+                    .ToList();
+
+                return Task.FromResult((items, filtered.Count));
+            }
         }
 
         private sealed class FakeDocumentAttachmentRepository : IGenericRepository<DocumentAttachment>

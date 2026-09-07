@@ -15,17 +15,20 @@ namespace IRISBackend.Controllers
         private readonly IValidator<CounterpartyCreateDto> _createValidator;
         private readonly IValidator<CounterpartyUpdateDto> _updateValidator;
         private readonly IValidator<CounterpartyQueryDto> _queryValidator;
+        private readonly IValidator<CounterpartyLookupQueryDto> _lookupValidator;
 
         public CounterpartiesController(
             ICounterpartyService counterpartyService,
             IValidator<CounterpartyCreateDto> createValidator,
             IValidator<CounterpartyUpdateDto> updateValidator,
-            IValidator<CounterpartyQueryDto> queryValidator)
+            IValidator<CounterpartyQueryDto> queryValidator,
+            IValidator<CounterpartyLookupQueryDto> lookupValidator)
         {
             _counterpartyService = counterpartyService;
             _createValidator = createValidator;
             _updateValidator = updateValidator;
             _queryValidator = queryValidator;
+            _lookupValidator = lookupValidator;
         }
 
         [HttpPost]
@@ -51,6 +54,22 @@ namespace IRISBackend.Controllers
         public async Task<IActionResult> GetById(int id, CancellationToken cancellationToken)
         {
             var result = await _counterpartyService.GetByIdAsync(id, cancellationToken);
+            return FromServiceResult(result);
+        }
+
+        /// <summary>Returns active reinsurers for placement autocomplete dropdowns.</summary>
+        [HttpGet("reinsurers")]
+        [ProducesResponseType(typeof(PagedResponseDto<CounterpartyLookupItemDto>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status400BadRequest)]
+        public async Task<IActionResult> SearchReinsurers([FromQuery] CounterpartyLookupQueryDto query, CancellationToken cancellationToken)
+        {
+            var validationResult = await _lookupValidator.ValidateAsync(query, cancellationToken);
+            if (!validationResult.IsValid)
+            {
+                return BadRequest(ToErrorResponse(validationResult.Errors.Select(error => error.ErrorMessage)));
+            }
+
+            var result = await _counterpartyService.SearchReinsurersAsync(query, cancellationToken);
             return FromServiceResult(result);
         }
 

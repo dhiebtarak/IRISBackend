@@ -63,15 +63,15 @@
          "ObjectType": 0
       },
       {
+         "Name": "[dbo].[CONTRACT_COVERAGE_SELECTION]",
+         "ObjectType": 0
+      },
+      {
          "Name": "[dbo].[CONTRACT_FAC]",
          "ObjectType": 0
       },
       {
          "Name": "[dbo].[CONTRACT_PANEL]",
-         "ObjectType": 0
-      },
-      {
-         "Name": "[dbo].[CONTRACT_SUB_RISK]",
          "ObjectType": 0
       },
       {
@@ -96,6 +96,14 @@
       },
       {
          "Name": "[dbo].[COUNTERPARTY_BANK_ACCOUNT]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[COVERAGE_ITEM]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[COVERAGE_RELATION]",
          "ObjectType": 0
       },
       {
@@ -131,11 +139,7 @@
          "ObjectType": 0
       },
       {
-         "Name": "[dbo].[RISK_NATURE]",
-         "ObjectType": 0
-      },
-      {
-         "Name": "[dbo].[SUB_RISK]",
+         "Name": "[dbo].[SLIP_TEMPLATE]",
          "ObjectType": 0
       },
       {

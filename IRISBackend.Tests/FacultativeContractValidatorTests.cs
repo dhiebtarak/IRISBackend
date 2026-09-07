@@ -79,5 +79,38 @@ namespace IRISBackend.Tests
             Assert.False(result.IsValid);
             Assert.Contains(result.Errors, error => error.ErrorMessage == "frontingReference is required when isFronting is true.");
         }
+
+        [Fact]
+        public void Validate_WhenCoverageSelectionIsMissing_ReturnsError()
+        {
+            var result = _validator.Validate(new UpsertFacultativeContractRequest
+            {
+                Name = "Draft",
+                CounterpartyId = 10,
+                CurrencyId = 2,
+                InceptionDate = new DateOnly(2026, 9, 1),
+                ExpiryDate = new DateOnly(2027, 8, 31)
+            });
+
+            Assert.False(result.IsValid);
+            Assert.Contains(result.Errors, error => error.ErrorMessage == "coverageSelection is required.");
+        }
+
+        [Fact]
+        public void Validate_WhenMainCoverIsMissing_ReturnsError()
+        {
+            var result = _validator.Validate(new UpsertFacultativeContractRequest
+            {
+                Name = "Draft",
+                CounterpartyId = 10,
+                CurrencyId = 2,
+                InceptionDate = new DateOnly(2026, 9, 1),
+                ExpiryDate = new DateOnly(2027, 8, 31),
+                CoverageSelection = new CoverageSelectionRequestDto()
+            });
+
+            Assert.False(result.IsValid);
+            Assert.Contains(result.Errors, error => error.ErrorMessage == "coverageSelection.mainCoverId is required.");
+        }
     }
 }

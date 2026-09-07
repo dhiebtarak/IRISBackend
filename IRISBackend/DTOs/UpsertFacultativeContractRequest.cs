@@ -41,5 +41,7 @@ namespace IRISBackend.DTOs
         public string? FrontingReference { get; set; }
 
         public string? MemoText { get; set; }
+
+        public CoverageSelectionRequestDto? CoverageSelection { get; set; }
     }
 }

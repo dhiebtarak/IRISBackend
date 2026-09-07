@@ -10,5 +10,11 @@ namespace IRISBackend.Repositories
         Task<bool> LegacyCompanyCodeExistsAsync(string legacyCompanyCode, int? excludedId = null, CancellationToken cancellationToken = default);
 
         Task<(IReadOnlyList<CounterpartyListItemDto> Items, int TotalCount)> ListAsync(CounterpartyQueryDto query, CancellationToken cancellationToken = default);
+
+        Task<(IReadOnlyList<CounterpartyLookupItemDto> Items, int TotalCount)> SearchActiveReinsurersAsync(
+            string? search,
+            int page,
+            int pageSize,
+            CancellationToken cancellationToken = default);
     }
 }

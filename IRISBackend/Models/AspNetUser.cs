@@ -63,19 +63,27 @@ public partial class AspNetUser
 
     public virtual ICollection<CollectionNote> CollectionNoteUpdatedByNavigations { get; set; } = new List<CollectionNote>();
 
+    public virtual ICollection<ContractCoverageSelection> ContractCoverageSelectionCreatedByNavigations { get; set; } = new List<ContractCoverageSelection>();
+
+    public virtual ICollection<ContractCoverageSelection> ContractCoverageSelectionUpdatedByNavigations { get; set; } = new List<ContractCoverageSelection>();
+
     public virtual ICollection<Contract> ContractCreatedByNavigations { get; set; } = new List<Contract>();
 
     public virtual ICollection<Contract> ContractIdUserNavigations { get; set; } = new List<Contract>();
-
-    public virtual ICollection<ContractSubRisk> ContractSubRiskCreatedByNavigations { get; set; } = new List<ContractSubRisk>();
-
-    public virtual ICollection<ContractSubRisk> ContractSubRiskUpdatedByNavigations { get; set; } = new List<ContractSubRisk>();
 
     public virtual ICollection<Contract> ContractUpdatedByNavigations { get; set; } = new List<Contract>();
 
     public virtual ICollection<CounterpartyBankAccount> CounterpartyBankAccountCreatedByNavigations { get; set; } = new List<CounterpartyBankAccount>();
 
     public virtual ICollection<CounterpartyBankAccount> CounterpartyBankAccountUpdatedByNavigations { get; set; } = new List<CounterpartyBankAccount>();
+
+    public virtual ICollection<CoverageItem> CoverageItemCreatedByNavigations { get; set; } = new List<CoverageItem>();
+
+    public virtual ICollection<CoverageItem> CoverageItemUpdatedByNavigations { get; set; } = new List<CoverageItem>();
+
+    public virtual ICollection<CoverageRelation> CoverageRelationCreatedByNavigations { get; set; } = new List<CoverageRelation>();
+
+    public virtual ICollection<CoverageRelation> CoverageRelationUpdatedByNavigations { get; set; } = new List<CoverageRelation>();
 
     public virtual ICollection<Disbursement> DisbursementCreatedByNavigations { get; set; } = new List<Disbursement>();
 
@@ -108,6 +116,8 @@ public partial class AspNetUser
     public virtual ICollection<RemittanceRef> RemittanceRefCreatedByNavigations { get; set; } = new List<RemittanceRef>();
 
     public virtual ICollection<RemittanceRef> RemittanceRefUpdatedByNavigations { get; set; } = new List<RemittanceRef>();
+
+    public virtual ICollection<SlipTemplate> SlipTemplates { get; set; } = new List<SlipTemplate>();
 
     public virtual ICollection<UserLoginAudit> UserLoginAudits { get; set; } = new List<UserLoginAudit>();
 

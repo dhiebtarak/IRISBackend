@@ -23,6 +23,21 @@ namespace IRISBackend.Repositories
             bool asNoTracking = false,
             CancellationToken cancellationToken = default);
 
+        Task<Contract?> GetAccessibleContractByIdAsync(
+            int contractId,
+            string userId,
+            CancellationToken cancellationToken = default);
+
+        Task MarkDraftReadyForPlacementAsync(
+            int contractId,
+            string userId,
+            CancellationToken cancellationToken = default);
+
+        Task<IReadOnlyList<SlipTemplate>> ListActiveCurrentSlipTemplatesForContractAsync(
+            int contractId,
+            string userId,
+            CancellationToken cancellationToken = default);
+
         Task<(IReadOnlyList<ContractListItemDto> Items, int TotalCount)> ListAsync(
             ContractListQueryDto query,
             string userId,

@@ -10,6 +10,10 @@ namespace IRISBackend.Services
 
         Task<ServiceResult<PagedResponseDto<CounterpartyListItemDto>>> ListAsync(CounterpartyQueryDto query, CancellationToken cancellationToken = default);
 
+        Task<ServiceResult<PagedResponseDto<CounterpartyLookupItemDto>>> SearchReinsurersAsync(
+            CounterpartyLookupQueryDto query,
+            CancellationToken cancellationToken = default);
+
         Task<ServiceResult<CounterpartyDetailsDto>> UpdateAsync(int id, CounterpartyUpdateDto request, CancellationToken cancellationToken = default);
 
         Task<ServiceResult<CounterpartyDetailsDto>> SetActiveStatusAsync(int id, bool isActive, CancellationToken cancellationToken = default);

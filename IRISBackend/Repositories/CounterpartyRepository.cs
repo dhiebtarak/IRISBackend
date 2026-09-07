@@ -55,6 +55,46 @@ namespace IRISBackend.Repositories
             return (items, totalCount);
         }
 
+        public async Task<(IReadOnlyList<CounterpartyLookupItemDto> Items, int TotalCount)> SearchActiveReinsurersAsync(
+            string? search,
+            int page,
+            int pageSize,
+            CancellationToken cancellationToken = default)
+        {
+            var normalizedSearch = string.IsNullOrWhiteSpace(search) ? null : search.Trim().ToLowerInvariant();
+            var query = _dbContext.Counterparties
+                .AsNoTracking()
+                .Where(counterparty =>
+                    counterparty.IsActive &&
+                    counterparty.Type != null &&
+                    counterparty.Type.Trim().ToLower() == "reinsurer");
+
+            if (!string.IsNullOrWhiteSpace(normalizedSearch))
+            {
+                query = query.Where(counterparty =>
+                    (counterparty.Name != null && counterparty.Name.ToLower().Contains(normalizedSearch)) ||
+                    (counterparty.Country != null && counterparty.Country.ToLower().Contains(normalizedSearch)) ||
+                    (counterparty.City != null && counterparty.City.ToLower().Contains(normalizedSearch)));
+            }
+
+            var totalCount = await query.CountAsync(cancellationToken);
+            var items = await query
+                .OrderBy(counterparty => counterparty.Name)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(counterparty => new CounterpartyLookupItemDto
+                {
+                    Id = counterparty.Id,
+                    Name = counterparty.Name,
+                    Type = counterparty.Type,
+                    Country = counterparty.Country,
+                    City = counterparty.City
+                })
+                .ToListAsync(cancellationToken);
+
+            return (items, totalCount);
+        }
+
         private static string Normalize(string value)
         {
             return value.Trim().ToUpperInvariant();

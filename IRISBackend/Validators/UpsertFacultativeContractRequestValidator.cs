@@ -91,6 +91,17 @@ namespace IRISBackend.Validators
 
             RuleFor(contract => contract.MemoText)
                 .MaximumLength(500);
+
+            RuleFor(contract => contract.CoverageSelection)
+                .NotNull()
+                .WithMessage("coverageSelection is required.");
+
+            When(contract => contract.CoverageSelection is not null, () =>
+            {
+                RuleFor(contract => contract.CoverageSelection!.MainCoverId)
+                    .GreaterThan(0)
+                    .WithMessage("coverageSelection.mainCoverId is required.");
+            });
         }
     }
 }

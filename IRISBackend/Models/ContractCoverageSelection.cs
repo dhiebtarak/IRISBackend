@@ -5,13 +5,15 @@ using System.Collections.Generic;
 
 namespace IRISBackend.Models;
 
-public partial class ContractSubRisk
+public partial class ContractCoverageSelection
 {
-    public int IdContractSubRisk { get; set; }
+    public int IdContractCoverageSelection { get; set; }
 
     public int IdContract { get; set; }
 
-    public int IdSubRisk { get; set; }
+    public int IdCoverageItem { get; set; }
+
+    public int? IdSlipTemplate { get; set; }
 
     public DateTime CreatedAt { get; set; }
 
@@ -25,7 +27,9 @@ public partial class ContractSubRisk
 
     public virtual Contract IdContractNavigation { get; set; }
 
-    public virtual SubRisk IdSubRiskNavigation { get; set; }
+    public virtual CoverageItem IdCoverageItemNavigation { get; set; }
+
+    public virtual SlipTemplate SlipTemplate { get; set; }
 
     public virtual AspNetUser UpdatedByNavigation { get; set; }
 }

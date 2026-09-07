@@ -1,5 +1,6 @@
 using IRISBackend.DTOs;
 using IRISBackend.Repositories;
+using System.IO.Compression;
 
 namespace IRISBackend.Services
 {
@@ -79,6 +80,93 @@ namespace IRISBackend.Services
             });
         }
 
+        public async Task<ServiceResult<ContractOverviewDto>> GetOverviewAsync(
+            int contractId,
+            CancellationToken cancellationToken = default)
+        {
+            var userResult = await GetCurrentFrontOfficerAsync();
+            if (!userResult.Succeeded)
+            {
+                return MapFailure<ContractOverviewDto>(userResult);
+            }
+
+            await _contractRepository.MarkDraftReadyForPlacementAsync(contractId, userResult.Value!.Id, cancellationToken);
+
+            var contract = await _contractRepository.GetAccessibleContractByIdAsync(
+                contractId,
+                userResult.Value.Id,
+                cancellationToken);
+
+            if (contract is null)
+            {
+                return ServiceResult<ContractOverviewDto>.Failure(
+                    "Contract was not found.",
+                    statusCode: StatusCodes.Status404NotFound);
+            }
+
+            return ServiceResult<ContractOverviewDto>.Success(MapOverview(contract));
+        }
+
+        public async Task<ServiceResult<SlipDownloadResult>> DownloadSlipsAsync(
+            int contractId,
+            CancellationToken cancellationToken = default)
+        {
+            var userResult = await GetCurrentFrontOfficerAsync();
+            if (!userResult.Succeeded)
+            {
+                return MapFailure<SlipDownloadResult>(userResult);
+            }
+
+            var contract = await _contractRepository.GetAccessibleContractByIdAsync(
+                contractId,
+                userResult.Value!.Id,
+                cancellationToken);
+
+            if (contract is null)
+            {
+                return ServiceResult<SlipDownloadResult>.Failure(
+                    "Contract was not found.",
+                    statusCode: StatusCodes.Status404NotFound);
+            }
+
+            var slips = await _contractRepository.ListActiveCurrentSlipTemplatesForContractAsync(
+                contractId,
+                userResult.Value.Id,
+                cancellationToken);
+
+            if (slips.Count == 0)
+            {
+                return ServiceResult<SlipDownloadResult>.Success(new SlipDownloadResult
+                {
+                    Available = false,
+                    Message = "Slip is not available for this contract selection.",
+                    SlipCount = 0
+                });
+            }
+
+            if (slips.Count == 1)
+            {
+                var slip = slips[0];
+                return ServiceResult<SlipDownloadResult>.Success(new SlipDownloadResult
+                {
+                    Content = slip.FileContent,
+                    ContentType = string.IsNullOrWhiteSpace(slip.MimeType)
+                        ? "application/octet-stream"
+                        : slip.MimeType,
+                    FileName = BuildSlipFileName(slip),
+                    SlipCount = 1
+                });
+            }
+
+            return ServiceResult<SlipDownloadResult>.Success(new SlipDownloadResult
+            {
+                Content = BuildSlipZip(slips),
+                ContentType = "application/zip",
+                FileName = $"{SanitizeFileName(contract.Name)}-slips.zip",
+                SlipCount = slips.Count
+            });
+        }
+
         private async Task<ServiceResult<UserProfileResponseDto>> GetCurrentFrontOfficerAsync()
         {
             var principal = _httpContextAccessor.HttpContext?.User;
@@ -133,6 +221,221 @@ namespace IRISBackend.Services
                 result.Error?.Message ?? "Unable to resolve the current user.",
                 result.Error?.Errors,
                 result.StatusCode);
+        }
+
+        private static ContractOverviewDto MapOverview(Models.Contract contract)
+        {
+            var coverageSelection = MapCoverageSelection(contract);
+            var selectedCount = contract.ContractCoverageSelections.Count;
+            var availableSlipCount = contract.ContractCoverageSelections.Count(selection => selection.IdSlipTemplate.HasValue);
+
+            return new ContractOverviewDto
+            {
+                IdContract = contract.IdContract,
+                Umr = contract.Umr,
+                Name = contract.Name,
+                ContractType = ResolveContractType(contract),
+                TypeOfBusiness = contract.TypeOfBusiness,
+                Status = contract.Status,
+                CounterpartyId = contract.IdCounterparty,
+                Cedent = new CedentSummaryDto
+                {
+                    Id = contract.IdCounterparty,
+                    Name = contract.IdCounterpartyNavigation?.Name ?? string.Empty,
+                    Country = contract.IdCounterpartyNavigation?.Country,
+                    City = contract.IdCounterpartyNavigation?.City
+                },
+                CurrencyId = contract.IdCurrency,
+                Currency = new CurrencyReferenceDto
+                {
+                    Id = contract.IdCurrency,
+                    Code = contract.IdCurrencyNavigation?.CurrencyCode ?? string.Empty,
+                    Symbol = contract.IdCurrencyNavigation?.CurrencySymbol,
+                    Name = contract.IdCurrencyNavigation?.Name ?? string.Empty,
+                    DecimalPlaces = contract.IdCurrencyNavigation?.DecimalPlaces,
+                    IsDefault = contract.IdCurrencyNavigation?.IsDefault ?? false
+                },
+                CreationDate = contract.CreationDate,
+                ReceptionDate = contract.ReceptionDate,
+                InceptionDate = contract.InceptionDate,
+                ExpiryDate = contract.ExpiryDate,
+                WrittenSharePct = contract.WrittenSharePctCedent,
+                SignedSharePct = contract.SignedSharePctCedent,
+                Tsi = contract.ContractFac?.SumInsured,
+                SumInsured = contract.ContractFac?.SumInsured,
+                Deductible = contract.ContractFac?.Deductible,
+                PremiumRate = contract.ContractFac?.PremiumRate,
+                Fees = contract.Fees,
+                GrossPremium = contract.GrossPremium,
+                CedentCommissionPct = contract.CedentCommission,
+                NetPremiumCedent = contract.NetPremiumCedent,
+                IsFronting = contract.IsFronting,
+                FrontingReference = contract.FrontingReference,
+                IsHighPriority = contract.Flag,
+                ActionRequired = contract.Flag,
+                CreatedBy = MapAuditUser(contract.CreatedBy, contract.CreatedByNavigation),
+                CreatedAt = contract.CreatedAt,
+                UpdatedBy = MapAuditUser(contract.UpdatedBy, contract.UpdatedByNavigation),
+                UpdatedAt = contract.UpdatedAt,
+                CoverageSelection = coverageSelection,
+                SlipAvailability = new ContractSlipAvailabilityDto
+                {
+                    SelectedCoverageItemCount = selectedCount,
+                    AvailableSlipCount = availableSlipCount,
+                    MissingSlipCount = Math.Max(selectedCount - availableSlipCount, 0)
+                },
+                Panels = contract.ContractPanels
+                    .OrderBy(panel => panel.IdPanel)
+                    .Select(ContractPanelDtoMapper.Map)
+                    .ToArray()
+            };
+        }
+
+        private static ContractAuditUserDto? MapAuditUser(string? userId, Models.AspNetUser? user)
+        {
+            if (string.IsNullOrWhiteSpace(userId) && user is null)
+            {
+                return null;
+            }
+
+            return new ContractAuditUserDto
+            {
+                Id = user?.Id ?? userId,
+                FullName = user?.FullName,
+                UserName = user?.UserName,
+                Email = user?.Email
+            };
+        }
+
+        private static ContractCoverageSelectionResponseDto? MapCoverageSelection(Models.Contract contract)
+        {
+            if (contract.ContractCoverageSelections.Count == 0)
+            {
+                return null;
+            }
+
+            var selections = contract.ContractCoverageSelections
+                .Where(selection => selection.IdCoverageItemNavigation is not null)
+                .ToList();
+
+            var mainCover = selections.SingleOrDefault(selection =>
+                IsCoverageLevel(selection, CoverageConstants.MainCoverLevel));
+
+            var sections = selections
+                .Where(selection => IsCoverageLevel(selection, CoverageConstants.SectionLevel))
+                .OrderBy(selection => selection.IdCoverageItemNavigation.DisplayOrder ?? int.MaxValue)
+                .ThenBy(selection => selection.IdCoverageItemNavigation.CoverageName)
+                .Select(MapCoverageItem)
+                .ToArray();
+
+            var extensions = selections
+                .Where(selection => IsCoverageLevel(selection, CoverageConstants.ExtensionLevel))
+                .OrderBy(selection => selection.IdCoverageItemNavigation.DisplayOrder ?? int.MaxValue)
+                .ThenBy(selection => selection.IdCoverageItemNavigation.CoverageName)
+                .Select(MapCoverageItem)
+                .ToArray();
+
+            return new ContractCoverageSelectionResponseDto
+            {
+                MainCoverId = mainCover?.IdCoverageItem ?? 0,
+                SectionIds = sections.Select(section => section.Id).ToArray(),
+                ExtensionIds = extensions.Select(extension => extension.Id).ToArray(),
+                MainCover = mainCover is null ? null : MapCoverageItem(mainCover),
+                Sections = sections,
+                Extensions = extensions
+            };
+        }
+
+        private static ContractCoverageSelectionItemDto MapCoverageItem(Models.ContractCoverageSelection selection)
+        {
+            return new ContractCoverageSelectionItemDto
+            {
+                Id = selection.IdCoverageItem,
+                Code = selection.IdCoverageItemNavigation.CoverageCode,
+                Name = selection.IdCoverageItemNavigation.CoverageName,
+                HasSlip = selection.IdSlipTemplate.HasValue,
+                SlipTemplateId = selection.IdSlipTemplate
+            };
+        }
+
+        private static bool IsCoverageLevel(Models.ContractCoverageSelection selection, string level)
+        {
+            return string.Equals(
+                selection.IdCoverageItemNavigation.CoverageLevel?.Trim(),
+                level,
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string? ResolveContractType(Models.Contract contract)
+        {
+            if (contract.ContractFac is not null)
+            {
+                return ContractTypeNames.Facultative;
+            }
+
+            if (contract.ContractTreatyProp?.ContractTreatyPropQuotaShare is not null)
+            {
+                return ContractTypeNames.TreatyProportionalQuotaShare;
+            }
+
+            if (contract.ContractTreatyProp?.ContractTreatyPropSurplu is not null)
+            {
+                return ContractTypeNames.TreatyProportionalSurplus;
+            }
+
+            return contract.ContractTreatyNonprops.Count > 0 ? ContractTypeNames.TreatyNonProportional : null;
+        }
+
+        private static byte[] BuildSlipZip(IReadOnlyList<Models.SlipTemplate> slips)
+        {
+            using var memoryStream = new MemoryStream();
+            using (var archive = new ZipArchive(memoryStream, ZipArchiveMode.Create, leaveOpen: true))
+            {
+                foreach (var slip in slips)
+                {
+                    var entry = archive.CreateEntry(BuildSlipFileName(slip), CompressionLevel.Fastest);
+                    using var entryStream = entry.Open();
+                    entryStream.Write(slip.FileContent, 0, slip.FileContent.Length);
+                }
+            }
+
+            return memoryStream.ToArray();
+        }
+
+        private static string BuildSlipFileName(Models.SlipTemplate slip)
+        {
+            var originalName = SanitizeFileName(slip.OriginalFileName);
+            if (!string.IsNullOrWhiteSpace(originalName))
+            {
+                return originalName;
+            }
+
+            var extension = string.IsNullOrWhiteSpace(slip.FileExtension)
+                ? ".docx"
+                : slip.FileExtension.Trim();
+
+            if (!extension.StartsWith(".", StringComparison.Ordinal))
+            {
+                extension = "." + extension;
+            }
+
+            return $"slip-template-{slip.IdSlipTemplate}{extension}";
+        }
+
+        private static string SanitizeFileName(string? fileName)
+        {
+            if (string.IsNullOrWhiteSpace(fileName))
+            {
+                return "contract";
+            }
+
+            var invalidCharacters = Path.GetInvalidFileNameChars();
+            var sanitized = new string(fileName
+                .Select(character => invalidCharacters.Contains(character) ? '_' : character)
+                .ToArray())
+                .Trim();
+
+            return string.IsNullOrWhiteSpace(sanitized) ? "contract" : sanitized;
         }
     }
 }
