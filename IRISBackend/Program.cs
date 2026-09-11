@@ -74,6 +74,8 @@ builder.Services.AddAutoMapper(_ => { }, typeof(Program).Assembly);
 builder.Services.AddValidatorsFromAssemblyContaining<CounterpartyCreateDtoValidator>();
 builder.Services.Configure<CounterpartyAttachmentStorageOptions>(
     builder.Configuration.GetSection(CounterpartyAttachmentStorageOptions.SectionName));
+builder.Services.Configure<DocumentStorageOptions>(
+    builder.Configuration.GetSection(DocumentStorageOptions.SectionName));
 
 builder.Services.AddDbContext<IRISBackendContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DevDB")));
@@ -130,13 +132,17 @@ builder.Services.AddScoped<IWorkspaceAccessService, WorkspaceAccessService>();
 builder.Services.AddScoped<ILoginAuditService, LoginAuditService>();
 builder.Services.AddScoped<ICounterpartyService, CounterpartyService>();
 builder.Services.AddScoped<ICounterpartyAttachmentStorageService, CounterpartyAttachmentStorageService>();
+builder.Services.AddScoped<IDocumentStorageService, DocumentStorageService>();
+builder.Services.AddScoped<IDocumentAttachmentService, DocumentAttachmentService>();
 builder.Services.AddScoped<IReferenceDataService, ReferenceDataService>();
 builder.Services.AddScoped<IFacultativeContractService, FacultativeContractService>();
+builder.Services.AddScoped<IContractUmrGenerator, ContractUmrGenerator>();
 builder.Services.AddScoped<IContractReadService, ContractReadService>();
 builder.Services.AddScoped<IContractPlacementService, ContractPlacementService>();
 builder.Services.AddScoped<ICoverageCatalogService, CoverageCatalogService>();
 builder.Services.AddScoped<ICoverageSelectionService, CoverageSelectionService>();
 builder.Services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
+builder.Services.AddScoped<IDocumentAttachmentRepository, DocumentAttachmentRepository>();
 builder.Services.AddScoped<ILoginAuditRepository, LoginAuditRepository>();
 builder.Services.AddScoped<ICounterpartyRepository, CounterpartyRepository>();
 builder.Services.AddScoped<IReferenceDataRepository, ReferenceDataRepository>();

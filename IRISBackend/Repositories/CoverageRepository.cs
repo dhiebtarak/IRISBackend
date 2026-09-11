@@ -18,7 +18,7 @@ namespace IRISBackend.Repositories
         {
             return await _dbContext.CoverageItems
                 .AsNoTracking()
-                .Where(item => item.IsActive && item.CoverageLevel == CoverageConstants.MainCoverLevel)
+                .Where(item => item.IsActive)
                 .Select(item => new
                 {
                     item.DisplayOrder,

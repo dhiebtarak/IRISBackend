@@ -14,6 +14,8 @@ namespace IRISBackend.DTOs
 
         public string Status { get; set; } = string.Empty;
 
+        public ContractAllowedActionsDto AllowedActions { get; set; } = new();
+
         public int CounterpartyId { get; set; }
 
         public CedentSummaryDto Cedent { get; set; } = new();
@@ -37,6 +39,8 @@ namespace IRISBackend.DTOs
         public decimal? Tsi { get; set; }
 
         public decimal? SumInsured { get; set; }
+
+        public decimal? LimitOfLiability { get; set; }
 
         public decimal? Deductible { get; set; }
 

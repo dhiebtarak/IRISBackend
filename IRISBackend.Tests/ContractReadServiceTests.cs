@@ -386,6 +386,7 @@ namespace IRISBackend.Tests
 
             public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
             public Task<bool> UmrExistsAsync(string umr, int? excludedContractId = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+            public Task<int> AllocateUmrSequenceAsync(int inceptionYear, string contractTypeCode, string mainCoverCode, CancellationToken cancellationToken = default) => throw new NotSupportedException();
             public Task AddAsync(Contract contract, CancellationToken cancellationToken = default) => throw new NotSupportedException();
             public Task AddFacultativeDetailsAsync(ContractFac contractFac, CancellationToken cancellationToken = default) => throw new NotSupportedException();
             public void Update(Contract contract) => throw new NotSupportedException();

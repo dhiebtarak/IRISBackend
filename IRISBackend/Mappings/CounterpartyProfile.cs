@@ -8,10 +8,16 @@ namespace IRISBackend.Mappings
     {
         public CounterpartyProfile()
         {
-            CreateMap<CounterpartyCreateDto, Counterparty>();
-            CreateMap<CounterpartyUpdateDto, Counterparty>();
-            CreateMap<Counterparty, CounterpartyDetailsDto>();
-            CreateMap<Counterparty, CounterpartyListItemDto>();
+            CreateMap<CounterpartyCreateDto, Counterparty>()
+                .ForMember(destination => destination.Type, options => options.Ignore())
+                .ForMember(destination => destination.TypeAssignments, options => options.Ignore());
+            CreateMap<CounterpartyUpdateDto, Counterparty>()
+                .ForMember(destination => destination.Type, options => options.Ignore())
+                .ForMember(destination => destination.TypeAssignments, options => options.Ignore());
+            CreateMap<Counterparty, CounterpartyDetailsDto>()
+                .ForMember(destination => destination.Types, options => options.MapFrom(source => source.TypeAssignments.OrderBy(assignment => assignment.Type).Select(assignment => assignment.Type).ToArray()));
+            CreateMap<Counterparty, CounterpartyListItemDto>()
+                .ForMember(destination => destination.Types, options => options.MapFrom(source => source.TypeAssignments.OrderBy(assignment => assignment.Type).Select(assignment => assignment.Type).ToArray()));
         }
     }
 }

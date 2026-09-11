@@ -740,6 +740,80 @@ namespace IRISBackend.Migrations
                     b.ToTable("CONTRACT", (string)null);
                 });
 
+            modelBuilder.Entity("IRISBackend.Models.ContractCoverageSelection", b =>
+                {
+                    b.Property<int>("IdContractCoverageSelection")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("id_contract_coverage_selection");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("IdContractCoverageSelection"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("(sysutcdatetime())")
+                        .HasAnnotation("Relational:DefaultConstraintName", "DF_CONTRACT_COVERAGE_SELECTION_created_at");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)")
+                        .HasColumnName("created_by");
+
+                    b.Property<int>("IdContract")
+                        .HasColumnType("int")
+                        .HasColumnName("id_contract");
+
+                    b.Property<int>("IdCoverageItem")
+                        .HasColumnType("int")
+                        .HasColumnName("id_coverage_item");
+
+                    b.Property<int?>("IdSlipTemplate")
+                        .HasColumnType("int")
+                        .HasColumnName("id_slip_template");
+
+                    b.Property<bool>("IsPrimary")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_primary");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("IdContractCoverageSelection");
+
+                    b.HasIndex("CreatedBy");
+
+                    b.HasIndex("IdCoverageItem");
+
+                    b.HasIndex("UpdatedBy");
+
+                    b.HasIndex("IdSlipTemplate", "IdCoverageItem");
+
+                    b.HasIndex(new[] { "IdContract" }, "IX_CONTRACT_COVERAGE_SELECTION_contract");
+
+                    b.HasIndex(new[] { "IdContract", "IdCoverageItem" }, "UQ_CONTRACT_COVERAGE_SELECTION_contract_item")
+                        .IsUnique();
+
+                    b.ToTable("CONTRACT_COVERAGE_SELECTION", null, t =>
+                        {
+                            t.HasTrigger("TR_CONTRACT_COVERAGE_SELECTION_prevent_orphans");
+
+                            t.HasTrigger("TR_CONTRACT_COVERAGE_SELECTION_require_parent");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
             modelBuilder.Entity("IRISBackend.Models.ContractFac", b =>
                 {
                     b.Property<int>("IdContractFac")
@@ -755,6 +829,10 @@ namespace IRISBackend.Migrations
                     b.Property<int>("IdContract")
                         .HasColumnType("int")
                         .HasColumnName("Id_contract");
+
+                    b.Property<decimal?>("LimitOfLiability")
+                        .HasColumnType("decimal(19, 4)")
+                        .HasColumnName("Limit_of_liability");
 
                     b.Property<decimal?>("PremiumRate")
                         .HasColumnType("decimal(19, 8)")
@@ -785,6 +863,10 @@ namespace IRISBackend.Migrations
                         .HasColumnType("decimal(19, 8)")
                         .HasColumnName("Brokerage_pct");
 
+                    b.Property<decimal?>("Deductible")
+                        .HasColumnType("decimal(19, 4)")
+                        .HasColumnName("Deductible");
+
                     b.Property<decimal?>("GrossPremium")
                         .HasColumnType("decimal(19, 4)")
                         .HasColumnName("Gross_premium");
@@ -805,6 +887,10 @@ namespace IRISBackend.Migrations
                         .HasColumnType("decimal(19, 4)")
                         .HasColumnName("Other_deductions");
 
+                    b.Property<decimal?>("PremiumRatePct")
+                        .HasColumnType("decimal(19, 8)")
+                        .HasColumnName("Premium_rate_pct");
+
                     b.Property<string>("PremiumReference")
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)")
@@ -818,6 +904,17 @@ namespace IRISBackend.Migrations
                         .HasColumnType("decimal(19, 8)")
                         .HasColumnName("Signed_share_pct");
 
+                    b.Property<string>("Status")
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)")
+                        .HasDefaultValue("Draft")
+                        .HasColumnName("Status");
+
+                    b.Property<decimal?>("Tsi")
+                        .HasColumnType("decimal(19, 4)")
+                        .HasColumnName("Tsi");
+
                     b.Property<decimal?>("WrittenSharePct")
                         .HasColumnType("decimal(19, 8)")
                         .HasColumnName("Written_share_pct");
@@ -829,59 +926,6 @@ namespace IRISBackend.Migrations
                     b.HasIndex(new[] { "IdContract" }, "IX_CONTRACT_PANEL_id_contract");
 
                     b.ToTable("CONTRACT_PANEL", (string)null);
-                });
-
-            modelBuilder.Entity("IRISBackend.Models.ContractSubRisk", b =>
-                {
-                    b.Property<int>("IdContractSubRisk")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int")
-                        .HasColumnName("Id_contract_sub_risk");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("IdContractSubRisk"));
-
-                    b.Property<DateTime>("CreatedAt")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("datetime2")
-                        .HasColumnName("Created_at")
-                        .HasDefaultValueSql("(sysutcdatetime())")
-                        .HasAnnotation("Relational:DefaultConstraintName", "DF_CONTRACT_SUB_RISK_created_at");
-
-                    b.Property<string>("CreatedBy")
-                        .IsRequired()
-                        .HasMaxLength(450)
-                        .HasColumnType("nvarchar(450)")
-                        .HasColumnName("Created_by");
-
-                    b.Property<int>("IdContract")
-                        .HasColumnType("int")
-                        .HasColumnName("Id_contract");
-
-                    b.Property<int>("IdSubRisk")
-                        .HasColumnType("int")
-                        .HasColumnName("Id_sub_risk");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("datetime2")
-                        .HasColumnName("Updated_at");
-
-                    b.Property<string>("UpdatedBy")
-                        .HasMaxLength(450)
-                        .HasColumnType("nvarchar(450)")
-                        .HasColumnName("Updated_by");
-
-                    b.HasKey("IdContractSubRisk");
-
-                    b.HasIndex("CreatedBy");
-
-                    b.HasIndex("IdSubRisk");
-
-                    b.HasIndex("UpdatedBy");
-
-                    b.HasIndex(new[] { "IdContract", "IdSubRisk" }, "UQ_CONTRACT_SUB_RISK")
-                        .IsUnique();
-
-                    b.ToTable("CONTRACT_SUB_RISK", (string)null);
                 });
 
             modelBuilder.Entity("IRISBackend.Models.ContractTreatyNonprop", b =>
@@ -1226,6 +1270,31 @@ namespace IRISBackend.Migrations
                     b.ToTable("CONTRACT_TREATY_PROP_SURPLUS", (string)null);
                 });
 
+            modelBuilder.Entity("IRISBackend.Models.ContractUmrSequence", b =>
+                {
+                    b.Property<int>("InceptionYear")
+                        .HasColumnType("int")
+                        .HasColumnName("inception_year");
+
+                    b.Property<string>("ContractTypeCode")
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)")
+                        .HasColumnName("contract_type_code");
+
+                    b.Property<string>("MainCoverCode")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)")
+                        .HasColumnName("main_cover_code");
+
+                    b.Property<int>("CurrentSequence")
+                        .HasColumnType("int")
+                        .HasColumnName("current_sequence");
+
+                    b.HasKey("InceptionYear", "ContractTypeCode", "MainCoverCode");
+
+                    b.ToTable("CONTRACT_UMR_SEQUENCE", (string)null);
+                });
+
             modelBuilder.Entity("IRISBackend.Models.Counterparty", b =>
                 {
                     b.Property<int>("Id")
@@ -1423,6 +1492,186 @@ namespace IRISBackend.Migrations
                     b.HasIndex("UpdatedBy");
 
                     b.ToTable("COUNTERPARTY_BANK_ACCOUNT", (string)null);
+                });
+
+            modelBuilder.Entity("IRISBackend.Models.CounterpartyTypeAssignment", b =>
+                {
+                    b.Property<int>("CounterpartyId")
+                        .HasColumnType("int")
+                        .HasColumnName("CounterpartyId");
+
+                    b.Property<string>("Type")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)")
+                        .HasColumnName("Type");
+
+                    b.HasKey("CounterpartyId", "Type");
+
+                    b.HasIndex(new[] { "Type" }, "IX_COUNTERPARTY_TYPE_ASSIGNMENT_Type");
+
+                    b.ToTable("COUNTERPARTY_TYPE_ASSIGNMENT", (string)null);
+                });
+
+            modelBuilder.Entity("IRISBackend.Models.CoverageItem", b =>
+                {
+                    b.Property<int>("IdCoverageItem")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("id_coverage_item");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("IdCoverageItem"));
+
+                    b.Property<string>("CoverageCode")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)")
+                        .HasColumnName("coverage_code");
+
+                    b.Property<string>("CoverageLevel")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)")
+                        .HasColumnName("coverage_level");
+
+                    b.Property<string>("CoverageName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)")
+                        .HasColumnName("coverage_name");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("(sysutcdatetime())")
+                        .HasAnnotation("Relational:DefaultConstraintName", "DF_COVERAGE_ITEM_created_at");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)")
+                        .HasColumnName("created_by");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("nvarchar(max)")
+                        .HasColumnName("description");
+
+                    b.Property<int?>("DisplayOrder")
+                        .HasColumnType("int")
+                        .HasColumnName("display_order");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true)
+                        .HasColumnName("is_active")
+                        .HasAnnotation("Relational:DefaultConstraintName", "DF_COVERAGE_ITEM_is_active");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("IdCoverageItem");
+
+                    b.HasIndex("CreatedBy");
+
+                    b.HasIndex("UpdatedBy");
+
+                    b.HasIndex(new[] { "CoverageLevel", "IsActive" }, "IX_COVERAGE_ITEM_level_active");
+
+                    b.HasIndex(new[] { "CoverageName" }, "IX_COVERAGE_ITEM_name");
+
+                    b.HasIndex(new[] { "CoverageCode" }, "UQ_COVERAGE_ITEM_code")
+                        .IsUnique();
+
+                    b.ToTable("COVERAGE_ITEM", (string)null);
+                });
+
+            modelBuilder.Entity("IRISBackend.Models.CoverageRelation", b =>
+                {
+                    b.Property<int>("IdCoverageRelation")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("id_coverage_relation");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("IdCoverageRelation"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("(sysutcdatetime())")
+                        .HasAnnotation("Relational:DefaultConstraintName", "DF_COVERAGE_RELATION_created_at");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)")
+                        .HasColumnName("created_by");
+
+                    b.Property<int?>("DisplayOrder")
+                        .HasColumnType("int")
+                        .HasColumnName("display_order");
+
+                    b.Property<int>("IdChildCoverageItem")
+                        .HasColumnType("int")
+                        .HasColumnName("id_child_coverage_item");
+
+                    b.Property<int>("IdParentCoverageItem")
+                        .HasColumnType("int")
+                        .HasColumnName("id_parent_coverage_item");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true)
+                        .HasColumnName("is_active")
+                        .HasAnnotation("Relational:DefaultConstraintName", "DF_COVERAGE_RELATION_is_active");
+
+                    b.Property<bool>("IsMandatory")
+                        .HasColumnType("bit")
+                        .HasColumnName("is_mandatory")
+                        .HasAnnotation("Relational:DefaultConstraintName", "DF_COVERAGE_RELATION_is_mandatory");
+
+                    b.Property<string>("RelationType")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)")
+                        .HasColumnName("relation_type");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("IdCoverageRelation");
+
+                    b.HasIndex("CreatedBy");
+
+                    b.HasIndex("UpdatedBy");
+
+                    b.HasIndex(new[] { "IdChildCoverageItem", "IsActive" }, "IX_COVERAGE_RELATION_child");
+
+                    b.HasIndex(new[] { "IdParentCoverageItem", "RelationType", "IsActive" }, "IX_COVERAGE_RELATION_parent");
+
+                    b.HasIndex(new[] { "IdParentCoverageItem", "IdChildCoverageItem", "RelationType" }, "UQ_COVERAGE_RELATION_parent_child_type")
+                        .IsUnique();
+
+                    b.ToTable("COVERAGE_RELATION", null, t =>
+                        {
+                            t.HasTrigger("TR_COVERAGE_RELATION_validate_levels");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("IRISBackend.Models.Currency", b =>
@@ -2251,70 +2500,102 @@ namespace IRISBackend.Migrations
                     b.ToTable("REMITTANCE_REF", (string)null);
                 });
 
-            modelBuilder.Entity("IRISBackend.Models.RiskNature", b =>
+            modelBuilder.Entity("IRISBackend.Models.SlipTemplate", b =>
                 {
-                    b.Property<int>("IdRiskNature")
+                    b.Property<int>("IdSlipTemplate")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int")
-                        .HasColumnName("Id_risk_nature");
+                        .HasColumnName("id_slip_template");
 
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("IdRiskNature"));
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("IdSlipTemplate"));
 
-                    b.Property<string>("Description")
-                        .HasColumnType("nvarchar(max)");
+                    b.Property<byte[]>("FileContent")
+                        .IsRequired()
+                        .HasColumnType("varbinary(max)")
+                        .HasColumnName("file_content");
+
+                    b.Property<string>("FileExtension")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)")
+                        .HasColumnName("file_extension");
+
+                    b.Property<long>("FileSizeBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("file_size_bytes");
+
+                    b.Property<int>("IdCoverageItem")
+                        .HasColumnType("int")
+                        .HasColumnName("id_coverage_item");
 
                     b.Property<bool>("IsActive")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("bit")
                         .HasDefaultValue(true)
-                        .HasColumnName("Is_active")
-                        .HasAnnotation("Relational:DefaultConstraintName", "DF_RISK_NATURE_is_active");
+                        .HasColumnName("is_active")
+                        .HasAnnotation("Relational:DefaultConstraintName", "DF_SLIP_TEMPLATE_is_active");
 
-                    b.Property<string>("RiskNatureCode")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)")
-                        .HasColumnName("Risk_nature_code");
-
-                    b.HasKey("IdRiskNature");
-
-                    b.ToTable("RISK_NATURE", (string)null);
-                });
-
-            modelBuilder.Entity("IRISBackend.Models.SubRisk", b =>
-                {
-                    b.Property<int>("IdSubRisk")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int")
-                        .HasColumnName("Id_sub_risk");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("IdSubRisk"));
-
-                    b.Property<string>("Description")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<int>("IdRiskNature")
-                        .HasColumnType("int")
-                        .HasColumnName("Id_risk_nature");
-
-                    b.Property<bool>("IsActive")
+                    b.Property<bool>("IsCurrent")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("bit")
                         .HasDefaultValue(true)
-                        .HasColumnName("Is_active")
-                        .HasAnnotation("Relational:DefaultConstraintName", "DF_SUB_RISK_is_active");
+                        .HasColumnName("is_current")
+                        .HasAnnotation("Relational:DefaultConstraintName", "DF_SLIP_TEMPLATE_is_current");
 
-                    b.Property<string>("SubRiskCode")
+                    b.Property<string>("MimeType")
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)")
-                        .HasColumnName("Sub_risk_code");
+                        .HasColumnName("mime_type");
 
-                    b.HasKey("IdSubRisk");
+                    b.Property<string>("OriginalFileName")
+                        .IsRequired()
+                        .HasMaxLength(260)
+                        .HasColumnType("nvarchar(260)")
+                        .HasColumnName("original_file_name");
 
-                    b.HasIndex("IdRiskNature");
+                    b.Property<string>("Sha256Hash")
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("char(64)")
+                        .HasColumnName("sha256_hash")
+                        .IsFixedLength();
 
-                    b.ToTable("SUB_RISK", (string)null);
+                    b.Property<DateTime>("UploadedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasColumnName("uploaded_at")
+                        .HasDefaultValueSql("(sysutcdatetime())")
+                        .HasAnnotation("Relational:DefaultConstraintName", "DF_SLIP_TEMPLATE_uploaded_at");
+
+                    b.Property<string>("UploadedBy")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)")
+                        .HasColumnName("uploaded_by");
+
+                    b.Property<int>("VersionNumber")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(1)
+                        .HasColumnName("version_number")
+                        .HasAnnotation("Relational:DefaultConstraintName", "DF_SLIP_TEMPLATE_version_number");
+
+                    b.HasKey("IdSlipTemplate");
+
+                    b.HasIndex("UploadedBy");
+
+                    b.HasIndex(new[] { "IdSlipTemplate", "IdCoverageItem" }, "UQ_SLIP_TEMPLATE_id_item")
+                        .IsUnique();
+
+                    b.HasIndex(new[] { "IdCoverageItem", "VersionNumber" }, "UQ_SLIP_TEMPLATE_item_version")
+                        .IsUnique();
+
+                    b.HasIndex(new[] { "IdCoverageItem" }, "UX_SLIP_TEMPLATE_current")
+                        .IsUnique()
+                        .HasFilter("([is_current]=(1) AND [is_active]=(1))");
+
+                    b.ToTable("SLIP_TEMPLATE", (string)null);
                 });
 
             modelBuilder.Entity("IRISBackend.Models.UserLoginAudit", b =>
@@ -2591,6 +2872,48 @@ namespace IRISBackend.Migrations
                     b.Navigation("UpdatedByNavigation");
                 });
 
+            modelBuilder.Entity("IRISBackend.Models.ContractCoverageSelection", b =>
+                {
+                    b.HasOne("IRISBackend.Models.AspNetUser", "CreatedByNavigation")
+                        .WithMany("ContractCoverageSelectionCreatedByNavigations")
+                        .HasForeignKey("CreatedBy")
+                        .IsRequired()
+                        .HasConstraintName("FK_CONTRACT_COVERAGE_SELECTION_created_by_USER");
+
+                    b.HasOne("IRISBackend.Models.Contract", "IdContractNavigation")
+                        .WithMany("ContractCoverageSelections")
+                        .HasForeignKey("IdContract")
+                        .IsRequired()
+                        .HasConstraintName("FK_CONTRACT_COVERAGE_SELECTION_contract");
+
+                    b.HasOne("IRISBackend.Models.CoverageItem", "IdCoverageItemNavigation")
+                        .WithMany("ContractCoverageSelections")
+                        .HasForeignKey("IdCoverageItem")
+                        .IsRequired()
+                        .HasConstraintName("FK_CONTRACT_COVERAGE_SELECTION_item");
+
+                    b.HasOne("IRISBackend.Models.AspNetUser", "UpdatedByNavigation")
+                        .WithMany("ContractCoverageSelectionUpdatedByNavigations")
+                        .HasForeignKey("UpdatedBy")
+                        .HasConstraintName("FK_CONTRACT_COVERAGE_SELECTION_updated_by_USER");
+
+                    b.HasOne("IRISBackend.Models.SlipTemplate", "SlipTemplate")
+                        .WithMany("ContractCoverageSelections")
+                        .HasForeignKey("IdSlipTemplate", "IdCoverageItem")
+                        .HasPrincipalKey("IdSlipTemplate", "IdCoverageItem")
+                        .HasConstraintName("FK_CONTRACT_COVERAGE_SELECTION_slip_item");
+
+                    b.Navigation("CreatedByNavigation");
+
+                    b.Navigation("IdContractNavigation");
+
+                    b.Navigation("IdCoverageItemNavigation");
+
+                    b.Navigation("SlipTemplate");
+
+                    b.Navigation("UpdatedByNavigation");
+                });
+
             modelBuilder.Entity("IRISBackend.Models.ContractFac", b =>
                 {
                     b.HasOne("IRISBackend.Models.Contract", "IdContractNavigation")
@@ -2619,40 +2942,6 @@ namespace IRISBackend.Migrations
                     b.Navigation("IdContractNavigation");
 
                     b.Navigation("IdCounterpartyNavigation");
-                });
-
-            modelBuilder.Entity("IRISBackend.Models.ContractSubRisk", b =>
-                {
-                    b.HasOne("IRISBackend.Models.AspNetUser", "CreatedByNavigation")
-                        .WithMany("ContractSubRiskCreatedByNavigations")
-                        .HasForeignKey("CreatedBy")
-                        .IsRequired()
-                        .HasConstraintName("FK_CONTRACT_SUB_RISK_created_by_USER");
-
-                    b.HasOne("IRISBackend.Models.Contract", "IdContractNavigation")
-                        .WithMany("ContractSubRisks")
-                        .HasForeignKey("IdContract")
-                        .IsRequired()
-                        .HasConstraintName("FK_CONTRACT_SUB_RISK_id_contract");
-
-                    b.HasOne("IRISBackend.Models.SubRisk", "IdSubRiskNavigation")
-                        .WithMany("ContractSubRisks")
-                        .HasForeignKey("IdSubRisk")
-                        .IsRequired()
-                        .HasConstraintName("FK_CONTRACT_SUB_RISK_id_sub_risk");
-
-                    b.HasOne("IRISBackend.Models.AspNetUser", "UpdatedByNavigation")
-                        .WithMany("ContractSubRiskUpdatedByNavigations")
-                        .HasForeignKey("UpdatedBy")
-                        .HasConstraintName("FK_CONTRACT_SUB_RISK_updated_by_USER");
-
-                    b.Navigation("CreatedByNavigation");
-
-                    b.Navigation("IdContractNavigation");
-
-                    b.Navigation("IdSubRiskNavigation");
-
-                    b.Navigation("UpdatedByNavigation");
                 });
 
             modelBuilder.Entity("IRISBackend.Models.ContractTreatyNonprop", b =>
@@ -2729,6 +3018,70 @@ namespace IRISBackend.Migrations
                     b.Navigation("IdCounterpartyNavigation");
 
                     b.Navigation("IdCurrencyNavigation");
+
+                    b.Navigation("UpdatedByNavigation");
+                });
+
+            modelBuilder.Entity("IRISBackend.Models.CounterpartyTypeAssignment", b =>
+                {
+                    b.HasOne("IRISBackend.Models.Counterparty", "Counterparty")
+                        .WithMany("TypeAssignments")
+                        .HasForeignKey("CounterpartyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("FK_COUNTERPARTY_TYPE_ASSIGNMENT_Counterparty");
+
+                    b.Navigation("Counterparty");
+                });
+
+            modelBuilder.Entity("IRISBackend.Models.CoverageItem", b =>
+                {
+                    b.HasOne("IRISBackend.Models.AspNetUser", "CreatedByNavigation")
+                        .WithMany("CoverageItemCreatedByNavigations")
+                        .HasForeignKey("CreatedBy")
+                        .IsRequired()
+                        .HasConstraintName("FK_COVERAGE_ITEM_created_by_USER");
+
+                    b.HasOne("IRISBackend.Models.AspNetUser", "UpdatedByNavigation")
+                        .WithMany("CoverageItemUpdatedByNavigations")
+                        .HasForeignKey("UpdatedBy")
+                        .HasConstraintName("FK_COVERAGE_ITEM_updated_by_USER");
+
+                    b.Navigation("CreatedByNavigation");
+
+                    b.Navigation("UpdatedByNavigation");
+                });
+
+            modelBuilder.Entity("IRISBackend.Models.CoverageRelation", b =>
+                {
+                    b.HasOne("IRISBackend.Models.AspNetUser", "CreatedByNavigation")
+                        .WithMany("CoverageRelationCreatedByNavigations")
+                        .HasForeignKey("CreatedBy")
+                        .IsRequired()
+                        .HasConstraintName("FK_COVERAGE_RELATION_created_by_USER");
+
+                    b.HasOne("IRISBackend.Models.CoverageItem", "IdChildCoverageItemNavigation")
+                        .WithMany("CoverageRelationIdChildCoverageItemNavigations")
+                        .HasForeignKey("IdChildCoverageItem")
+                        .IsRequired()
+                        .HasConstraintName("FK_COVERAGE_RELATION_child");
+
+                    b.HasOne("IRISBackend.Models.CoverageItem", "IdParentCoverageItemNavigation")
+                        .WithMany("CoverageRelationIdParentCoverageItemNavigations")
+                        .HasForeignKey("IdParentCoverageItem")
+                        .IsRequired()
+                        .HasConstraintName("FK_COVERAGE_RELATION_parent");
+
+                    b.HasOne("IRISBackend.Models.AspNetUser", "UpdatedByNavigation")
+                        .WithMany("CoverageRelationUpdatedByNavigations")
+                        .HasForeignKey("UpdatedBy")
+                        .HasConstraintName("FK_COVERAGE_RELATION_updated_by_USER");
+
+                    b.Navigation("CreatedByNavigation");
+
+                    b.Navigation("IdChildCoverageItemNavigation");
+
+                    b.Navigation("IdParentCoverageItemNavigation");
 
                     b.Navigation("UpdatedByNavigation");
                 });
@@ -3049,15 +3402,23 @@ namespace IRISBackend.Migrations
                     b.Navigation("UpdatedByNavigation");
                 });
 
-            modelBuilder.Entity("IRISBackend.Models.SubRisk", b =>
+            modelBuilder.Entity("IRISBackend.Models.SlipTemplate", b =>
                 {
-                    b.HasOne("IRISBackend.Models.RiskNature", "IdRiskNatureNavigation")
-                        .WithMany("SubRisks")
-                        .HasForeignKey("IdRiskNature")
+                    b.HasOne("IRISBackend.Models.CoverageItem", "IdCoverageItemNavigation")
+                        .WithOne("SlipTemplate")
+                        .HasForeignKey("IRISBackend.Models.SlipTemplate", "IdCoverageItem")
                         .IsRequired()
-                        .HasConstraintName("FK_SUB_RISK_id_risk_nature");
+                        .HasConstraintName("FK_SLIP_TEMPLATE_coverage_item");
 
-                    b.Navigation("IdRiskNatureNavigation");
+                    b.HasOne("IRISBackend.Models.AspNetUser", "UploadedByNavigation")
+                        .WithMany("SlipTemplates")
+                        .HasForeignKey("UploadedBy")
+                        .IsRequired()
+                        .HasConstraintName("FK_SLIP_TEMPLATE_uploaded_by_USER");
+
+                    b.Navigation("IdCoverageItemNavigation");
+
+                    b.Navigation("UploadedByNavigation");
                 });
 
             modelBuilder.Entity("IRISBackend.Models.UserLoginAudit", b =>
@@ -3096,19 +3457,27 @@ namespace IRISBackend.Migrations
 
                     b.Navigation("CollectionNoteUpdatedByNavigations");
 
+                    b.Navigation("ContractCoverageSelectionCreatedByNavigations");
+
+                    b.Navigation("ContractCoverageSelectionUpdatedByNavigations");
+
                     b.Navigation("ContractCreatedByNavigations");
 
                     b.Navigation("ContractIdUserNavigations");
-
-                    b.Navigation("ContractSubRiskCreatedByNavigations");
-
-                    b.Navigation("ContractSubRiskUpdatedByNavigations");
 
                     b.Navigation("ContractUpdatedByNavigations");
 
                     b.Navigation("CounterpartyBankAccountCreatedByNavigations");
 
                     b.Navigation("CounterpartyBankAccountUpdatedByNavigations");
+
+                    b.Navigation("CoverageItemCreatedByNavigations");
+
+                    b.Navigation("CoverageItemUpdatedByNavigations");
+
+                    b.Navigation("CoverageRelationCreatedByNavigations");
+
+                    b.Navigation("CoverageRelationUpdatedByNavigations");
 
                     b.Navigation("DisbursementCreatedByNavigations");
 
@@ -3142,6 +3511,8 @@ namespace IRISBackend.Migrations
 
                     b.Navigation("RemittanceRefUpdatedByNavigations");
 
+                    b.Navigation("SlipTemplates");
+
                     b.Navigation("UserLoginAudits");
                 });
 
@@ -3165,11 +3536,11 @@ namespace IRISBackend.Migrations
                 {
                     b.Navigation("Claims");
 
+                    b.Navigation("ContractCoverageSelections");
+
                     b.Navigation("ContractFac");
 
                     b.Navigation("ContractPanels");
-
-                    b.Navigation("ContractSubRisks");
 
                     b.Navigation("ContractTreatyNonprops");
 
@@ -3221,6 +3592,8 @@ namespace IRISBackend.Migrations
                     b.Navigation("PremiumRefs");
 
                     b.Navigation("RemittanceRefs");
+
+                    b.Navigation("TypeAssignments");
                 });
 
             modelBuilder.Entity("IRISBackend.Models.CounterpartyBankAccount", b =>
@@ -3228,6 +3601,17 @@ namespace IRISBackend.Migrations
                     b.Navigation("BankReceipts");
 
                     b.Navigation("Disbursements");
+                });
+
+            modelBuilder.Entity("IRISBackend.Models.CoverageItem", b =>
+                {
+                    b.Navigation("ContractCoverageSelections");
+
+                    b.Navigation("CoverageRelationIdChildCoverageItemNavigations");
+
+                    b.Navigation("CoverageRelationIdParentCoverageItemNavigations");
+
+                    b.Navigation("SlipTemplate");
                 });
 
             modelBuilder.Entity("IRISBackend.Models.Currency", b =>
@@ -3266,14 +3650,9 @@ namespace IRISBackend.Migrations
                     b.Navigation("RemittanceRefs");
                 });
 
-            modelBuilder.Entity("IRISBackend.Models.RiskNature", b =>
+            modelBuilder.Entity("IRISBackend.Models.SlipTemplate", b =>
                 {
-                    b.Navigation("SubRisks");
-                });
-
-            modelBuilder.Entity("IRISBackend.Models.SubRisk", b =>
-                {
-                    b.Navigation("ContractSubRisks");
+                    b.Navigation("ContractCoverageSelections");
                 });
 #pragma warning restore 612, 618
         }

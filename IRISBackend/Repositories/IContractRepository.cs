@@ -10,6 +10,12 @@ namespace IRISBackend.Repositories
 
         Task<bool> UmrExistsAsync(string umr, int? excludedContractId = null, CancellationToken cancellationToken = default);
 
+        Task<int> AllocateUmrSequenceAsync(
+            int inceptionYear,
+            string contractTypeCode,
+            string mainCoverCode,
+            CancellationToken cancellationToken = default);
+
         Task AddAsync(Contract contract, CancellationToken cancellationToken = default);
 
         Task AddFacultativeDetailsAsync(ContractFac contractFac, CancellationToken cancellationToken = default);

@@ -1,6 +1,7 @@
 using IRISBackend.DTOs;
 using IRISBackend.Models;
 using Microsoft.EntityFrameworkCore;
+using IRISBackend.Services;
 
 namespace IRISBackend.Repositories
 {
@@ -33,7 +34,49 @@ namespace IRISBackend.Repositories
                         counterparty.LegacyCompanyCode != null &&
                         counterparty.LegacyCompanyCode.ToUpper() == normalizedCode &&
                         (!excludedId.HasValue || counterparty.Id != excludedId.Value),
-                    cancellationToken);
+                cancellationToken);
+        }
+
+        public Task<Counterparty?> GetByIdWithTypesAsync(int id, CancellationToken cancellationToken = default)
+        {
+            return _dbContext.Counterparties
+                .Include(counterparty => counterparty.TypeAssignments)
+                .SingleOrDefaultAsync(counterparty => counterparty.Id == id, cancellationToken);
+        }
+
+        public async Task ReplaceTypeAssignmentsAsync(
+            Counterparty counterparty,
+            IReadOnlyCollection<string> types,
+            CancellationToken cancellationToken = default)
+        {
+            if (counterparty.Id == 0)
+            {
+                counterparty.TypeAssignments = types
+                    .Select(type => new CounterpartyTypeAssignment
+                    {
+                        Type = type,
+                        Counterparty = counterparty
+                    })
+                    .ToList();
+                return;
+            }
+
+            var existing = await _dbContext.CounterpartyTypeAssignments
+                .Where(assignment => assignment.CounterpartyId == counterparty.Id)
+                .ToListAsync(cancellationToken);
+
+            _dbContext.CounterpartyTypeAssignments.RemoveRange(existing);
+            var assignments = types
+                .Select(type => new CounterpartyTypeAssignment
+                {
+                    CounterpartyId = counterparty.Id,
+                    Type = type,
+                    Counterparty = counterparty
+                })
+                .ToList();
+
+            counterparty.TypeAssignments = assignments;
+            await _dbContext.CounterpartyTypeAssignments.AddRangeAsync(assignments, cancellationToken);
         }
 
         public async Task<(IReadOnlyList<CounterpartyListItemDto> Items, int TotalCount)> ListAsync(CounterpartyQueryDto query, CancellationToken cancellationToken = default)
@@ -66,8 +109,7 @@ namespace IRISBackend.Repositories
                 .AsNoTracking()
                 .Where(counterparty =>
                     counterparty.IsActive &&
-                    counterparty.Type != null &&
-                    counterparty.Type.Trim().ToLower() == "reinsurer");
+                    counterparty.TypeAssignments.Any(assignment => assignment.Type == CounterpartyTypes.Reinsurer));
 
             if (!string.IsNullOrWhiteSpace(normalizedSearch))
             {
@@ -86,7 +128,10 @@ namespace IRISBackend.Repositories
                 {
                     Id = counterparty.Id,
                     Name = counterparty.Name,
-                    Type = counterparty.Type,
+                    Types = counterparty.TypeAssignments
+                        .OrderBy(assignment => assignment.Type)
+                        .Select(assignment => assignment.Type)
+                        .ToArray(),
                     Country = counterparty.Country,
                     City = counterparty.City
                 })

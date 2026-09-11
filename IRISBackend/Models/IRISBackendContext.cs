@@ -47,7 +47,11 @@ public partial class IRISBackendContext : DbContext
 
     public virtual DbSet<ContractTreatyPropSurplu> ContractTreatyPropSurplus { get; set; }
 
+    public virtual DbSet<ContractUmrSequence> ContractUmrSequences { get; set; }
+
     public virtual DbSet<Counterparty> Counterparties { get; set; }
+
+    public virtual DbSet<CounterpartyTypeAssignment> CounterpartyTypeAssignments { get; set; }
 
     public virtual DbSet<CounterpartyBankAccount> CounterpartyBankAccounts { get; set; }
 
@@ -540,6 +544,9 @@ public partial class IRISBackendContext : DbContext
             entity.Property(e => e.IdContract).HasColumnName("id_contract");
             entity.Property(e => e.IdCoverageItem).HasColumnName("id_coverage_item");
             entity.Property(e => e.IdSlipTemplate).HasColumnName("id_slip_template");
+            entity.Property(e => e.IsPrimary)
+                .HasColumnName("is_primary")
+                .HasDefaultValue(false);
             entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
             entity.Property(e => e.UpdatedBy)
                 .HasMaxLength(450)
@@ -581,6 +588,9 @@ public partial class IRISBackendContext : DbContext
             entity.Property(e => e.IdContractFac).HasColumnName("Id_contract_fac");
             entity.Property(e => e.Deductible).HasColumnType("decimal(19, 4)");
             entity.Property(e => e.IdContract).HasColumnName("Id_contract");
+            entity.Property(e => e.LimitOfLiability)
+                .HasColumnType("decimal(19, 4)")
+                .HasColumnName("Limit_of_liability");
             entity.Property(e => e.PremiumRate)
                 .HasColumnType("decimal(19, 8)")
                 .HasColumnName("Premium_rate");

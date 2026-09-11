@@ -32,5 +32,28 @@ namespace IRISBackend.Tests
             Assert.Contains(result.Errors, error => error.ErrorMessage == "inceptionFrom must be on or before inceptionTo.");
             Assert.Contains(result.Errors, error => error.ErrorMessage == "expiryFrom must be on or before expiryTo.");
         }
+
+        [Fact]
+        public void Validate_WhenPlacementInProgressIsUsed_AllowsTheStatusFilter()
+        {
+            var result = _validator.Validate(new ContractListQueryDto
+            {
+                Status = "PlacementInProgress"
+            });
+
+            Assert.True(result.IsValid);
+        }
+
+        [Fact]
+        public void Validate_WhenUnknownStatusIsUsed_ReturnsClearError()
+        {
+            var result = _validator.Validate(new ContractListQueryDto
+            {
+                Status = "UnknownStatus"
+            });
+
+            Assert.False(result.IsValid);
+            Assert.Contains(result.Errors, error => error.ErrorMessage == "status is invalid.");
+        }
     }
 }

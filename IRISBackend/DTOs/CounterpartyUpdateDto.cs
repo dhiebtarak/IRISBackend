@@ -8,7 +8,7 @@ namespace IRISBackend.DTOs
 
         public string Name { get; set; } = string.Empty;
 
-        public string Type { get; set; } = string.Empty;
+        public IReadOnlyCollection<string>? Types { get; set; }
 
         public string? Email { get; set; }
 

@@ -1,4 +1,5 @@
 using IRISBackend.DTOs;
+using IRISBackend.Services;
 using IRISBackend.Validators;
 using Xunit;
 
@@ -18,8 +19,25 @@ namespace IRISBackend.Tests
 
             Assert.False(result.IsValid);
             Assert.Contains(result.Errors, error => error.PropertyName == nameof(CounterpartyCreateDto.Name));
-            Assert.Contains(result.Errors, error => error.PropertyName == nameof(CounterpartyCreateDto.Type));
+            Assert.Contains(result.Errors, error => error.PropertyName == nameof(CounterpartyCreateDto.Types));
             Assert.Contains(result.Errors, error => error.PropertyName == nameof(CounterpartyCreateDto.Status));
+        }
+
+        [Fact]
+        public void CreateValidator_RejectsDuplicateAndUnsupportedTypes()
+        {
+            var validator = CreateCreateValidator();
+
+            var result = validator.Validate(new CounterpartyCreateDto
+            {
+                Name = "Counterparty",
+                Types = ["Cedent", " cedent ", "Broker"],
+                Status = "Active"
+            });
+
+            Assert.False(result.IsValid);
+            Assert.Contains(result.Errors, error => error.PropertyName == nameof(CounterpartyCreateDto.Types));
+            Assert.Contains(result.Errors, error => error.PropertyName == "Types[2]");
         }
 
         [Fact]
@@ -30,7 +48,7 @@ namespace IRISBackend.Tests
             var result = validator.Validate(new CounterpartyCreateDto
             {
                 Name = "Counterparty",
-                Type = "Broker",
+                Types = [CounterpartyTypes.Partner],
                 Email = "invalid-email",
                 Status = "Active"
             });
@@ -49,7 +67,7 @@ namespace IRISBackend.Tests
                 LegacyClientId = 1001,
                 LegacyCompanyCode = "CP-001",
                 Name = "Counterparty",
-                Type = "Broker",
+                Types = [CounterpartyTypes.Partner],
                 Email = "contact@example.com",
                 PostalCode = "20000",
                 Website = "https://example.com",
@@ -72,7 +90,7 @@ namespace IRISBackend.Tests
             var result = validator.Validate(new CounterpartyCreateDto
             {
                 Name = "Counterparty",
-                Type = "Broker",
+                Types = [CounterpartyTypes.Partner],
                 Status = "Active",
                 CommercialRegister = new AttachmentUploadDto
                 {
@@ -93,7 +111,7 @@ namespace IRISBackend.Tests
             var result = validator.Validate(new CounterpartyCreateDto
             {
                 Name = "Counterparty",
-                Type = "Broker",
+                Types = [CounterpartyTypes.Partner],
                 Status = "Active",
                 TaxIdAttachment = new AttachmentUploadDto
                 {

@@ -17,5 +17,7 @@ public partial class ContractFac
 
     public decimal? PremiumRate { get; set; }
 
+    public decimal? LimitOfLiability { get; set; }
+
     public virtual Contract IdContractNavigation { get; set; }
 }

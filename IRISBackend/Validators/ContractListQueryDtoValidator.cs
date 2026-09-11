@@ -9,7 +9,7 @@ namespace IRISBackend.Validators
         private static readonly string[] SortFields =
         [
             "name", "umr", "cedentName", "contractType", "status", "inceptionDate",
-            "expiryDate", "grossPremium", "createdAt", "updatedAt"
+            "receptionDate", "expiryDate", "grossPremium", "createdAt", "updatedAt"
         ];
 
         public ContractListQueryDtoValidator()
@@ -24,6 +24,13 @@ namespace IRISBackend.Validators
 
             RuleFor(query => query.Search).MaximumLength(200);
             RuleFor(query => query.Status).MaximumLength(50);
+
+            RuleFor(query => query.Status)
+                .Must(value => string.IsNullOrWhiteSpace(value) ||
+                    ContractConstants.WorkflowStatuses.Contains(
+                        ContractConstants.NormalizeStatus(value),
+                        StringComparer.OrdinalIgnoreCase))
+                .WithMessage("status is invalid.");
 
             RuleFor(query => query.ContractType)
                 .Must(value => string.IsNullOrWhiteSpace(value) ||

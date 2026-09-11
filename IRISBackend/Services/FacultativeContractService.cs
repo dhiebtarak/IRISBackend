@@ -12,6 +12,7 @@ namespace IRISBackend.Services
         private readonly IContractRepository _contractRepository;
         private readonly IReferenceDataRepository _referenceDataRepository;
         private readonly ICoverageSelectionService _coverageSelectionService;
+        private readonly IContractUmrGenerator _umrGenerator;
         private readonly IUserService _userService;
         private readonly IMapper _mapper;
         private readonly IHttpContextAccessor _httpContextAccessor;
@@ -20,6 +21,7 @@ namespace IRISBackend.Services
             IContractRepository contractRepository,
             IReferenceDataRepository referenceDataRepository,
             ICoverageSelectionService coverageSelectionService,
+            IContractUmrGenerator umrGenerator,
             IUserService userService,
             IMapper mapper,
             IHttpContextAccessor httpContextAccessor)
@@ -27,6 +29,7 @@ namespace IRISBackend.Services
             _contractRepository = contractRepository;
             _referenceDataRepository = referenceDataRepository;
             _coverageSelectionService = coverageSelectionService;
+            _umrGenerator = umrGenerator;
             _userService = userService;
             _mapper = mapper;
             _httpContextAccessor = httpContextAccessor;
@@ -47,13 +50,6 @@ namespace IRISBackend.Services
                 return Forbidden("Only Front Officers can create facultative contract drafts.");
             }
 
-            var normalizedUmr = NormalizeOptionalValue(request.Umr);
-            if (normalizedUmr is not null &&
-                await _contractRepository.UmrExistsAsync(normalizedUmr, null, cancellationToken))
-            {
-                return Conflict("A contract with the same UMR already exists.");
-            }
-
             var validationResult = await ValidateBusinessReferencesAsync(request, cancellationToken);
             if (!validationResult.Succeeded)
             {
@@ -67,13 +63,28 @@ namespace IRISBackend.Services
             }
 
             var now = DateTime.UtcNow;
-            var contract = BuildContractEntity(request, currentUserResult.Value!, normalizedUmr, now);
             var contractFac = BuildContractFacEntity(request);
 
             await using IDbContextTransaction transaction = await _contractRepository.BeginTransactionAsync(cancellationToken);
+            Contract? contract = null;
 
             try
             {
+                var umrResult = await _umrGenerator.GenerateAsync(
+                    ContractConstants.FacultativeType,
+                    request.InceptionDate,
+                    coverageValidationResult.Value!,
+                    cancellationToken);
+                if (!umrResult.Succeeded)
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                    return ServiceResult<FacultativeContractResponseDto>.Failure(
+                        umrResult.Error?.Message ?? "Unable to generate the contract UMR.",
+                        umrResult.Error?.Errors,
+                        umrResult.StatusCode);
+                }
+
+                contract = BuildContractEntity(request, currentUserResult.Value!, umrResult.Value!, now);
                 await _contractRepository.AddAsync(contract, cancellationToken);
                 await _contractRepository.SaveChangesAsync(cancellationToken);
 
@@ -101,7 +112,7 @@ namespace IRISBackend.Services
                 throw;
             }
 
-            var savedContract = await _contractRepository.GetFacultativeContractByIdAsync(contract.IdContract, asNoTracking: true, cancellationToken);
+            var savedContract = await _contractRepository.GetFacultativeContractByIdAsync(contract!.IdContract, asNoTracking: true, cancellationToken);
             return ServiceResult<FacultativeContractResponseDto>.Success(
                 _mapper.Map<FacultativeContractResponseDto>(savedContract!),
                 StatusCodes.Status201Created);
@@ -152,13 +163,6 @@ namespace IRISBackend.Services
                 return Forbidden("You do not have access to update another user's draft.");
             }
 
-            var normalizedUmr = NormalizeOptionalValue(request.Umr);
-            if (normalizedUmr is not null &&
-                await _contractRepository.UmrExistsAsync(normalizedUmr, contractId, cancellationToken))
-            {
-                return Conflict("A contract with the same UMR already exists.");
-            }
-
             var validationResult = await ValidateBusinessReferencesAsync(request, cancellationToken);
             if (!validationResult.Succeeded)
             {
@@ -171,7 +175,7 @@ namespace IRISBackend.Services
                 return MapCoverageFailure(coverageValidationResult);
             }
 
-            ApplyRequest(contract, request, currentUserResult.Value!.Id, DateTime.UtcNow, normalizedUmr);
+            ApplyRequest(contract, request, currentUserResult.Value!.Id, DateTime.UtcNow);
 
             if (contract.ContractFac is null)
             {
@@ -182,6 +186,7 @@ namespace IRISBackend.Services
             }
 
             contract.ContractFac.SumInsured = request.SumInsured;
+            contract.ContractFac.LimitOfLiability = request.LimitOfLiability;
             contract.ContractFac.Deductible = request.Deductible;
             contract.ContractFac.PremiumRate = request.PremiumRate;
 
@@ -218,12 +223,12 @@ namespace IRISBackend.Services
         private Contract BuildContractEntity(
             UpsertFacultativeContractRequest request,
             UserProfileResponseDto currentUser,
-            string? normalizedUmr,
+            string umr,
             DateTime now)
         {
             var contract = new Contract
             {
-                Umr = normalizedUmr,
+                Umr = umr,
                 Name = request.Name.Trim(),
                 IdCounterparty = request.CounterpartyId,
                 IdCurrency = request.CurrencyId,
@@ -258,6 +263,7 @@ namespace IRISBackend.Services
             return new ContractFac
             {
                 SumInsured = request.SumInsured,
+                LimitOfLiability = request.LimitOfLiability,
                 Deductible = request.Deductible,
                 PremiumRate = request.PremiumRate
             };
@@ -267,10 +273,8 @@ namespace IRISBackend.Services
             Contract contract,
             UpsertFacultativeContractRequest request,
             string updatedBy,
-            DateTime updatedAt,
-            string? normalizedUmr)
+            DateTime updatedAt)
         {
-            contract.Umr = normalizedUmr;
             contract.Name = request.Name.Trim();
             contract.IdCounterparty = request.CounterpartyId;
             contract.IdCurrency = request.CurrencyId;
@@ -364,9 +368,10 @@ namespace IRISBackend.Services
 
         private static bool CanUpdateContract(string? status)
         {
-            return string.Equals(status, ContractConstants.DraftStatus, StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(status, ContractConstants.ReadyForPlacementStatus, StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(status, ContractConstants.PlacementInProgressStatus, StringComparison.OrdinalIgnoreCase);
+            var effectiveStatus = ContractConstants.NormalizeStatus(status);
+            return effectiveStatus is ContractConstants.DraftStatus or
+                ContractConstants.ReadyForPlacementStatus or
+                ContractConstants.PlacementInProgressStatus;
         }
 
         private static bool IsUmrConflict(DbUpdateException exception)

@@ -1,5 +1,6 @@
 using IRISBackend.DTOs;
 using IRISBackend.Models;
+using IRISBackend.Services;
 
 namespace IRISBackend.Repositories
 {
@@ -23,7 +24,8 @@ namespace IRISBackend.Repositories
             if (!string.IsNullOrWhiteSpace(query.Type))
             {
                 var type = query.Type.Trim();
-                counterparties = counterparties.Where(counterparty => counterparty.Type == type);
+                counterparties = counterparties.Where(counterparty => counterparty.TypeAssignments.Any(assignment =>
+                    assignment.Type.ToLower() == type.ToLower()));
             }
 
             if (query.IsActive.HasValue)
@@ -58,7 +60,9 @@ namespace IRISBackend.Repositories
 
             return query.SortBy.Trim().ToLowerInvariant() switch
             {
-                "type" => descending ? counterparties.OrderByDescending(item => item.Type) : counterparties.OrderBy(item => item.Type),
+                "type" => descending
+                    ? counterparties.OrderByDescending(item => item.TypeAssignments.OrderBy(assignment => assignment.Type).Select(assignment => assignment.Type).FirstOrDefault())
+                    : counterparties.OrderBy(item => item.TypeAssignments.OrderBy(assignment => assignment.Type).Select(assignment => assignment.Type).FirstOrDefault()),
                 "email" => descending ? counterparties.OrderByDescending(item => item.Email) : counterparties.OrderBy(item => item.Email),
                 "status" => descending ? counterparties.OrderByDescending(item => item.Status) : counterparties.OrderBy(item => item.Status),
                 "country" => descending ? counterparties.OrderByDescending(item => item.Country) : counterparties.OrderBy(item => item.Country),
@@ -82,7 +86,10 @@ namespace IRISBackend.Repositories
                 LegacyClientId = counterparty.LegacyClientId,
                 LegacyCompanyCode = counterparty.LegacyCompanyCode,
                 Name = counterparty.Name,
-                Type = counterparty.Type,
+                Types = counterparty.TypeAssignments
+                    .OrderBy(assignment => assignment.Type)
+                    .Select(assignment => assignment.Type)
+                    .ToArray(),
                 Email = counterparty.Email,
                 Country = counterparty.Country,
                 City = counterparty.City,

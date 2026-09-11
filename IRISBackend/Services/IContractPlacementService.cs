@@ -27,5 +27,9 @@ namespace IRISBackend.Services
         Task<ServiceResult<ContractOverviewDto>> StartBindingAsync(
             int contractId,
             CancellationToken cancellationToken = default);
+
+        Task<ServiceResult<ContractOverviewDto>> CancelContractAsync(
+            int contractId,
+            CancellationToken cancellationToken = default);
     }
 }

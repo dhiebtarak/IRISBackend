@@ -2,6 +2,7 @@ using IRISBackend.DTOs;
 using IRISBackend.Models;
 using IRISBackend.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace IRISBackend.Repositories
 {
@@ -12,6 +13,11 @@ namespace IRISBackend.Repositories
         public ContractPlacementRepository(IRISBackendContext dbContext)
         {
             _dbContext = dbContext;
+        }
+
+        public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)
+        {
+            return _dbContext.Database.BeginTransactionAsync(cancellationToken);
         }
 
         public Task<Contract?> GetContractForPlacementAsync(
@@ -98,8 +104,7 @@ namespace IRISBackend.Repositories
                 .AnyAsync(counterparty =>
                     counterparty.Id == counterpartyId &&
                     counterparty.IsActive &&
-                    counterparty.Type != null &&
-                    counterparty.Type.Trim().ToLower() == "reinsurer",
+                    counterparty.TypeAssignments.Any(assignment => assignment.Type == CounterpartyTypes.Reinsurer),
                     cancellationToken);
         }
 

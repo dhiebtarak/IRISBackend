@@ -13,6 +13,8 @@ public partial class Counterparty
 
     public string Type { get; set; }
 
+    public virtual ICollection<CounterpartyTypeAssignment> TypeAssignments { get; set; } = new List<CounterpartyTypeAssignment>();
+
     public string Email { get; set; }
 
     public string PhoneNumber { get; set; }

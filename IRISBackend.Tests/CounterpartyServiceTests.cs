@@ -27,7 +27,7 @@ namespace IRISBackend.Tests
                 LegacyClientId = 1001,
                 LegacyCompanyCode = " cp-a ",
                 Name = "Partner Re",
-                Type = "Reinsurer",
+                Types = [CounterpartyTypes.Reinsurer],
                 Email = "contact@example.com",
                 Status = "Active"
             });
@@ -42,6 +42,27 @@ namespace IRISBackend.Tests
         }
 
         [Fact]
+        public async Task CreateAsync_AllowsMultipleBusinessTypesAndReturnsCanonicalTypes()
+        {
+            var repository = new FakeCounterpartyRepository();
+            var service = CreateService(repository);
+
+            var result = await service.CreateAsync(new CounterpartyCreateDto
+            {
+                Name = "STAR Assurances",
+                Types = [" cedent ", "REINSURER"],
+                Status = "Active"
+            });
+
+            Assert.True(result.Succeeded);
+            Assert.Equal([CounterpartyTypes.Cedent, CounterpartyTypes.Reinsurer], result.Value!.Types);
+            Assert.Equal(
+                [CounterpartyTypes.Cedent, CounterpartyTypes.Reinsurer],
+                repository.Items[0].TypeAssignments.Select(assignment => assignment.Type).OrderBy(type => type));
+            Assert.Equal(CounterpartyTypes.Cedent, repository.Items[0].Type);
+        }
+
+        [Fact]
         public async Task CreateAsync_WhenLegacyClientIdExists_ReturnsConflict()
         {
             var repository = new FakeCounterpartyRepository();
@@ -50,7 +71,8 @@ namespace IRISBackend.Tests
                 Id = 7,
                 LegacyClientId = 1001,
                 Name = "Existing",
-                Type = "Broker",
+                Type = CounterpartyTypes.Partner,
+                TypeAssignments = [new CounterpartyTypeAssignment { CounterpartyId = 7, Type = CounterpartyTypes.Partner }],
                 Status = "Active"
             });
 
@@ -60,7 +82,7 @@ namespace IRISBackend.Tests
             {
                 LegacyClientId = 1001,
                 Name = "Duplicate",
-                Type = "Broker",
+                Types = [CounterpartyTypes.Partner],
                 Status = "Active"
             });
 
@@ -81,7 +103,7 @@ namespace IRISBackend.Tests
             var result = await service.CreateAsync(new CounterpartyCreateDto
             {
                 Name = "Partner Re",
-                Type = "Reinsurer",
+                Types = [CounterpartyTypes.Reinsurer],
                 Status = "Active",
                 CommercialRegister = CreateAttachmentUploadDto("commercial-register.pdf", "application/pdf", CreatePdfBytes(128), asDataUrl: true),
                 TaxIdAttachment = CreateAttachmentUploadDto("tax-id.pdf", "application/pdf", CreatePdfBytes(256))
@@ -108,7 +130,7 @@ namespace IRISBackend.Tests
             var result = await service.CreateAsync(new CounterpartyCreateDto
             {
                 Name = "Single Attachment Partner",
-                Type = "Broker",
+                Types = [CounterpartyTypes.Partner],
                 Status = "Active",
                 CommercialRegister = CreateAttachmentUploadDto("commercial-register.pdf", "application/pdf", CreatePdfBytes(64))
             });
@@ -132,7 +154,8 @@ namespace IRISBackend.Tests
                 LegacyClientId = 1001,
                 LegacyCompanyCode = "CP-A",
                 Name = "Old Name",
-                Type = "Broker",
+                Type = CounterpartyTypes.Partner,
+                TypeAssignments = [new CounterpartyTypeAssignment { CounterpartyId = 1, Type = CounterpartyTypes.Partner }],
                 Status = "Active",
                 IsActive = true,
                 ContactName = "Legacy Contact",
@@ -147,7 +170,7 @@ namespace IRISBackend.Tests
                 LegacyClientId = 1002,
                 LegacyCompanyCode = "cp-b",
                 Name = "New Name",
-                Type = "Cedant",
+                Types = [CounterpartyTypes.Cedent],
                 PostalCode = "20000",
                 Website = "https://example.com",
                 Activity = "Insurance",
@@ -180,7 +203,8 @@ namespace IRISBackend.Tests
                 Id = 1,
                 LegacyClientId = 1001,
                 Name = "Counterparty",
-                Type = "Broker",
+                Type = CounterpartyTypes.Partner,
+                TypeAssignments = [new CounterpartyTypeAssignment { CounterpartyId = 1, Type = CounterpartyTypes.Partner }],
                 Status = "Active",
                 IsActive = true
             });
@@ -205,7 +229,7 @@ namespace IRISBackend.Tests
             var result = await service.CreateAsync(new CounterpartyCreateDto
             {
                 Name = "Counterparty",
-                Type = "Broker",
+                Types = [CounterpartyTypes.Partner],
                 Status = "Active",
                 CommercialRegister = new AttachmentUploadDto
                 {
@@ -230,7 +254,7 @@ namespace IRISBackend.Tests
             var result = await service.CreateAsync(new CounterpartyCreateDto
             {
                 Name = "Counterparty",
-                Type = "Broker",
+                Types = [CounterpartyTypes.Partner],
                 Status = "Active",
                 CommercialRegister = CreateAttachmentUploadDto(
                     "commercial-register.pdf",
@@ -254,7 +278,7 @@ namespace IRISBackend.Tests
             var result = await service.CreateAsync(new CounterpartyCreateDto
             {
                 Name = "Counterparty",
-                Type = "Broker",
+                Types = [CounterpartyTypes.Partner],
                 Status = "Active",
                 TaxIdAttachment = CreateAttachmentUploadDto("tax-id.pdf", "application/pdf", oversizedBytes)
             });
@@ -337,6 +361,11 @@ namespace IRISBackend.Tests
                 return Task.FromResult(Items.FirstOrDefault(counterparty => counterparty.Id == (int)id));
             }
 
+            public Task<Counterparty?> GetByIdWithTypesAsync(int id, CancellationToken cancellationToken = default)
+            {
+                return Task.FromResult(Items.FirstOrDefault(counterparty => counterparty.Id == id));
+            }
+
             public Task<IEnumerable<Counterparty>> FindAsync(Expression<Func<Counterparty, bool>> predicate, CancellationToken cancellationToken = default)
             {
                 return Task.FromResult(Items.AsQueryable().Where(predicate).AsEnumerable());
@@ -346,6 +375,22 @@ namespace IRISBackend.Tests
             {
                 entity.Id = Items.Count == 0 ? 1 : Items.Max(counterparty => counterparty.Id) + 1;
                 Items.Add(entity);
+                return Task.CompletedTask;
+            }
+
+            public Task ReplaceTypeAssignmentsAsync(
+                Counterparty counterparty,
+                IReadOnlyCollection<string> types,
+                CancellationToken cancellationToken = default)
+            {
+                counterparty.TypeAssignments = types
+                    .Select(type => new CounterpartyTypeAssignment
+                    {
+                        CounterpartyId = counterparty.Id,
+                        Type = type,
+                        Counterparty = counterparty
+                    })
+                    .ToList();
                 return Task.CompletedTask;
             }
 
@@ -386,7 +431,7 @@ namespace IRISBackend.Tests
                     LegacyClientId = counterparty.LegacyClientId,
                     LegacyCompanyCode = counterparty.LegacyCompanyCode,
                     Name = counterparty.Name,
-                    Type = counterparty.Type,
+                    Types = counterparty.TypeAssignments.Select(assignment => assignment.Type).ToArray(),
                     Email = counterparty.Email,
                     Country = counterparty.Country,
                     City = counterparty.City,
@@ -405,8 +450,8 @@ namespace IRISBackend.Tests
                 var normalizedSearch = search?.Trim();
                 var query = Items.Where(counterparty =>
                     counterparty.IsActive &&
-                    !string.IsNullOrWhiteSpace(counterparty.Type) &&
-                    counterparty.Type.Trim().Equals("Reinsurer", StringComparison.OrdinalIgnoreCase));
+                    counterparty.TypeAssignments.Any(assignment =>
+                        assignment.Type.Equals(CounterpartyTypes.Reinsurer, StringComparison.OrdinalIgnoreCase)));
 
                 if (!string.IsNullOrWhiteSpace(normalizedSearch))
                 {
@@ -424,7 +469,7 @@ namespace IRISBackend.Tests
                     {
                         Id = counterparty.Id,
                         Name = counterparty.Name,
-                        Type = counterparty.Type,
+                        Types = counterparty.TypeAssignments.Select(assignment => assignment.Type).ToArray(),
                         Country = counterparty.Country,
                         City = counterparty.City
                     })

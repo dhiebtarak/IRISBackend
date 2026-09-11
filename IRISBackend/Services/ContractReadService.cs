@@ -38,6 +38,11 @@ namespace IRISBackend.Services
                 userResult.Value!.Id,
                 cancellationToken);
 
+            foreach (var item in items)
+            {
+                item.Status = ContractConstants.NormalizeStatus(item.Status);
+            }
+
             return ServiceResult<PagedResponseDto<ContractListItemDto>>.Success(new PagedResponseDto<ContractListItemDto>
             {
                 Items = items,
@@ -58,7 +63,17 @@ namespace IRISBackend.Services
             }
 
             var data = await _contractRepository.GetDashboardDataAsync(userResult.Value!.Id, cancellationToken);
-            var distribution = data.StatusCounts
+            var statusCounts = data.StatusCounts
+                .GroupBy(status => ContractConstants.NormalizeStatus(status.Status), StringComparer.OrdinalIgnoreCase)
+                .Select(group => new ContractStatusCount
+                {
+                    Status = group.Key,
+                    Count = group.Sum(item => item.Count)
+                })
+                .OrderBy(status => status.Status)
+                .ToArray();
+
+            var distribution = statusCounts
                 .Select(status => new ContractWorkflowDistributionDto
                 {
                     Status = status.Status,
@@ -72,11 +87,17 @@ namespace IRISBackend.Services
             return ServiceResult<ContractDashboardSummaryDto>.Success(new ContractDashboardSummaryDto
             {
                 TotalContracts = data.TotalContracts,
-                PendingReviewContracts = SumCategory(data.StatusCounts, ContractWorkflowStatusCategories.PendingReview),
-                BoundActiveContracts = SumCategory(data.StatusCounts, ContractWorkflowStatusCategories.BoundActive),
+                PendingReviewContracts = SumCategory(statusCounts, ContractWorkflowStatusCategories.PendingReview),
+                BoundActiveContracts = SumCategory(statusCounts, ContractWorkflowStatusCategories.BoundActive),
                 ActionRequiredContracts = data.ActionRequiredContracts,
                 WorkflowDistribution = distribution,
                 RecentContracts = data.RecentContracts
+                    .Select(contract =>
+                    {
+                        contract.Status = ContractConstants.NormalizeStatus(contract.Status);
+                        return contract;
+                    })
+                    .ToArray()
             });
         }
 
@@ -212,7 +233,9 @@ namespace IRISBackend.Services
 
         private static int SumCategory(IEnumerable<ContractStatusCount> counts, IReadOnlySet<string> statuses)
         {
-            return counts.Where(item => statuses.Contains(item.Status)).Sum(item => item.Count);
+            return counts
+                .Where(item => statuses.Contains(ContractConstants.NormalizeStatus(item.Status)))
+                .Sum(item => item.Count);
         }
 
         private static ServiceResult<T> MapFailure<T>(ServiceResult<UserProfileResponseDto> result)
@@ -236,7 +259,8 @@ namespace IRISBackend.Services
                 Name = contract.Name,
                 ContractType = ResolveContractType(contract),
                 TypeOfBusiness = contract.TypeOfBusiness,
-                Status = contract.Status,
+                Status = ContractConstants.NormalizeStatus(contract.Status),
+                AllowedActions = BuildAllowedActions(contract),
                 CounterpartyId = contract.IdCounterparty,
                 Cedent = new CedentSummaryDto
                 {
@@ -263,6 +287,7 @@ namespace IRISBackend.Services
                 SignedSharePct = contract.SignedSharePctCedent,
                 Tsi = contract.ContractFac?.SumInsured,
                 SumInsured = contract.ContractFac?.SumInsured,
+                LimitOfLiability = contract.ContractFac?.LimitOfLiability,
                 Deductible = contract.ContractFac?.Deductible,
                 PremiumRate = contract.ContractFac?.PremiumRate,
                 Fees = contract.Fees,
@@ -288,6 +313,31 @@ namespace IRISBackend.Services
                     .OrderBy(panel => panel.IdPanel)
                     .Select(ContractPanelDtoMapper.Map)
                     .ToArray()
+            };
+        }
+
+        private static ContractAllowedActionsDto BuildAllowedActions(Models.Contract contract)
+        {
+            var status = ContractConstants.NormalizeStatus(contract.Status);
+            var hasConfirmedPanel = contract.ContractPanels.Any(panel =>
+                string.Equals(
+                    panel.Status?.Trim(),
+                    ContractConstants.ConfirmedPanelStatus,
+                    StringComparison.OrdinalIgnoreCase));
+
+            var canModify = status is ContractConstants.DraftStatus or
+                ContractConstants.ReadyForPlacementStatus or
+                ContractConstants.PlacementInProgressStatus;
+            var canPlace = status is ContractConstants.ReadyForPlacementStatus or
+                ContractConstants.PlacementInProgressStatus;
+
+            return new ContractAllowedActionsDto
+            {
+                CanModifyContract = canModify,
+                CanAddReinsurer = canPlace,
+                CanStartBinding = status == ContractConstants.PlacementInProgressStatus && hasConfirmedPanel,
+                CanCancelContract = canModify,
+                CanEditPlacement = status == ContractConstants.PlacementInProgressStatus
             };
         }
 
@@ -318,8 +368,12 @@ namespace IRISBackend.Services
                 .Where(selection => selection.IdCoverageItemNavigation is not null)
                 .ToList();
 
-            var mainCover = selections.SingleOrDefault(selection =>
-                IsCoverageLevel(selection, CoverageConstants.MainCoverLevel));
+            var mainCovers = selections
+                .Where(selection => IsCoverageLevel(selection, CoverageConstants.MainCoverLevel))
+                .OrderByDescending(selection => selection.IsPrimary)
+                .ThenBy(selection => selection.IdCoverageItem)
+                .ToArray();
+            var primaryMainCover = mainCovers.FirstOrDefault();
 
             var sections = selections
                 .Where(selection => IsCoverageLevel(selection, CoverageConstants.SectionLevel))
@@ -337,10 +391,13 @@ namespace IRISBackend.Services
 
             return new ContractCoverageSelectionResponseDto
             {
-                MainCoverId = mainCover?.IdCoverageItem ?? 0,
+                PrimaryMainCoverId = primaryMainCover?.IdCoverageItem ?? 0,
+                CoverageIds = mainCovers.Select(selection => selection.IdCoverageItem).ToArray(),
+                Coverages = mainCovers.Select((selection, index) => MapMainCoverItem(selection, index == 0)).ToArray(),
+                MainCoverId = primaryMainCover?.IdCoverageItem ?? 0,
                 SectionIds = sections.Select(section => section.Id).ToArray(),
                 ExtensionIds = extensions.Select(extension => extension.Id).ToArray(),
-                MainCover = mainCover is null ? null : MapCoverageItem(mainCover),
+                MainCover = primaryMainCover is null ? null : MapCoverageItem(primaryMainCover),
                 Sections = sections,
                 Extensions = extensions
             };
@@ -353,6 +410,19 @@ namespace IRISBackend.Services
                 Id = selection.IdCoverageItem,
                 Code = selection.IdCoverageItemNavigation.CoverageCode,
                 Name = selection.IdCoverageItemNavigation.CoverageName,
+                HasSlip = selection.IdSlipTemplate.HasValue,
+                SlipTemplateId = selection.IdSlipTemplate
+            };
+        }
+
+        private static ContractMainCoverSelectionItemDto MapMainCoverItem(Models.ContractCoverageSelection selection, bool primaryFallback)
+        {
+            return new ContractMainCoverSelectionItemDto
+            {
+                IdMainCover = selection.IdCoverageItem,
+                Code = selection.IdCoverageItemNavigation.CoverageCode,
+                Description = selection.IdCoverageItemNavigation.Description ?? selection.IdCoverageItemNavigation.CoverageName,
+                IsPrimary = selection.IsPrimary || primaryFallback,
                 HasSlip = selection.IdSlipTemplate.HasValue,
                 SlipTemplateId = selection.IdSlipTemplate
             };

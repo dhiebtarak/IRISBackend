@@ -1,6 +1,7 @@
 using IRISBackend.DTOs;
 using IRISBackend.Models;
 using IRISBackend.Repositories;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace IRISBackend.Services
 {
@@ -67,6 +68,13 @@ namespace IRISBackend.Services
                 return NotFound();
             }
 
+            var effectiveStatus = ContractConstants.NormalizeStatus(contract.Status);
+            if (effectiveStatus != ContractConstants.ReadyForPlacementStatus &&
+                effectiveStatus != ContractConstants.PlacementInProgressStatus)
+            {
+                return Conflict($"A reinsurer cannot be added while the contract status is '{effectiveStatus}'.");
+            }
+
             var validation = await ValidatePanelRequestAsync(contractId, request, null, cancellationToken);
             if (!validation.Succeeded)
             {
@@ -84,15 +92,27 @@ namespace IRISBackend.Services
 
             ApplyPanelValues(panel, request);
 
-            if (contract.ContractPanels.Count == 0)
+            var hadExistingPanels = contract.ContractPanels.Count > 0;
+            await using IDbContextTransaction transaction = await _placementRepository.BeginTransactionAsync(cancellationToken);
+            try
             {
-                contract.Status = ContractConstants.PlacementInProgressStatus;
-                contract.UpdatedAt = DateTime.UtcNow;
-                contract.UpdatedBy = userResult.Value.Id;
-            }
+                await _placementRepository.AddPanelAsync(panel, cancellationToken);
 
-            await _placementRepository.AddPanelAsync(panel, cancellationToken);
-            await _placementRepository.SaveChangesAsync(cancellationToken);
+                if (effectiveStatus == ContractConstants.ReadyForPlacementStatus && !hadExistingPanels)
+                {
+                    contract.Status = ContractConstants.PlacementInProgressStatus;
+                    contract.UpdatedAt = DateTime.UtcNow;
+                    contract.UpdatedBy = userResult.Value.Id;
+                }
+
+                await _placementRepository.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+            }
+            catch
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                throw;
+            }
 
             return await _contractReadService.GetOverviewAsync(contractId, cancellationToken);
         }
@@ -115,6 +135,14 @@ namespace IRISBackend.Services
                 return ServiceResult<ContractOverviewDto>.Failure(
                     "Contract panel was not found.",
                     statusCode: StatusCodes.Status404NotFound);
+            }
+
+            var effectiveStatus = ContractConstants.NormalizeStatus(panel.IdContractNavigation.Status);
+            if (effectiveStatus != ContractConstants.PlacementInProgressStatus)
+            {
+                return ServiceResult<ContractOverviewDto>.Failure(
+                    $"A reinsurer placement can only be edited while the contract status is '{ContractConstants.PlacementInProgressStatus}'.",
+                    statusCode: StatusCodes.Status409Conflict);
             }
 
             var validation = await ValidatePanelRequestAsync(contractId, request, panelId, cancellationToken);
@@ -155,6 +183,14 @@ namespace IRISBackend.Services
                     statusCode: StatusCodes.Status404NotFound);
             }
 
+            var effectiveStatus = ContractConstants.NormalizeStatus(panel.IdContractNavigation.Status);
+            if (effectiveStatus != ContractConstants.PlacementInProgressStatus)
+            {
+                return ServiceResult<ContractPanelResponseDto>.Failure(
+                    $"A reinsurer placement can only be confirmed while the contract status is '{ContractConstants.PlacementInProgressStatus}'.",
+                    statusCode: StatusCodes.Status409Conflict);
+            }
+
             var errors = ValidatePanelCanBeConfirmed(panel);
             if (errors.Count > 0)
             {
@@ -186,6 +222,14 @@ namespace IRISBackend.Services
                 return NotFound();
             }
 
+            var effectiveStatus = ContractConstants.NormalizeStatus(contract.Status);
+            if (effectiveStatus != ContractConstants.PlacementInProgressStatus)
+            {
+                return ServiceResult<ContractOverviewDto>.Failure(
+                    $"Binding can only start while the contract status is '{ContractConstants.PlacementInProgressStatus}'.",
+                    statusCode: StatusCodes.Status409Conflict);
+            }
+
             var confirmedPanels = contract.ContractPanels
                 .Where(panel => string.Equals(
                     panel.Status?.Trim(),
@@ -200,11 +244,56 @@ namespace IRISBackend.Services
                     statusCode: StatusCodes.Status400BadRequest);
             }
 
-            contract.Status = ContractConstants.BindingInProgressStatus;
+            contract.Status = ContractConstants.BoundStatus;
             contract.UpdatedAt = DateTime.UtcNow;
             contract.UpdatedBy = userResult.Value.Id;
 
+            foreach (var panel in contract.ContractPanels)
+            {
+                if (!string.Equals(panel.Status?.Trim(), ContractConstants.ConfirmedPanelStatus, StringComparison.OrdinalIgnoreCase))
+                {
+                    panel.Status = ContractConstants.NotTakenUpPanelStatus;
+                }
+            }
+
             await _placementRepository.SaveChangesAsync(cancellationToken);
+            return await _contractReadService.GetOverviewAsync(contractId, cancellationToken);
+        }
+
+        public async Task<ServiceResult<ContractOverviewDto>> CancelContractAsync(
+            int contractId,
+            CancellationToken cancellationToken = default)
+        {
+            var userResult = await GetCurrentFrontOfficerAsync();
+            if (!userResult.Succeeded)
+            {
+                return MapFailure(userResult);
+            }
+
+            var contract = await _placementRepository.GetContractForPlacementAsync(
+                contractId,
+                userResult.Value!.Id,
+                cancellationToken);
+            if (contract is null)
+            {
+                return NotFound();
+            }
+
+            var effectiveStatus = ContractConstants.NormalizeStatus(contract.Status);
+            if (effectiveStatus is ContractConstants.BoundStatus or
+                ContractConstants.ExpiredStatus or
+                ContractConstants.CancelledStatus)
+            {
+                return ServiceResult<ContractOverviewDto>.Failure(
+                    $"A contract cannot be cancelled from status '{effectiveStatus}'.",
+                    statusCode: StatusCodes.Status409Conflict);
+            }
+
+            contract.Status = ContractConstants.CancelledStatus;
+            contract.UpdatedAt = DateTime.UtcNow;
+            contract.UpdatedBy = userResult.Value.Id;
+            await _placementRepository.SaveChangesAsync(cancellationToken);
+
             return await _contractReadService.GetOverviewAsync(contractId, cancellationToken);
         }
 
@@ -307,7 +396,7 @@ namespace IRISBackend.Services
 
         private static string NormalizeStatus(string? status)
         {
-            return string.IsNullOrWhiteSpace(status) ? ContractConstants.DraftStatus : status.Trim();
+            return ContractConstants.NormalizeStatus(status);
         }
 
         private static string? NormalizeOptionalValue(string? value)
@@ -328,6 +417,13 @@ namespace IRISBackend.Services
             return ServiceResult<ContractOverviewDto>.Failure(
                 "Contract was not found.",
                 statusCode: StatusCodes.Status404NotFound);
+        }
+
+        private static ServiceResult<ContractOverviewDto> Conflict(string message)
+        {
+            return ServiceResult<ContractOverviewDto>.Failure(
+                message,
+                statusCode: StatusCodes.Status409Conflict);
         }
     }
 }

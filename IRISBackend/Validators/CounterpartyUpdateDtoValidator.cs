@@ -1,5 +1,6 @@
 using FluentValidation;
 using IRISBackend.DTOs;
+using IRISBackend.Services;
 
 namespace IRISBackend.Validators
 {
@@ -20,9 +21,19 @@ namespace IRISBackend.Validators
                 .NotEmpty()
                 .MaximumLength(200);
 
-            RuleFor(counterparty => counterparty.Type)
+            RuleFor(counterparty => counterparty.Types)
+                .NotNull()
+                .Must(types => types is { Count: > 0 })
+                .WithMessage("At least one counterparty type is required.");
+
+            RuleForEach(counterparty => counterparty.Types)
                 .NotEmpty()
-                .MaximumLength(64);
+                .Must(type => CounterpartyTypes.TryNormalize(type, out _))
+                .WithMessage("Counterparty type must be one of: Cedent, Reinsurer, Client, Partner.");
+
+            RuleFor(counterparty => counterparty.Types)
+                .Must(types => types is null || types.Count == types.Select(type => type.Trim().ToLowerInvariant()).Distinct().Count())
+                .WithMessage("Counterparty types must not contain duplicates.");
 
             RuleFor(counterparty => counterparty.Email)
                 .MaximumLength(256)

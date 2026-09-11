@@ -29,6 +29,7 @@ namespace IRISBackend.Mappings
                 .ForMember(destination => destination.Cedent, options => options.MapFrom(source => source.IdCounterpartyNavigation))
                 .ForMember(destination => destination.Currency, options => options.MapFrom(source => source.IdCurrencyNavigation))
                 .ForMember(destination => destination.SumInsured, options => options.MapFrom(source => source.ContractFac == null ? null : source.ContractFac.SumInsured))
+                .ForMember(destination => destination.LimitOfLiability, options => options.MapFrom(source => source.ContractFac == null ? null : source.ContractFac.LimitOfLiability))
                 .ForMember(destination => destination.Deductible, options => options.MapFrom(source => source.ContractFac == null ? null : source.ContractFac.Deductible))
                 .ForMember(destination => destination.PremiumRate, options => options.MapFrom(source => source.ContractFac == null ? null : source.ContractFac.PremiumRate))
                 .ForMember(destination => destination.CoverageSelection, options => options.MapFrom(source => MapCoverageSelection(source)));
@@ -45,8 +46,12 @@ namespace IRISBackend.Mappings
                 .Where(selection => selection.IdCoverageItemNavigation is not null)
                 .ToList();
 
-            var mainCover = selections.SingleOrDefault(selection =>
-                string.Equals(selection.IdCoverageItemNavigation.CoverageLevel?.Trim(), CoverageConstants.MainCoverLevel, StringComparison.OrdinalIgnoreCase));
+            var mainCovers = selections
+                .Where(selection => string.Equals(selection.IdCoverageItemNavigation.CoverageLevel?.Trim(), CoverageConstants.MainCoverLevel, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(selection => selection.IsPrimary)
+                .ThenBy(selection => selection.IdCoverageItem)
+                .ToArray();
+            var primaryMainCover = mainCovers.FirstOrDefault();
 
             var sections = selections
                 .Where(selection => string.Equals(selection.IdCoverageItemNavigation.CoverageLevel?.Trim(), CoverageConstants.SectionLevel, StringComparison.OrdinalIgnoreCase))
@@ -64,10 +69,21 @@ namespace IRISBackend.Mappings
 
             return new ContractCoverageSelectionResponseDto
             {
-                MainCoverId = mainCover?.IdCoverageItem ?? 0,
+                PrimaryMainCoverId = primaryMainCover?.IdCoverageItem ?? 0,
+                CoverageIds = mainCovers.Select(selection => selection.IdCoverageItem).ToArray(),
+                Coverages = mainCovers.Select((selection, index) => new ContractMainCoverSelectionItemDto
+                {
+                    IdMainCover = selection.IdCoverageItem,
+                    Code = selection.IdCoverageItemNavigation.CoverageCode,
+                    Description = selection.IdCoverageItemNavigation.Description ?? selection.IdCoverageItemNavigation.CoverageName,
+                    IsPrimary = selection.IsPrimary || index == 0,
+                    HasSlip = selection.IdSlipTemplate.HasValue,
+                    SlipTemplateId = selection.IdSlipTemplate
+                }).ToArray(),
+                MainCoverId = primaryMainCover?.IdCoverageItem ?? 0,
                 SectionIds = sections.Select(section => section.Id).ToArray(),
                 ExtensionIds = extensions.Select(extension => extension.Id).ToArray(),
-                MainCover = mainCover is null ? null : MapSelectionItem(mainCover),
+                MainCover = primaryMainCover is null ? null : MapSelectionItem(primaryMainCover),
                 Sections = sections,
                 Extensions = extensions
             };

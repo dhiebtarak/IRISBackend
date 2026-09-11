@@ -1,12 +1,11 @@
 using IRISBackend.Models;
+using IRISBackend.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace IRISBackend.Repositories
 {
     public sealed class ReferenceDataRepository : IReferenceDataRepository
     {
-        private const string CedentCounterpartyType = "cedent";
-
         private readonly IRISBackendContext _dbContext;
 
         public ReferenceDataRepository(IRISBackendContext dbContext)
@@ -38,12 +37,14 @@ namespace IRISBackend.Repositories
             if (!string.IsNullOrWhiteSpace(normalizedSearch))
             {
                 query = query.Where(counterparty =>
-                    counterparty.Name != null &&
-                    counterparty.Name.ToLower().Contains(normalizedSearch));
+                    (counterparty.Name != null && counterparty.Name.ToLower().Contains(normalizedSearch)) ||
+                    (counterparty.Country != null && counterparty.Country.ToLower().Contains(normalizedSearch)) ||
+                    (counterparty.City != null && counterparty.City.ToLower().Contains(normalizedSearch)));
             }
 
             var totalCount = await query.CountAsync(cancellationToken);
             var items = await query
+                .Include(counterparty => counterparty.TypeAssignments)
                 .OrderBy(counterparty => counterparty.Name)
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
@@ -59,8 +60,7 @@ namespace IRISBackend.Repositories
                 .FirstOrDefaultAsync(counterparty =>
                     counterparty.Id == counterpartyId &&
                     counterparty.IsActive &&
-                    counterparty.Type != null &&
-                    counterparty.Type.Trim().ToLower() == CedentCounterpartyType,
+                    counterparty.TypeAssignments.Any(assignment => assignment.Type == CounterpartyTypes.Cedent),
                     cancellationToken);
         }
 
@@ -82,8 +82,7 @@ namespace IRISBackend.Repositories
         {
             return counterparty =>
                 counterparty.IsActive &&
-                counterparty.Type != null &&
-                counterparty.Type.Trim().ToLower() == CedentCounterpartyType;
+                counterparty.TypeAssignments.Any(assignment => assignment.Type == CounterpartyTypes.Cedent);
         }
     }
 }

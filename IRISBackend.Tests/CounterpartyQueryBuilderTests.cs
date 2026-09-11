@@ -1,6 +1,7 @@
 using IRISBackend.DTOs;
 using IRISBackend.Models;
 using IRISBackend.Repositories;
+using IRISBackend.Services;
 using Xunit;
 
 namespace IRISBackend.Tests
@@ -59,6 +60,11 @@ namespace IRISBackend.Tests
                     Name = "AXA XL",
                     LegacyCompanyCode = "AXA-UK",
                     Type = "Cedent",
+                    TypeAssignments =
+                    [
+                        new CounterpartyTypeAssignment { CounterpartyId = 1, Type = CounterpartyTypes.Cedent },
+                        new CounterpartyTypeAssignment { CounterpartyId = 1, Type = CounterpartyTypes.Reinsurer }
+                    ],
                     Status = "Active",
                     IsActive = true,
                     Country = "United Kingdom",
@@ -70,6 +76,7 @@ namespace IRISBackend.Tests
                     Name = "AMI",
                     LegacyCompanyCode = "AMI-TN",
                     Type = "Cedent",
+                    TypeAssignments = [new CounterpartyTypeAssignment { CounterpartyId = 2, Type = CounterpartyTypes.Cedent }],
                     Status = "Active",
                     IsActive = true,
                     Country = "Tunisie",

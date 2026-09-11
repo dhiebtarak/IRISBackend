@@ -22,24 +22,60 @@ namespace IRISBackend.Services
                 return ValidationFailure("coverageSelection is required.");
             }
 
-            var mainCoverId = request.MainCoverId;
+            var primaryMainCoverId = request.PrimaryMainCoverId > 0
+                ? request.PrimaryMainCoverId
+                : request.MainCoverId;
+            var mainCoverIds = NormalizeIds(request.CoverageIds);
+            if (mainCoverIds.Count == 0 && request.PrimaryMainCoverId <= 0 && request.MainCoverId > 0)
+            {
+                mainCoverIds = [primaryMainCoverId];
+            }
+
             var sectionIds = NormalizeIds(request.SectionIds);
             var extensionIds = NormalizeIds(request.ExtensionIds);
-            var allRequestedIds = new[] { mainCoverId }.Concat(sectionIds).Concat(extensionIds).Where(id => id > 0).Distinct().ToArray();
+            var allRequestedIds = mainCoverIds.Concat(sectionIds).Concat(extensionIds).Where(id => id > 0).Distinct().ToArray();
             var errors = new List<string>();
 
-            if (mainCoverId <= 0)
+            if (primaryMainCoverId <= 0)
             {
-                errors.Add("coverageSelection.mainCoverId is required.");
+                errors.Add("coverageSelection.primaryMainCoverId is required.");
+            }
+
+            if (mainCoverIds.Count == 0)
+            {
+                errors.Add("coverageSelection.coverageIds must contain at least one coverage.");
+            }
+            else if (!mainCoverIds.Contains(primaryMainCoverId))
+            {
+                errors.Add("primaryMainCoverId must be included in coverageIds.");
+            }
+
+            if (HasDuplicates(request.CoverageIds))
+            {
+                errors.Add("coverageSelection.coverageIds must not contain duplicates.");
             }
 
             var items = await _coverageRepository.GetCoverageItemsByIdsAsync(allRequestedIds, cancellationToken);
             var itemsById = items.ToDictionary(item => item.Id);
-            var mainCover = itemsById.GetValueOrDefault(mainCoverId);
+            var primaryMainCover = itemsById.GetValueOrDefault(primaryMainCoverId);
 
-            if (mainCover is null || !mainCover.IsActive || !IsLevel(mainCover.Level, CoverageConstants.MainCoverLevel))
+            var mainCoverCode = primaryMainCover?.Code?.Trim().ToUpperInvariant() ?? string.Empty;
+            if (primaryMainCover is not null &&
+                (mainCoverCode.Length == 0 ||
+                 mainCoverCode.Length > 50 ||
+                 mainCoverCode.Any(character => !char.IsLetterOrDigit(character))))
             {
-                errors.Add("The selected main cover does not exist, is inactive, or is not a MAIN_COVER.");
+                errors.Add("The selected main cover has an invalid coverage code.");
+            }
+
+            foreach (var mainCoverId in mainCoverIds)
+            {
+                if (!itemsById.TryGetValue(mainCoverId, out var mainCover) ||
+                    !mainCover.IsActive ||
+                    !IsLevel(mainCover.Level, CoverageConstants.MainCoverLevel))
+                {
+                    errors.Add($"Selected coverage {mainCoverId} does not exist, is inactive, or is not a MAIN_COVER.");
+                }
             }
 
             foreach (var sectionId in sectionIds)
@@ -62,12 +98,12 @@ namespace IRISBackend.Services
                 }
             }
 
-            var relationParentIds = new[] { mainCoverId }.Concat(sectionIds).Where(id => id > 0).Distinct().ToArray();
+            var relationParentIds = mainCoverIds.Concat(sectionIds).Where(id => id > 0).Distinct().ToArray();
             var relations = await _coverageRepository.GetActiveRelationsForParentsAsync(relationParentIds, cancellationToken);
 
-            ValidateSections(mainCoverId, sectionIds, relations, errors);
-            ValidateExtensions(mainCoverId, sectionIds, extensionIds, relations, errors);
-            ValidateMandatoryChildren(mainCoverId, sectionIds, extensionIds, relations, errors);
+            ValidateSections(mainCoverIds, sectionIds, relations, errors);
+            ValidateExtensions(mainCoverIds, sectionIds, extensionIds, relations, errors);
+            ValidateMandatoryChildren(mainCoverIds, sectionIds, extensionIds, relations, errors);
 
             if (errors.Count > 0)
             {
@@ -77,7 +113,10 @@ namespace IRISBackend.Services
             var slipTemplateIds = await _coverageRepository.GetActiveCurrentSlipIdsAsync(allRequestedIds, cancellationToken);
             return ServiceResult<CoverageSelectionPlan>.Success(new CoverageSelectionPlan
             {
-                MainCoverId = mainCoverId,
+                PrimaryMainCoverId = primaryMainCoverId,
+                MainCoverId = primaryMainCoverId,
+                MainCoverIds = mainCoverIds,
+                MainCoverCode = mainCoverCode,
                 SectionIds = sectionIds,
                 ExtensionIds = extensionIds,
                 SlipTemplateIdsByCoverageItemId = slipTemplateIds
@@ -91,7 +130,7 @@ namespace IRISBackend.Services
             DateTime now,
             CancellationToken cancellationToken = default)
         {
-            await AddSelectionsByLevelAsync(contractId, [plan.MainCoverId], plan, userId, now, cancellationToken);
+            await AddSelectionsByLevelAsync(contractId, GetMainCoverIds(plan), plan, userId, now, cancellationToken, isMainCover: true);
             await AddSelectionsByLevelAsync(contractId, plan.SectionIds, plan, userId, now, cancellationToken);
             await AddSelectionsByLevelAsync(contractId, plan.ExtensionIds, plan, userId, now, cancellationToken);
         }
@@ -104,50 +143,20 @@ namespace IRISBackend.Services
             CancellationToken cancellationToken = default)
         {
             var currentSelections = await _coverageRepository.GetSelectionsForContractAsync(contractId, cancellationToken);
-            var currentMain = currentSelections.SingleOrDefault(selection =>
-                IsLevel(selection.IdCoverageItemNavigation.CoverageLevel, CoverageConstants.MainCoverLevel));
+            var currentSections = currentSelections.Where(selection => IsLevel(selection.IdCoverageItemNavigation.CoverageLevel, CoverageConstants.SectionLevel)).ToList();
+            var currentExtensions = currentSelections.Where(selection => IsLevel(selection.IdCoverageItemNavigation.CoverageLevel, CoverageConstants.ExtensionLevel)).ToList();
+            var currentMainCovers = currentSelections.Where(selection => IsLevel(selection.IdCoverageItemNavigation.CoverageLevel, CoverageConstants.MainCoverLevel)).ToList();
 
-            var currentSections = currentSelections
-                .Where(selection => IsLevel(selection.IdCoverageItemNavigation.CoverageLevel, CoverageConstants.SectionLevel))
-                .ToList();
-
-            var currentExtensions = currentSelections
-                .Where(selection => IsLevel(selection.IdCoverageItemNavigation.CoverageLevel, CoverageConstants.ExtensionLevel))
-                .ToList();
-
-            var mainChanged = currentMain?.IdCoverageItem != plan.MainCoverId;
-            var extensionsToRemove = mainChanged
-                ? currentExtensions
-                : currentExtensions.Where(selection => !plan.ExtensionIds.Contains(selection.IdCoverageItem)).ToList();
-            var sectionsToRemove = mainChanged
-                ? currentSections
-                : currentSections.Where(selection => !plan.SectionIds.Contains(selection.IdCoverageItem)).ToList();
-
-            _coverageRepository.RemoveSelections(extensionsToRemove);
-            _coverageRepository.RemoveSelections(sectionsToRemove);
+            _coverageRepository.RemoveSelections(currentExtensions);
+            _coverageRepository.RemoveSelections(currentSections);
             await _coverageRepository.SaveChangesAsync(cancellationToken);
 
-            if (mainChanged)
-            {
-                if (currentMain is not null)
-                {
-                    _coverageRepository.RemoveSelections([currentMain]);
-                    await _coverageRepository.SaveChangesAsync(cancellationToken);
-                }
+            _coverageRepository.RemoveSelections(currentMainCovers);
+            await _coverageRepository.SaveChangesAsync(cancellationToken);
 
-                await AddSelectionsByLevelAsync(contractId, [plan.MainCoverId], plan, userId, now, cancellationToken);
-                await AddSelectionsByLevelAsync(contractId, plan.SectionIds, plan, userId, now, cancellationToken);
-                await AddSelectionsByLevelAsync(contractId, plan.ExtensionIds, plan, userId, now, cancellationToken);
-                return;
-            }
-
-            var currentSectionIds = currentSections.Select(selection => selection.IdCoverageItem).ToHashSet();
-            var currentExtensionIds = currentExtensions.Select(selection => selection.IdCoverageItem).ToHashSet();
-            var sectionsToAdd = plan.SectionIds.Where(id => !currentSectionIds.Contains(id)).ToArray();
-            var extensionsToAdd = plan.ExtensionIds.Where(id => !currentExtensionIds.Contains(id)).ToArray();
-
-            await AddSelectionsByLevelAsync(contractId, sectionsToAdd, plan, userId, now, cancellationToken);
-            await AddSelectionsByLevelAsync(contractId, extensionsToAdd, plan, userId, now, cancellationToken);
+            await AddSelectionsByLevelAsync(contractId, GetMainCoverIds(plan), plan, userId, now, cancellationToken, isMainCover: true);
+            await AddSelectionsByLevelAsync(contractId, plan.SectionIds, plan, userId, now, cancellationToken);
+            await AddSelectionsByLevelAsync(contractId, plan.ExtensionIds, plan, userId, now, cancellationToken);
         }
 
         private async Task AddSelectionsByLevelAsync(
@@ -156,7 +165,8 @@ namespace IRISBackend.Services
             CoverageSelectionPlan plan,
             string userId,
             DateTime now,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            bool isMainCover = false)
         {
             if (coverageItemIds.Count == 0)
             {
@@ -170,6 +180,7 @@ namespace IRISBackend.Services
                 IdSlipTemplate = plan.SlipTemplateIdsByCoverageItemId.GetValueOrDefault(coverageItemId) == 0
                     ? null
                     : plan.SlipTemplateIdsByCoverageItemId[coverageItemId],
+                IsPrimary = isMainCover && coverageItemId == (plan.PrimaryMainCoverId > 0 ? plan.PrimaryMainCoverId : plan.MainCoverId),
                 CreatedAt = now,
                 CreatedBy = userId
             });
@@ -179,14 +190,14 @@ namespace IRISBackend.Services
         }
 
         private static void ValidateSections(
-            int mainCoverId,
+            IReadOnlyCollection<int> mainCoverIds,
             IReadOnlyCollection<int> sectionIds,
             IReadOnlyCollection<CoverageRelationLookup> relations,
             List<string> errors)
         {
             var validSectionIds = relations
                 .Where(relation =>
-                    relation.ParentId == mainCoverId &&
+                    mainCoverIds.Contains(relation.ParentId) &&
                     IsRelation(relation.RelationType, CoverageConstants.HasSectionRelation))
                 .Select(relation => relation.ChildId)
                 .ToHashSet();
@@ -198,13 +209,13 @@ namespace IRISBackend.Services
         }
 
         private static void ValidateExtensions(
-            int mainCoverId,
+            IReadOnlyCollection<int> mainCoverIds,
             IReadOnlyCollection<int> sectionIds,
             IReadOnlyCollection<int> extensionIds,
             IReadOnlyCollection<CoverageRelationLookup> relations,
             List<string> errors)
         {
-            var allowedParentIds = new[] { mainCoverId }.Concat(sectionIds).ToHashSet();
+            var allowedParentIds = mainCoverIds.Concat(sectionIds).ToHashSet();
             var validExtensionIds = relations
                 .Where(relation =>
                     allowedParentIds.Contains(relation.ParentId) &&
@@ -219,7 +230,7 @@ namespace IRISBackend.Services
         }
 
         private static void ValidateMandatoryChildren(
-            int mainCoverId,
+            IReadOnlyCollection<int> mainCoverIds,
             IReadOnlyCollection<int> sectionIds,
             IReadOnlyCollection<int> extensionIds,
             IReadOnlyCollection<CoverageRelationLookup> relations,
@@ -227,7 +238,7 @@ namespace IRISBackend.Services
         {
             var selectedSections = sectionIds.ToHashSet();
             var selectedExtensions = extensionIds.ToHashSet();
-            var selectedParents = new[] { mainCoverId }.Concat(sectionIds).ToHashSet();
+            var selectedParents = mainCoverIds.Concat(sectionIds).ToHashSet();
 
             foreach (var relation in relations.Where(relation => relation.IsMandatory && selectedParents.Contains(relation.ParentId)))
             {
@@ -251,6 +262,19 @@ namespace IRISBackend.Services
                 .Where(id => id > 0)
                 .Distinct()
                 .ToArray();
+        }
+
+        private static IReadOnlyList<int> GetMainCoverIds(CoverageSelectionPlan plan)
+        {
+            return plan.MainCoverIds.Count > 0
+                ? plan.MainCoverIds
+                : plan.MainCoverId > 0 ? [plan.MainCoverId] : [];
+        }
+
+        private static bool HasDuplicates(IEnumerable<int>? ids)
+        {
+            var values = (ids ?? []).Where(id => id > 0).ToArray();
+            return values.Length != values.Distinct().Count();
         }
 
         private static bool IsLevel(string? actualLevel, string expectedLevel)

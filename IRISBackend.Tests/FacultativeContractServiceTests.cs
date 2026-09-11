@@ -124,34 +124,18 @@ namespace IRISBackend.Tests
         }
 
         [Fact]
-        public async Task CreateDraftAsync_WhenUmrAlreadyExists_ReturnsConflict()
+        public async Task CreateDraftAsync_GeneratesTheNextScopedUmr()
         {
             var referenceDataRepository = new FakeReferenceDataRepository();
             var contractRepository = new FakeContractRepository(referenceDataRepository);
-            contractRepository.Contracts.Add(new Contract
-            {
-                IdContract = 8,
-                Umr = "B1234FAC2024-X",
-                Name = "Existing Draft",
-                IdCounterparty = 10,
-                IdCurrency = 2,
-                IdUser = "user-9",
-                TypeOfBusiness = ContractConstants.FacultativeType,
-                Status = ContractConstants.DraftStatus,
-                CreationDate = new DateOnly(2026, 8, 19),
-                InceptionDate = new DateOnly(2026, 9, 1),
-                ExpiryDate = new DateOnly(2027, 8, 31),
-                CreatedAt = DateTime.UtcNow,
-                CreatedBy = "user-9",
-                IsCurrent = true
-            });
-
             var service = CreateService(contractRepository, referenceDataRepository);
-            var result = await service.CreateDraftAsync(CreateValidRequest());
+            var first = await service.CreateDraftAsync(CreateValidRequest());
+            var second = await service.CreateDraftAsync(CreateValidRequest(name: "Second contract"));
 
-            Assert.False(result.Succeeded);
-            Assert.Equal(StatusCodes.Status409Conflict, result.StatusCode);
-            Assert.Equal("A contract with the same UMR already exists.", result.Error!.Message);
+            Assert.True(first.Succeeded);
+            Assert.True(second.Succeeded);
+            Assert.Equal("IT26-F-PD-0001", first.Value!.Umr);
+            Assert.Equal("IT26-F-PD-0002", second.Value!.Umr);
         }
 
         [Fact]
@@ -229,6 +213,7 @@ namespace IRISBackend.Tests
             Assert.Equal("London", result.Value.Cedent.City);
             Assert.Equal("USD", result.Value.Currency.Code);
             Assert.Equal(15000000m, result.Value.SumInsured);
+            Assert.Equal(1000000m, result.Value.LimitOfLiability);
             Assert.Equal(0.045m, result.Value.PremiumRate);
         }
 
@@ -262,6 +247,7 @@ namespace IRISBackend.Tests
                 contractRepository,
                 referenceDataRepository,
                 coverageSelectionService,
+                new ContractUmrGenerator(contractRepository),
                 new FakeUserService(currentUser),
                 mapper,
                 httpContextAccessor);
@@ -271,7 +257,6 @@ namespace IRISBackend.Tests
         {
             return new UpsertFacultativeContractRequest
             {
-                Umr = "B1234FAC2024-X",
                 Name = name,
                 CounterpartyId = 10,
                 CurrencyId = 2,
@@ -283,6 +268,7 @@ namespace IRISBackend.Tests
                 Fees = 0m,
                 IsHighPriority = false,
                 SumInsured = 12500000m,
+                LimitOfLiability = 1000000m,
                 Deductible = 250000m,
                 PremiumRate = 0.045m,
                 GrossPremium = 562500m,
@@ -343,6 +329,7 @@ namespace IRISBackend.Tests
                     IdContractFac = 1,
                     IdContract = 1,
                     SumInsured = 15000000m,
+                    LimitOfLiability = 1000000m,
                     Deductible = 500000m,
                     PremiumRate = 0.045m
                 }
@@ -391,6 +378,7 @@ namespace IRISBackend.Tests
                 return Task.FromResult(ServiceResult<CoverageSelectionPlan>.Success(new CoverageSelectionPlan
                 {
                     MainCoverId = request.MainCoverId,
+                    MainCoverCode = "PD",
                     SectionIds = sectionIds,
                     ExtensionIds = extensionIds,
                     SlipTemplateIdsByCoverageItemId = new Dictionary<int, int>
@@ -541,6 +529,7 @@ namespace IRISBackend.Tests
             private readonly FakeReferenceDataRepository _referenceDataRepository;
             private int _nextContractId = 1;
             private int _nextContractFacId = 1;
+            private readonly Dictionary<(int Year, string Type, string Cover), int> _umrSequences = new();
 
             public FakeContractRepository(FakeReferenceDataRepository referenceDataRepository)
             {
@@ -566,6 +555,17 @@ namespace IRISBackend.Tests
                     (!excludedContractId.HasValue || contract.IdContract != excludedContractId.Value));
 
                 return Task.FromResult(exists);
+            }
+
+            public Task<int> AllocateUmrSequenceAsync(
+                int inceptionYear,
+                string contractTypeCode,
+                string mainCoverCode,
+                CancellationToken cancellationToken = default)
+            {
+                var key = (inceptionYear, contractTypeCode, mainCoverCode);
+                _umrSequences[key] = _umrSequences.GetValueOrDefault(key) + 1;
+                return Task.FromResult(_umrSequences[key]);
             }
 
             public Task AddAsync(Contract contract, CancellationToken cancellationToken = default)
@@ -743,6 +743,7 @@ namespace IRISBackend.Tests
                     IdContractFac = source.IdContractFac,
                     IdContract = source.IdContract,
                     SumInsured = source.SumInsured,
+                    LimitOfLiability = source.LimitOfLiability,
                     Deductible = source.Deductible,
                     PremiumRate = source.PremiumRate
                 };

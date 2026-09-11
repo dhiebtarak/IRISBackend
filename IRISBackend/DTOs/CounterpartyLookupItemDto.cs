@@ -6,7 +6,7 @@ namespace IRISBackend.DTOs
 
         public string Name { get; set; } = string.Empty;
 
-        public string? Type { get; set; }
+        public IReadOnlyCollection<string> Types { get; set; } = [];
 
         public string? Country { get; set; }
 

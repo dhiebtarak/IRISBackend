@@ -112,5 +112,23 @@ namespace IRISBackend.Tests
             Assert.False(result.IsValid);
             Assert.Contains(result.Errors, error => error.ErrorMessage == "coverageSelection.mainCoverId is required.");
         }
+
+        [Fact]
+        public void Validate_WhenLimitOfLiabilityIsNegative_ReturnsError()
+        {
+            var result = _validator.Validate(new UpsertFacultativeContractRequest
+            {
+                Name = "Draft",
+                CounterpartyId = 10,
+                CurrencyId = 2,
+                InceptionDate = new DateOnly(2026, 9, 1),
+                ExpiryDate = new DateOnly(2027, 8, 31),
+                LimitOfLiability = -1m,
+                CoverageSelection = new CoverageSelectionRequestDto { MainCoverId = 1 }
+            });
+
+            Assert.False(result.IsValid);
+            Assert.Contains(result.Errors, error => error.PropertyName == nameof(UpsertFacultativeContractRequest.LimitOfLiability));
+        }
     }
 }

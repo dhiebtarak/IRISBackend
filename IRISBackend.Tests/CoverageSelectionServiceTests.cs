@@ -30,6 +30,56 @@ namespace IRISBackend.Tests
         }
 
         [Fact]
+        public async Task ValidateAsync_AllowsMultipleMainCoversAndKeepsPrimaryForUmr()
+        {
+            var repository = new FakeCoverageRepository();
+            repository.Items[6] = new CoverageItemLookup(6, CoverageConstants.MainCoverLevel, "PVT", "Political Violence", true);
+            var service = new CoverageSelectionService(repository);
+
+            var result = await service.ValidateAsync(new CoverageSelectionRequestDto
+            {
+                PrimaryMainCoverId = 1,
+                CoverageIds = [1, 6],
+                SectionIds = [2]
+            });
+
+            Assert.True(result.Succeeded);
+            Assert.Equal(1, result.Value!.PrimaryMainCoverId);
+            Assert.Equal([1, 6], result.Value.MainCoverIds);
+            Assert.Equal("PD", result.Value.MainCoverCode);
+        }
+
+        [Fact]
+        public async Task ValidateAsync_RejectsDuplicateCoverageIds()
+        {
+            var service = new CoverageSelectionService(new FakeCoverageRepository());
+
+            var result = await service.ValidateAsync(new CoverageSelectionRequestDto
+            {
+                PrimaryMainCoverId = 1,
+                CoverageIds = [1, 1]
+            });
+
+            Assert.False(result.Succeeded);
+            Assert.Contains(result.Error!.Errors, error => error.Contains("duplicates", StringComparison.OrdinalIgnoreCase));
+        }
+
+        [Fact]
+        public async Task ValidateAsync_RejectsPrimaryNotIncludedInCoverageIds()
+        {
+            var service = new CoverageSelectionService(new FakeCoverageRepository());
+
+            var result = await service.ValidateAsync(new CoverageSelectionRequestDto
+            {
+                PrimaryMainCoverId = 1,
+                CoverageIds = [6]
+            });
+
+            Assert.False(result.Succeeded);
+            Assert.Contains(result.Error!.Errors, error => error.Contains("included in coverageIds", StringComparison.OrdinalIgnoreCase));
+        }
+
+        [Fact]
         public async Task ValidateAsync_WhenSectionIsNotRelatedToMainCover_ReturnsBadRequest()
         {
             var repository = new FakeCoverageRepository();

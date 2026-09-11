@@ -33,8 +33,8 @@ namespace IRISBackend.Repositories
 
             if (!string.IsNullOrWhiteSpace(query.Status))
             {
-                var status = query.Status.Trim();
-                contracts = contracts.Where(contract => contract.Status == status);
+                var statuses = ContractConstants.StatusAliases(query.Status.Trim());
+                contracts = contracts.Where(contract => statuses.Contains(contract.Status));
             }
 
             if (query.CounterpartyId.HasValue)
@@ -82,6 +82,7 @@ namespace IRISBackend.Repositories
                 "cedentname" => descending ? contracts.OrderByDescending(contract => contract.CedentName) : contracts.OrderBy(contract => contract.CedentName),
                 "contracttype" => descending ? contracts.OrderByDescending(contract => contract.ContractType) : contracts.OrderBy(contract => contract.ContractType),
                 "status" => descending ? contracts.OrderByDescending(contract => contract.Status) : contracts.OrderBy(contract => contract.Status),
+                "receptiondate" => descending ? contracts.OrderByDescending(contract => contract.ReceptionDate) : contracts.OrderBy(contract => contract.ReceptionDate),
                 "inceptiondate" => descending ? contracts.OrderByDescending(contract => contract.InceptionDate) : contracts.OrderBy(contract => contract.InceptionDate),
                 "expirydate" => descending ? contracts.OrderByDescending(contract => contract.ExpiryDate) : contracts.OrderBy(contract => contract.ExpiryDate),
                 "grosspremium" => descending ? contracts.OrderByDescending(contract => contract.GrossPremium) : contracts.OrderBy(contract => contract.GrossPremium),
@@ -114,6 +115,7 @@ namespace IRISBackend.Repositories
                 CurrencyId = contract.IdCurrency,
                 CurrencyCode = contract.IdCurrencyNavigation.CurrencyCode,
                 Status = contract.Status,
+                ReceptionDate = contract.ReceptionDate,
                 InceptionDate = contract.InceptionDate,
                 ExpiryDate = contract.ExpiryDate,
                 GrossPremium = contract.GrossPremium,

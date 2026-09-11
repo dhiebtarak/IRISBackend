@@ -18,7 +18,7 @@ namespace IRISBackend.Controllers
         }
 
         /// <summary>
-        /// Returns active main covers available for facultative contract selection.
+        /// Returns the complete active coverage catalog for local frontend filtering.
         /// </summary>
         [HttpGet("main-covers")]
         [ProducesResponseType(typeof(IEnumerable<CoverageCatalogItemDto>), StatusCodes.Status200OK)]

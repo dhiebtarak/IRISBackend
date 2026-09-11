@@ -22,6 +22,8 @@ namespace IRISBackend.DTOs
 
         public string Status { get; set; } = string.Empty;
 
+        public DateOnly? ReceptionDate { get; set; }
+
         public DateOnly InceptionDate { get; set; }
 
         public DateOnly ExpiryDate { get; set; }

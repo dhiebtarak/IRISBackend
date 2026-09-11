@@ -2,8 +2,6 @@ namespace IRISBackend.DTOs
 {
     public sealed class UpsertFacultativeContractRequest
     {
-        public string? Umr { get; set; }
-
         public string Name { get; set; } = string.Empty;
 
         public int CounterpartyId { get; set; }
@@ -25,6 +23,8 @@ namespace IRISBackend.DTOs
         public bool IsHighPriority { get; set; }
 
         public decimal? SumInsured { get; set; }
+
+        public decimal? LimitOfLiability { get; set; }
 
         public decimal? Deductible { get; set; }
 

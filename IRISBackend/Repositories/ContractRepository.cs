@@ -3,6 +3,8 @@ using IRISBackend.DTOs;
 using IRISBackend.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using System.Data;
+using System.Data.Common;
 
 namespace IRISBackend.Repositories
 {
@@ -17,7 +19,7 @@ namespace IRISBackend.Repositories
 
         public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)
         {
-            return _dbContext.Database.BeginTransactionAsync(cancellationToken);
+            return _dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         }
 
         public Task<bool> UmrExistsAsync(string umr, int? excludedContractId = null, CancellationToken cancellationToken = default)
@@ -30,6 +32,53 @@ namespace IRISBackend.Repositories
                     contract.Umr.ToUpper() == normalizedUmr &&
                     (!excludedContractId.HasValue || contract.IdContract != excludedContractId.Value),
                 cancellationToken);
+        }
+
+        public async Task<int> AllocateUmrSequenceAsync(
+            int inceptionYear,
+            string contractTypeCode,
+            string mainCoverCode,
+            CancellationToken cancellationToken = default)
+        {
+            var connection = _dbContext.Database.GetDbConnection();
+            await using var command = connection.CreateCommand();
+            command.Transaction = _dbContext.Database.CurrentTransaction?.GetDbTransaction();
+            command.CommandText = """
+                UPDATE [CONTRACT_UMR_SEQUENCE] WITH (UPDLOCK, HOLDLOCK)
+                SET [current_sequence] = [current_sequence] + 1
+                OUTPUT inserted.[current_sequence]
+                WHERE [inception_year] = @inceptionYear
+                  AND [contract_type_code] = @contractTypeCode
+                  AND [main_cover_code] = @mainCoverCode;
+
+                IF @@ROWCOUNT = 0
+                BEGIN
+                    INSERT INTO [CONTRACT_UMR_SEQUENCE]
+                        ([inception_year], [contract_type_code], [main_cover_code], [current_sequence])
+                    VALUES (@inceptionYear, @contractTypeCode, @mainCoverCode, 1);
+
+                    SELECT CAST(1 AS int);
+                END;
+                """;
+
+            AddParameter(command, "@inceptionYear", inceptionYear);
+            AddParameter(command, "@contractTypeCode", contractTypeCode);
+            AddParameter(command, "@mainCoverCode", mainCoverCode);
+
+            if (connection.State != System.Data.ConnectionState.Open)
+            {
+                await connection.OpenAsync(cancellationToken);
+            }
+
+            return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
+        }
+
+        private static void AddParameter(DbCommand command, string name, object value)
+        {
+            var parameter = command.CreateParameter();
+            parameter.ParameterName = name;
+            parameter.Value = value;
+            command.Parameters.Add(parameter);
         }
 
         public Task AddAsync(Contract contract, CancellationToken cancellationToken = default)

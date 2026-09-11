@@ -11,9 +11,6 @@ namespace IRISBackend.Validators
                 .NotEmpty()
                 .MaximumLength(255);
 
-            RuleFor(contract => contract.Umr)
-                .MaximumLength(100);
-
             RuleFor(contract => contract.CounterpartyId)
                 .GreaterThan(0);
 
@@ -59,6 +56,10 @@ namespace IRISBackend.Validators
                 .GreaterThanOrEqualTo(0m)
                 .When(contract => contract.SumInsured.HasValue);
 
+            RuleFor(contract => contract.LimitOfLiability)
+                .GreaterThanOrEqualTo(0m)
+                .When(contract => contract.LimitOfLiability.HasValue);
+
             RuleFor(contract => contract.Deductible)
                 .GreaterThanOrEqualTo(0m)
                 .When(contract => contract.Deductible.HasValue);
@@ -99,8 +100,16 @@ namespace IRISBackend.Validators
             When(contract => contract.CoverageSelection is not null, () =>
             {
                 RuleFor(contract => contract.CoverageSelection!.MainCoverId)
+                    .GreaterThanOrEqualTo(0);
+
+                RuleFor(contract => contract.CoverageSelection!.PrimaryMainCoverId)
                     .GreaterThan(0)
+                    .When(contract => contract.CoverageSelection!.MainCoverId <= 0)
                     .WithMessage("coverageSelection.mainCoverId is required.");
+
+                RuleFor(contract => contract.CoverageSelection!.CoverageIds)
+                    .Must(ids => ids.Count == 0 || ids.All(id => id > 0))
+                    .WithMessage("coverageSelection.coverageIds contains an invalid ID.");
             });
         }
     }

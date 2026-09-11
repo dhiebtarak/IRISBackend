@@ -119,6 +119,7 @@ namespace IRISBackend.Controllers
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status401Unauthorized)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status403Forbidden)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status404NotFound)]
+        [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status409Conflict)]
         public async Task<IActionResult> AddPanel(
             int contractId,
             [FromBody] ContractPanelRequestDto request,
@@ -141,6 +142,7 @@ namespace IRISBackend.Controllers
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status401Unauthorized)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status403Forbidden)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status404NotFound)]
+        [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status409Conflict)]
         public async Task<IActionResult> UpdatePanel(
             int contractId,
             int panelId,
@@ -163,6 +165,7 @@ namespace IRISBackend.Controllers
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status401Unauthorized)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status403Forbidden)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status404NotFound)]
+        [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status409Conflict)]
         public async Task<IActionResult> ConfirmPanel(
             int contractId,
             int panelId,
@@ -178,9 +181,22 @@ namespace IRISBackend.Controllers
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status401Unauthorized)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status403Forbidden)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status404NotFound)]
+        [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status409Conflict)]
         public async Task<IActionResult> StartBinding(int contractId, CancellationToken cancellationToken)
         {
             var result = await _contractPlacementService.StartBindingAsync(contractId, cancellationToken);
+            return FromServiceResult(result);
+        }
+
+        [HttpPost("{contractId:int}/cancel")]
+        [ProducesResponseType(typeof(ContractOverviewDto), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status404NotFound)]
+        [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status409Conflict)]
+        public async Task<IActionResult> CancelContract(int contractId, CancellationToken cancellationToken)
+        {
+            var result = await _contractPlacementService.CancelContractAsync(contractId, cancellationToken);
             return FromServiceResult(result);
         }
 

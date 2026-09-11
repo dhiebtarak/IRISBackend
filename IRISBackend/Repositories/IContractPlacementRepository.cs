@@ -1,10 +1,13 @@
 using IRISBackend.DTOs;
 using IRISBackend.Models;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace IRISBackend.Repositories
 {
     public interface IContractPlacementRepository
     {
+        Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default);
+
         Task<Contract?> GetContractForPlacementAsync(
             int contractId,
             string userId,

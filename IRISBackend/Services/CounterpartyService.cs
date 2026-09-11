@@ -35,6 +35,12 @@ namespace IRISBackend.Services
 
         public async Task<ServiceResult<CounterpartyDetailsDto>> CreateAsync(CounterpartyCreateDto request, CancellationToken cancellationToken = default)
         {
+            var typesResult = NormalizeTypes(request.Types);
+            if (!typesResult.Succeeded)
+            {
+                return MapTypeFailure(typesResult);
+            }
+
             var uniqueValidation = await ValidateUniqueLegacyIdentifiersAsync(request.LegacyClientId, request.LegacyCompanyCode, null, cancellationToken);
             if (!uniqueValidation.Succeeded)
             {
@@ -42,6 +48,8 @@ namespace IRISBackend.Services
             }
 
             var counterparty = _mapper.Map<Counterparty>(request);
+            counterparty.Type = typesResult.Value![0];
+            counterparty.TypeAssignments = [];
             counterparty.LegacyCompanyCode = NormalizeOptionalCode(request.LegacyCompanyCode);
             counterparty.Status = NormalizeStatus(request.Status);
             counterparty.IsActive = IsActiveStatus(counterparty.Status);
@@ -50,6 +58,7 @@ namespace IRISBackend.Services
             counterparty.TaxIdentificationNumber = null;
             counterparty.CreatedAtUtc = DateTime.UtcNow;
 
+            await _counterpartyRepository.ReplaceTypeAssignmentsAsync(counterparty, typesResult.Value, cancellationToken);
             await _counterpartyRepository.AddAsync(counterparty, cancellationToken);
             await _counterpartyRepository.SaveChangesAsync(cancellationToken);
 
@@ -75,7 +84,7 @@ namespace IRISBackend.Services
 
         public async Task<ServiceResult<CounterpartyDetailsDto>> GetByIdAsync(int id, CancellationToken cancellationToken = default)
         {
-            var counterparty = await _counterpartyRepository.GetByIdAsync(id, cancellationToken);
+            var counterparty = await _counterpartyRepository.GetByIdWithTypesAsync(id, cancellationToken);
             if (counterparty is null)
             {
                 return NotFound();
@@ -139,10 +148,16 @@ namespace IRISBackend.Services
 
         public async Task<ServiceResult<CounterpartyDetailsDto>> UpdateAsync(int id, CounterpartyUpdateDto request, CancellationToken cancellationToken = default)
         {
-            var counterparty = await _counterpartyRepository.GetByIdAsync(id, cancellationToken);
+            var counterparty = await _counterpartyRepository.GetByIdWithTypesAsync(id, cancellationToken);
             if (counterparty is null)
             {
                 return NotFound();
+            }
+
+            var typesResult = NormalizeTypes(request.Types);
+            if (!typesResult.Succeeded)
+            {
+                return MapTypeFailure(typesResult);
             }
 
             var uniqueValidation = await ValidateUniqueLegacyIdentifiersAsync(request.LegacyClientId, request.LegacyCompanyCode, id, cancellationToken);
@@ -152,6 +167,7 @@ namespace IRISBackend.Services
             }
 
             _mapper.Map(request, counterparty);
+            counterparty.Type = typesResult.Value![0];
             counterparty.LegacyCompanyCode = NormalizeOptionalCode(request.LegacyCompanyCode);
             counterparty.Status = NormalizeStatus(request.Status);
             counterparty.IsActive = IsActiveStatus(counterparty.Status);
@@ -161,6 +177,7 @@ namespace IRISBackend.Services
             counterparty.UpdatedAtUtc = DateTime.UtcNow;
 
             _counterpartyRepository.Update(counterparty);
+            await _counterpartyRepository.ReplaceTypeAssignmentsAsync(counterparty, typesResult.Value, cancellationToken);
             await _counterpartyRepository.SaveChangesAsync(cancellationToken);
 
             var userId = GetCurrentUserId();
@@ -185,7 +202,7 @@ namespace IRISBackend.Services
 
         public async Task<ServiceResult<CounterpartyDetailsDto>> SetActiveStatusAsync(int id, bool isActive, CancellationToken cancellationToken = default)
         {
-            var counterparty = await _counterpartyRepository.GetByIdAsync(id, cancellationToken);
+            var counterparty = await _counterpartyRepository.GetByIdWithTypesAsync(id, cancellationToken);
             if (counterparty is null)
             {
                 return NotFound();
@@ -207,6 +224,49 @@ namespace IRISBackend.Services
             return ServiceResult<CounterpartyDetailsDto>.Failure(
                 "Counterparty was not found.",
                 statusCode: StatusCodes.Status404NotFound);
+        }
+
+        private static ServiceResult<IReadOnlyList<string>> NormalizeTypes(IReadOnlyCollection<string>? values)
+        {
+            if (values is null || values.Count == 0)
+            {
+                return ServiceResult<IReadOnlyList<string>>.Failure(
+                    "At least one counterparty type is required.",
+                    statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            var normalized = new List<string>();
+            foreach (var value in values)
+            {
+                if (!CounterpartyTypes.TryNormalize(value, out var type))
+                {
+                    return ServiceResult<IReadOnlyList<string>>.Failure(
+                        "Counterparty type must be one of: Cedent, Reinsurer, Client, Partner.",
+                        statusCode: StatusCodes.Status400BadRequest);
+                }
+
+                if (!normalized.Contains(type, StringComparer.Ordinal))
+                {
+                    normalized.Add(type);
+                }
+            }
+
+            if (normalized.Count != values.Count)
+            {
+                return ServiceResult<IReadOnlyList<string>>.Failure(
+                    "Counterparty types must not contain duplicates.",
+                    statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            return ServiceResult<IReadOnlyList<string>>.Success(normalized);
+        }
+
+        private static ServiceResult<CounterpartyDetailsDto> MapTypeFailure(ServiceResult<IReadOnlyList<string>> result)
+        {
+            return ServiceResult<CounterpartyDetailsDto>.Failure(
+                result.Error?.Message ?? "Counterparty types are invalid.",
+                result.Error?.Errors,
+                result.StatusCode);
         }
 
         private async Task<ServiceResult<CounterpartyDetailsDto>> ValidateUniqueLegacyIdentifiersAsync(

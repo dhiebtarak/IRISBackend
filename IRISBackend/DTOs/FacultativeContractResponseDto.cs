@@ -38,6 +38,8 @@ namespace IRISBackend.DTOs
 
         public decimal? SumInsured { get; set; }
 
+        public decimal? LimitOfLiability { get; set; }
+
         public decimal? Deductible { get; set; }
 
         public decimal? PremiumRate { get; set; }
