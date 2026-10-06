@@ -2,6 +2,7 @@ using IRISBackend.DTOs;
 using IRISBackend.Models;
 using IRISBackend.Repositories;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.EntityFrameworkCore;
 
 namespace IRISBackend.Services
 {
@@ -13,24 +14,27 @@ namespace IRISBackend.Services
         private readonly IContractReadService _contractReadService;
         private readonly IUserService _userService;
         private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly IRISBackendContext? _db;
 
         public ContractPlacementService(
             IContractPlacementRepository placementRepository,
             IContractReadService contractReadService,
             IUserService userService,
-            IHttpContextAccessor httpContextAccessor)
+            IHttpContextAccessor httpContextAccessor,
+            IRISBackendContext? db = null)
         {
             _placementRepository = placementRepository;
             _contractReadService = contractReadService;
             _userService = userService;
             _httpContextAccessor = httpContextAccessor;
+            _db = db;
         }
 
         public async Task<ServiceResult<IReadOnlyList<ContractPanelResponseDto>>> GetPanelsAsync(
             int contractId,
             CancellationToken cancellationToken = default)
         {
-            var userResult = await GetCurrentFrontOfficerAsync();
+            var userResult = await GetCurrentContractReaderAsync();
             if (!userResult.Succeeded)
             {
                 return ServiceResult<IReadOnlyList<ContractPanelResponseDto>>.Failure(
@@ -39,7 +43,12 @@ namespace IRISBackend.Services
                     userResult.StatusCode);
             }
 
-            var contract = await _placementRepository.GetContractForPlacementAsync(contractId, userResult.Value!.Id, cancellationToken);
+            var includeAllContracts = FrontOfficerAccessRules.IsBackOfficer(userResult.Value!);
+            var contract = await _placementRepository.GetContractForPlacementAsync(
+                contractId,
+                userResult.Value!.Id,
+                includeAllContracts,
+                cancellationToken);
             if (contract is null)
             {
                 return ServiceResult<IReadOnlyList<ContractPanelResponseDto>>.Failure(
@@ -47,7 +56,16 @@ namespace IRISBackend.Services
                     statusCode: StatusCodes.Status404NotFound);
             }
 
-            var panels = await _placementRepository.GetPanelsAsync(contractId, userResult.Value.Id, cancellationToken);
+            var panels = await _placementRepository.GetPanelsAsync(
+                contractId,
+                userResult.Value.Id,
+                includeAllContracts,
+                cancellationToken);
+            var availableShare = CalculateAvailableShare(contract);
+            foreach (var panel in panels)
+            {
+                panel.AvailableShare = availableShare;
+            }
             return ServiceResult<IReadOnlyList<ContractPanelResponseDto>>.Success(panels);
         }
 
@@ -62,40 +80,44 @@ namespace IRISBackend.Services
                 return MapFailure(userResult);
             }
 
-            var contract = await _placementRepository.GetContractForPlacementAsync(contractId, userResult.Value!.Id, cancellationToken);
-            if (contract is null)
-            {
-                return NotFound();
-            }
-
-            var effectiveStatus = ContractConstants.NormalizeStatus(contract.Status);
-            if (effectiveStatus != ContractConstants.ReadyForPlacementStatus &&
-                effectiveStatus != ContractConstants.PlacementInProgressStatus)
-            {
-                return Conflict($"A reinsurer cannot be added while the contract status is '{effectiveStatus}'.");
-            }
-
-            var validation = await ValidatePanelRequestAsync(contractId, request, null, cancellationToken);
-            if (!validation.Succeeded)
-            {
-                return validation;
-            }
-
-            var panel = new ContractPanel
-            {
-                IdContract = contractId,
-                IdCounterparty = request.IdCounterparty,
-                Role = ReinsurerRole,
-                Status = NormalizeStatus(request.Status),
-                PremiumReference = NormalizeOptionalValue(request.PremiumReference)
-            };
-
-            ApplyPanelValues(panel, request);
-
-            var hadExistingPanels = contract.ContractPanels.Count > 0;
-            await using IDbContextTransaction transaction = await _placementRepository.BeginTransactionAsync(cancellationToken);
+            await using IDbContextTransaction transaction = await _placementRepository.BeginSerializableTransactionAsync(cancellationToken);
             try
             {
+                var contract = await _placementRepository.GetContractForPlacementAsync(
+                    contractId,
+                    userResult.Value!.Id,
+                    false,
+                    cancellationToken);
+                if (contract is null)
+                {
+                    return NotFound();
+                }
+
+                var effectiveStatus = ContractConstants.NormalizeStatus(contract.Status);
+                if (effectiveStatus != ContractConstants.ReadyForPlacementStatus &&
+                    effectiveStatus != ContractConstants.PlacementInProgressStatus)
+                {
+                    return Conflict($"A reinsurer cannot be added while the contract status is '{effectiveStatus}'.");
+                }
+
+                var validation = await ValidatePanelRequestAsync(contract, request, null, cancellationToken);
+                if (!validation.Succeeded)
+                {
+                    return validation;
+                }
+
+                var panel = new ContractPanel
+                {
+                    IdContract = contractId,
+                    IdCounterparty = request.IdCounterparty,
+                    Role = ReinsurerRole,
+                    Status = NormalizeStatus(request.Status),
+                    PremiumReference = NormalizeOptionalValue(request.PremiumReference)
+                };
+
+                ApplyPanelValues(panel, request);
+
+                var hadExistingPanels = contract.ContractPanels.Count > 0;
                 await _placementRepository.AddPanelAsync(panel, cancellationToken);
 
                 if (effectiveStatus == ContractConstants.ReadyForPlacementStatus && !hadExistingPanels)
@@ -145,7 +167,7 @@ namespace IRISBackend.Services
                     statusCode: StatusCodes.Status409Conflict);
             }
 
-            var validation = await ValidatePanelRequestAsync(contractId, request, panelId, cancellationToken);
+            var validation = await ValidatePanelRequestAsync(panel.IdContractNavigation, request, panelId, cancellationToken);
             if (!validation.Succeeded)
             {
                 return validation;
@@ -216,7 +238,11 @@ namespace IRISBackend.Services
                 return MapFailure(userResult);
             }
 
-            var contract = await _placementRepository.GetContractForPlacementAsync(contractId, userResult.Value!.Id, cancellationToken);
+            var contract = await _placementRepository.GetContractForPlacementAsync(
+                contractId,
+                userResult.Value!.Id,
+                false,
+                cancellationToken);
             if (contract is null)
             {
                 return NotFound();
@@ -244,6 +270,9 @@ namespace IRISBackend.Services
                     statusCode: StatusCodes.Status400BadRequest);
             }
 
+            await using var transaction = _db is null
+                ? null
+                : await _db.Database.BeginTransactionAsync(cancellationToken);
             contract.Status = ContractConstants.BoundStatus;
             contract.UpdatedAt = DateTime.UtcNow;
             contract.UpdatedBy = userResult.Value.Id;
@@ -257,7 +286,44 @@ namespace IRISBackend.Services
             }
 
             await _placementRepository.SaveChangesAsync(cancellationToken);
+            if (_db is not null)
+            {
+                await NotifyBackOfficerContractReadyForDebitNoteAsync(contract, userResult.Value.Id, cancellationToken);
+                await _db.SaveChangesAsync(cancellationToken);
+                await transaction!.CommitAsync(cancellationToken);
+            }
             return await _contractReadService.GetOverviewAsync(contractId, cancellationToken);
+        }
+
+        private async Task NotifyBackOfficerContractReadyForDebitNoteAsync(Contract contract, string createdBy, CancellationToken cancellationToken)
+        {
+            if (_db is null) return;
+            var exists = await _db.Notifications.AnyAsync(item =>
+                item.NotificationType == "ContractReadyForDebitNote" &&
+                item.EntityType == "CONTRACT" &&
+                item.EntityId == contract.IdContract, cancellationToken);
+            if (exists) return;
+            var recipients = await _db.AspNetUsers
+                .Where(user => user.Position != null && user.Position.Trim().ToLower() == "back officer")
+                .Select(user => user.Id)
+                .ToListAsync(cancellationToken);
+            foreach (var recipient in recipients)
+            {
+                _db.Notifications.Add(new Notification
+                {
+                    RecipientUserId = recipient,
+                    RecipientRole = "Back Officer",
+                    NotificationType = "ContractReadyForDebitNote",
+                    Title = "Contract ready for debit note",
+                    Message = $"Contract {contract.Umr} - {contract.Name} is bound and ready for its debit note.",
+                    EntityType = "CONTRACT",
+                    EntityId = contract.IdContract,
+                    TargetRoute = $"/back-office/contracts/{contract.IdContract}/overview",
+                    IsRead = false,
+                    CreatedAt = DateTime.UtcNow,
+                    CreatedBy = createdBy
+                });
+            }
         }
 
         public async Task<ServiceResult<ContractOverviewDto>> CancelContractAsync(
@@ -273,6 +339,7 @@ namespace IRISBackend.Services
             var contract = await _placementRepository.GetContractForPlacementAsync(
                 contractId,
                 userResult.Value!.Id,
+                false,
                 cancellationToken);
             if (contract is null)
             {
@@ -298,7 +365,7 @@ namespace IRISBackend.Services
         }
 
         private async Task<ServiceResult<ContractOverviewDto>> ValidatePanelRequestAsync(
-            int contractId,
+            Contract contract,
             ContractPanelRequestDto request,
             int? excludedPanelId,
             CancellationToken cancellationToken)
@@ -310,9 +377,27 @@ namespace IRISBackend.Services
                 errors.Add("The selected counterparty does not exist, is inactive, or is not a reinsurer.");
             }
 
-            if (await _placementRepository.ContractHasReinsurerPanelAsync(contractId, request.IdCounterparty, excludedPanelId, cancellationToken))
+            if (await _placementRepository.ContractHasReinsurerPanelAsync(contract.IdContract, request.IdCounterparty, excludedPanelId, cancellationToken))
             {
                 errors.Add("This reinsurer is already assigned to the contract panel.");
+            }
+
+            if (request.SignedSharePct.HasValue && request.WrittenSharePct.HasValue &&
+                request.SignedSharePct.Value > request.WrittenSharePct.Value)
+            {
+                errors.Add("signedSharePct cannot exceed writtenSharePct.");
+            }
+
+            var availableShare = CalculateAvailableShare(contract, excludedPanelId);
+            if (request.SignedSharePct.HasValue && request.SignedSharePct.Value > availableShare)
+            {
+                errors.Add($"signedSharePct cannot exceed the available contract share of {availableShare}.");
+            }
+
+            var calculation = ContractPanelFinancialCalculator.Calculate(request);
+            if (calculation.NetPremium < 0m)
+            {
+                errors.Add("Calculated netPremium cannot be negative.");
             }
 
             return errors.Count == 0
@@ -343,17 +428,36 @@ namespace IRISBackend.Services
                     statusCode: StatusCodes.Status403Forbidden);
         }
 
+        private async Task<ServiceResult<UserProfileResponseDto>> GetCurrentContractReaderAsync()
+        {
+            var principal = _httpContextAccessor.HttpContext?.User;
+            if (principal?.Identity?.IsAuthenticated != true)
+            {
+                return ServiceResult<UserProfileResponseDto>.Failure(
+                    "User identity was not found in the token.",
+                    statusCode: StatusCodes.Status401Unauthorized);
+            }
+
+            var userResult = await _userService.GetCurrentUserAsync(principal);
+            if (!userResult.Succeeded || userResult.Value is null)
+            {
+                return userResult;
+            }
+
+            return FrontOfficerAccessRules.IsFrontOrBackOfficer(userResult.Value)
+                ? userResult
+                : ServiceResult<UserProfileResponseDto>.Failure(
+                    "Only Front Officers and Back Officers can access contract placement data.",
+                    statusCode: StatusCodes.Status403Forbidden);
+        }
+
         private static void ApplyPanelValues(ContractPanel panel, ContractPanelRequestDto request)
         {
             panel.WrittenSharePct = request.WrittenSharePct;
             panel.SignedSharePct = request.SignedSharePct;
-            panel.Tsi = request.Tsi;
-            panel.Deductible = request.Deductible;
-            panel.PremiumRatePct = request.PremiumRatePct;
-            panel.GrossPremium = request.GrossPremium;
-            panel.BrokeragePct = request.BrokeragePct;
-            panel.OtherDeductions = request.OtherDeductions;
-            panel.NetPremium = CalculateNetPremium(request.GrossPremium, request.BrokeragePct, request.OtherDeductions);
+            ContractPanelFinancialCalculator.Apply(
+                panel,
+                ContractPanelFinancialCalculator.Calculate(request));
         }
 
         private static IReadOnlyList<string> ValidatePanelCanBeConfirmed(ContractPanel panel)
@@ -383,15 +487,22 @@ namespace IRISBackend.Services
             return errors;
         }
 
-        private static decimal? CalculateNetPremium(decimal? grossPremium, decimal? brokeragePct, decimal? otherDeductions)
+        private static decimal CalculateAvailableShare(Contract contract, int? excludedPanelId = null)
         {
-            if (!grossPremium.HasValue)
-            {
-                return null;
-            }
+            var signedShare = contract.SignedSharePctCedent ?? 100m;
+            var usedShare = contract.ContractPanels
+                .Where(panel => (!excludedPanelId.HasValue || panel.IdPanel != excludedPanelId.Value) &&
+                    !IsExcludedFromAvailableShare(panel.Status))
+                .Sum(panel => panel.SignedSharePct ?? 0m);
 
-            var brokerageAmount = grossPremium.Value * (brokeragePct ?? 0m) / 100m;
-            return grossPremium.Value - brokerageAmount - (otherDeductions ?? 0m);
+            return Math.Max(0m, signedShare - usedShare);
+        }
+
+        private static bool IsExcludedFromAvailableShare(string? status)
+        {
+            var normalized = status?.Trim();
+            return string.Equals(normalized, ContractConstants.CancelledPanelStatus, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(normalized, ContractConstants.NotTakenUpPanelStatus, StringComparison.OrdinalIgnoreCase);
         }
 
         private static string NormalizeStatus(string? status)

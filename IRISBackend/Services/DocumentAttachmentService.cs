@@ -251,7 +251,11 @@ public sealed class DocumentAttachmentService : IDocumentAttachmentService
             return ServiceResult<object>.Failure("Authenticated user could not be resolved.", statusCode: StatusCodes.Status401Unauthorized);
         }
 
-        var contract = await _contractRepository.GetAccessibleContractByIdAsync(contractId, userId, cancellationToken);
+        var contract = await _contractRepository.GetAccessibleContractByIdAsync(
+            contractId,
+            userId,
+            includeAllContracts: FinancialAccessRules.IsBackOfficer(_httpContextAccessor.HttpContext?.User ?? new System.Security.Claims.ClaimsPrincipal()),
+            cancellationToken);
         return contract is null
             ? ServiceResult<object>.Failure("Contract was not found.", statusCode: StatusCodes.Status404NotFound)
             : ServiceResult<object>.Success(new object());

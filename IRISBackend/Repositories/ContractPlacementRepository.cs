@@ -20,9 +20,17 @@ namespace IRISBackend.Repositories
             return _dbContext.Database.BeginTransactionAsync(cancellationToken);
         }
 
+        public Task<IDbContextTransaction> BeginSerializableTransactionAsync(CancellationToken cancellationToken = default)
+        {
+            return _dbContext.Database.BeginTransactionAsync(
+                System.Data.IsolationLevel.Serializable,
+                cancellationToken);
+        }
+
         public Task<Contract?> GetContractForPlacementAsync(
             int contractId,
             string userId,
+            bool includeAllContracts = false,
             CancellationToken cancellationToken = default)
         {
             return _dbContext.Contracts
@@ -30,7 +38,7 @@ namespace IRISBackend.Repositories
                 .FirstOrDefaultAsync(contract =>
                     contract.IdContract == contractId &&
                     contract.IsCurrent &&
-                    contract.IdUser == userId,
+                    (includeAllContracts || contract.IdUser == userId),
                     cancellationToken);
         }
 
@@ -54,6 +62,7 @@ namespace IRISBackend.Repositories
         public async Task<IReadOnlyList<ContractPanelResponseDto>> GetPanelsAsync(
             int contractId,
             string userId,
+            bool includeAllContracts = false,
             CancellationToken cancellationToken = default)
         {
             var panels = await _dbContext.ContractPanels
@@ -61,7 +70,7 @@ namespace IRISBackend.Repositories
                 .Where(panel =>
                     panel.IdContract == contractId &&
                     panel.IdContractNavigation.IsCurrent &&
-                    panel.IdContractNavigation.IdUser == userId)
+                    (includeAllContracts || panel.IdContractNavigation.IdUser == userId))
                 .OrderBy(panel => panel.IdPanel)
                 .Select(panel => new ContractPanelResponseDto
                 {
@@ -73,10 +82,21 @@ namespace IRISBackend.Repositories
                     WrittenSharePct = panel.WrittenSharePct,
                     SignedSharePct = panel.SignedSharePct,
                     Tsi = panel.Tsi,
+                    SumInsured = panel.Tsi,
                     Deductible = panel.Deductible,
+                    LimitOfLiabilityType = panel.LimitOfLiabilityType,
+                    LimitOfLiabilityValue = panel.LimitOfLiabilityValue,
+                    LimitOfLiabilityAmount = panel.LimitOfLiabilityAmount,
+                    DeductibleType = panel.DeductibleType,
+                    DeductibleValue = panel.DeductibleValue,
+                    DeductibleAmount = panel.DeductibleAmount ?? panel.Deductible,
                     PremiumRatePct = panel.PremiumRatePct,
                     GrossPremium = panel.GrossPremium,
                     BrokeragePct = panel.BrokeragePct,
+                    BrokerageIrisPct = panel.BrokeragePct,
+                    CedentCommissionPct = panel.CedentCommissionPct,
+                    CedentCommissionAmount = panel.CedentCommissionAmount,
+                    BrokerageIrisAmount = panel.BrokerageIrisAmount,
                     OtherDeductions = panel.OtherDeductions,
                     NetPremium = panel.NetPremium,
                     PremiumReference = panel.PremiumReference,

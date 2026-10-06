@@ -17,7 +17,9 @@ namespace IRISBackend.Mappings
             CreateMap<Counterparty, CounterpartyDetailsDto>()
                 .ForMember(destination => destination.Types, options => options.MapFrom(source => source.TypeAssignments.OrderBy(assignment => assignment.Type).Select(assignment => assignment.Type).ToArray()));
             CreateMap<Counterparty, CounterpartyListItemDto>()
-                .ForMember(destination => destination.Types, options => options.MapFrom(source => source.TypeAssignments.OrderBy(assignment => assignment.Type).Select(assignment => assignment.Type).ToArray()));
+                .ForMember(destination => destination.Types, options => options.MapFrom(source => source.TypeAssignments.OrderBy(assignment => assignment.Type).Select(assignment => assignment.Type).ToArray()))
+                .ForMember(destination => destination.HasActiveBankAccount, options => options.MapFrom(source => source.CounterpartyBankAccounts.Any(account => account.IsActive)))
+                .ForMember(destination => destination.ActiveBankAccountCount, options => options.MapFrom(source => source.CounterpartyBankAccounts.Count(account => account.IsActive)));
         }
     }
 }

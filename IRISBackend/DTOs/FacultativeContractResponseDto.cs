@@ -46,9 +46,15 @@ namespace IRISBackend.DTOs
 
         public decimal? GrossPremium { get; set; }
 
+        public decimal? IrisCommission { get; set; }
+
         public decimal? CedentCommissionPct { get; set; }
 
+        public decimal? CedentCommission { get; set; }
+
         public decimal? NetPremiumCedent { get; set; }
+
+        public decimal? NetPremium { get; set; }
 
         public string? CedentPremiumReference { get; set; }
 

@@ -1,5 +1,6 @@
 using FluentValidation;
 using IRISBackend.DTOs;
+using IRISBackend.Services;
 
 namespace IRISBackend.Validators
 {
@@ -48,10 +49,6 @@ namespace IRISBackend.Validators
                     contract.SignedSharePct.Value <= contract.WrittenSharePct.Value)
                 .WithMessage("signedSharePct cannot exceed writtenSharePct.");
 
-            RuleFor(contract => contract.Fees)
-                .GreaterThanOrEqualTo(0m)
-                .When(contract => contract.Fees.HasValue);
-
             RuleFor(contract => contract.SumInsured)
                 .GreaterThanOrEqualTo(0m)
                 .When(contract => contract.SumInsured.HasValue);
@@ -65,12 +62,37 @@ namespace IRISBackend.Validators
                 .When(contract => contract.Deductible.HasValue);
 
             RuleFor(contract => contract.PremiumRate)
-                .GreaterThanOrEqualTo(0m)
+                .InclusiveBetween(0m, 1m)
                 .When(contract => contract.PremiumRate.HasValue);
 
-            RuleFor(contract => contract.GrossPremium)
+            RuleFor(contract => contract.Fees)
                 .GreaterThanOrEqualTo(0m)
-                .When(contract => contract.GrossPremium.HasValue);
+                .When(contract => contract.Fees.HasValue)
+                .WithMessage("fees (IRIS commission) must be greater than or equal to 0.");
+
+            RuleFor(contract => contract)
+                .Must(contract =>
+                {
+                    var calculation = FacultativeFinancialCalculator.Calculate(
+                        contract.SumInsured,
+                        contract.PremiumRate,
+                        contract.Fees,
+                        contract.CedentCommissionPct);
+                    return calculation is null || calculation.IrisCommission + calculation.CedentCommission <= calculation.GrossPremium;
+                })
+                .WithMessage("IRIS commission and Cedent commission cannot exceed gross premium.");
+
+            RuleFor(contract => contract)
+                .Must(contract =>
+                {
+                    var calculation = FacultativeFinancialCalculator.Calculate(
+                        contract.SumInsured,
+                        contract.PremiumRate,
+                        contract.Fees,
+                        contract.CedentCommissionPct);
+                    return calculation is null || calculation.NetPremium >= 0m;
+                })
+                .WithMessage("Calculated net premium cannot be negative.");
 
             RuleFor(contract => contract)
                 .Must(contract =>

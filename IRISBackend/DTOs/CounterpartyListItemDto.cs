@@ -21,5 +21,9 @@ namespace IRISBackend.DTOs
         public string Status { get; set; } = string.Empty;
 
         public bool IsActive { get; set; }
+
+        public bool HasActiveBankAccount { get; set; }
+
+        public int ActiveBankAccountCount { get; set; }
     }
 }

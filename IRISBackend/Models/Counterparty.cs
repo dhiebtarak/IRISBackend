@@ -13,8 +13,6 @@ public partial class Counterparty
 
     public string Type { get; set; }
 
-    public virtual ICollection<CounterpartyTypeAssignment> TypeAssignments { get; set; } = new List<CounterpartyTypeAssignment>();
-
     public string Email { get; set; }
 
     public string PhoneNumber { get; set; }
@@ -52,22 +50,4 @@ public partial class Counterparty
     public string Status { get; set; }
 
     public string Website { get; set; }
-
-    public virtual ICollection<BankReceipt> BankReceipts { get; set; } = new List<BankReceipt>();
-
-    public virtual ICollection<CollectionNote> CollectionNotes { get; set; } = new List<CollectionNote>();
-
-    public virtual ICollection<ContractPanel> ContractPanels { get; set; } = new List<ContractPanel>();
-
-    public virtual ICollection<Contract> Contracts { get; set; } = new List<Contract>();
-
-    public virtual ICollection<CounterpartyBankAccount> CounterpartyBankAccounts { get; set; } = new List<CounterpartyBankAccount>();
-
-    public virtual ICollection<Disbursement> Disbursements { get; set; } = new List<Disbursement>();
-
-    public virtual ICollection<DocumentAttachment> DocumentAttachments { get; set; } = new List<DocumentAttachment>();
-
-    public virtual ICollection<PremiumRef> PremiumRefs { get; set; } = new List<PremiumRef>();
-
-    public virtual ICollection<RemittanceRef> RemittanceRefs { get; set; } = new List<RemittanceRef>();
 }

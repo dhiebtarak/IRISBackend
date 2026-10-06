@@ -11,10 +11,14 @@ namespace IRISBackend.Repositories
     public sealed class ContractRepository : IContractRepository
     {
         private readonly IRISBackendContext _dbContext;
+        private readonly ILogger<ContractRepository> _logger;
 
-        public ContractRepository(IRISBackendContext dbContext)
+        public ContractRepository(
+            IRISBackendContext dbContext,
+            ILogger<ContractRepository> logger)
         {
             _dbContext = dbContext;
+            _logger = logger;
         }
 
         public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)
@@ -107,6 +111,7 @@ namespace IRISBackend.Repositories
             CancellationToken cancellationToken = default)
         {
             IQueryable<Contract> query = _dbContext.Contracts
+                .AsSplitQuery()
                 .Include(contract => contract.ContractFac)
                 .Include(contract => contract.ContractTreatyProp)
                     .ThenInclude(treaty => treaty.ContractTreatyPropQuotaShare)
@@ -131,13 +136,15 @@ namespace IRISBackend.Repositories
             return query.SingleOrDefaultAsync(cancellationToken);
         }
 
-        public Task<Contract?> GetAccessibleContractByIdAsync(
+        public async Task<Contract?> GetAccessibleContractByIdAsync(
             int contractId,
             string userId,
+            bool includeAllContracts = false,
             CancellationToken cancellationToken = default)
         {
-            return _dbContext.Contracts
+            IQueryable<Contract> query = _dbContext.Contracts
                 .AsNoTracking()
+                .AsSplitQuery()
                 .Include(contract => contract.ContractFac)
                 .Include(contract => contract.ContractTreatyProp)
                     .ThenInclude(treaty => treaty.ContractTreatyPropQuotaShare)
@@ -150,13 +157,21 @@ namespace IRISBackend.Repositories
                 .Include(contract => contract.UpdatedByNavigation)
                 .Include(contract => contract.ContractPanels)
                     .ThenInclude(panel => panel.IdCounterpartyNavigation)
+                .Include(contract => contract.ReceiptAllocations)
+                .Include(contract => contract.Invoices)
                 .Include(contract => contract.ContractCoverageSelections)
                     .ThenInclude(selection => selection.IdCoverageItemNavigation)
                 .Where(contract =>
                     contract.IdContract == contractId &&
                     contract.IsCurrent &&
-                    contract.IdUser == userId)
-                .SingleOrDefaultAsync(cancellationToken);
+                    (includeAllContracts || contract.IdUser == userId));
+
+            _logger.LogDebug(
+                "Contract overview query for ContractId={ContractId}: {Sql}",
+                contractId,
+                query.ToQueryString());
+
+            return await query.SingleOrDefaultAsync(cancellationToken);
         }
 
         public Task MarkDraftReadyForPlacementAsync(
@@ -178,6 +193,7 @@ namespace IRISBackend.Repositories
         public async Task<IReadOnlyList<SlipTemplate>> ListActiveCurrentSlipTemplatesForContractAsync(
             int contractId,
             string userId,
+            bool includeAllContracts = false,
             CancellationToken cancellationToken = default)
         {
             return await _dbContext.ContractCoverageSelections
@@ -185,7 +201,7 @@ namespace IRISBackend.Repositories
                 .Where(selection =>
                     selection.IdContract == contractId &&
                     selection.IdContractNavigation.IsCurrent &&
-                    selection.IdContractNavigation.IdUser == userId)
+                    (includeAllContracts || selection.IdContractNavigation.IdUser == userId))
                 .SelectMany(selection => _dbContext.SlipTemplates
                     .Where(slip =>
                         slip.IdCoverageItem == selection.IdCoverageItem &&
@@ -201,9 +217,10 @@ namespace IRISBackend.Repositories
         public async Task<(IReadOnlyList<ContractListItemDto> Items, int TotalCount)> ListAsync(
             ContractListQueryDto query,
             string userId,
+            bool includeAllContracts = false,
             CancellationToken cancellationToken = default)
         {
-            var contracts = AccessibleContracts(userId);
+            var contracts = AccessibleContracts(userId, includeAllContracts);
             var filteredContracts = ContractQueryBuilder.ApplyFilters(contracts, query);
             var totalCount = await filteredContracts.CountAsync(cancellationToken);
             var projectedContracts = ContractQueryBuilder.ProjectListItems(filteredContracts);
@@ -217,9 +234,10 @@ namespace IRISBackend.Repositories
 
         public async Task<ContractDashboardData> GetDashboardDataAsync(
             string userId,
+            bool includeAllContracts = false,
             CancellationToken cancellationToken = default)
         {
-            var contracts = AccessibleContracts(userId);
+            var contracts = AccessibleContracts(userId, includeAllContracts);
             var totalContracts = await contracts.CountAsync(cancellationToken);
             var actionRequiredContracts = await contracts.CountAsync(contract => contract.Flag, cancellationToken);
             var statusCounts = await contracts
@@ -246,11 +264,11 @@ namespace IRISBackend.Repositories
             };
         }
 
-        private IQueryable<Contract> AccessibleContracts(string userId)
+        private IQueryable<Contract> AccessibleContracts(string userId, bool includeAllContracts)
         {
             return _dbContext.Contracts
                 .AsNoTracking()
-                .Where(contract => contract.IsCurrent && contract.IdUser == userId);
+                .Where(contract => contract.IsCurrent && (includeAllContracts || contract.IdUser == userId));
         }
     }
 }

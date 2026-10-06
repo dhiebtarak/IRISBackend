@@ -73,6 +73,26 @@ namespace IRISBackend.Controllers
             return FromServiceResult(result);
         }
 
+        [HttpGet("{contractId:int}")]
+        public async Task<IActionResult> GetDetails(int contractId, CancellationToken cancellationToken)
+        {
+            var result = await _contractReadService.GetOverviewAsync(contractId, cancellationToken);
+            return FromServiceResult(result);
+        }
+
+        /// <summary>Completes an owned draft and moves it to ReadyForPlacement.</summary>
+        [HttpPost("{contractId:int}/complete")]
+        [Authorize(Roles = IdentityRoles.Employee)]
+        [ProducesResponseType(typeof(ContractOverviewDto), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> CompleteDraft(int contractId, CancellationToken cancellationToken)
+        {
+            var result = await _contractReadService.CompleteDraftAsync(contractId, cancellationToken);
+            return FromServiceResult(result);
+        }
+
         /// <summary>Downloads the active slip template files for the selected contract coverages.</summary>
         [HttpGet("{contractId:int}/slips/download")]
         [ProducesResponseType(typeof(FileContentResult), StatusCodes.Status200OK)]

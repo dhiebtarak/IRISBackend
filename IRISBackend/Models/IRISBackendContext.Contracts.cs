@@ -6,6 +6,18 @@ public partial class IRISBackendContext
 {
     partial void OnModelCreatingPartial(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<Invoice>()
+            .Property(invoice => invoice.RecoveryStatus)
+            .HasDefaultValue("Unpaired");
+
+        modelBuilder.Entity<InvoiceNumberSequence>(entity =>
+        {
+            entity.HasKey(item => item.InvoiceYear);
+            entity.ToTable("INVOICE_NUMBER_SEQUENCE");
+            entity.Property(item => item.InvoiceYear).ValueGeneratedNever().HasColumnName("invoice_year");
+            entity.Property(item => item.LastSequence).HasColumnName("last_sequence");
+        });
+
         modelBuilder.Entity<Contract>(entity =>
         {
             entity.Property(e => e.Umr)
@@ -56,6 +68,172 @@ public partial class IRISBackendContext
                 .HasForeignKey(e => e.CounterpartyId)
                 .OnDelete(DeleteBehavior.Cascade)
                 .HasConstraintName("FK_COUNTERPARTY_TYPE_ASSIGNMENT_Counterparty");
+        });
+
+        modelBuilder.Entity<ReceiptAllocation>(entity =>
+        {
+            entity.Property(e => e.IdPanel).HasColumnName("Id_panel");
+            entity.Property(e => e.IdContract).HasColumnName("Id_contract");
+            entity.Property(e => e.IdInvoice).HasColumnName("id_invoice");
+            entity.HasOne(e => e.IdPanelNavigation).WithMany()
+                .HasForeignKey(e => e.IdPanel)
+                .HasConstraintName("FK_RECEIPT_ALLOCATION_id_panel");
+            entity.HasOne(e => e.IdContractNavigation).WithMany(contract => contract.ReceiptAllocations)
+                .HasForeignKey(e => e.IdContract)
+                .OnDelete(DeleteBehavior.NoAction)
+                .HasConstraintName("FK_RECEIPT_ALLOCATION_id_contract");
+            entity.HasOne(e => e.IdInvoiceNavigation).WithMany(invoice => invoice.ReceiptAllocations)
+                .HasForeignKey(e => e.IdInvoice)
+                .OnDelete(DeleteBehavior.NoAction)
+                .HasConstraintName("FK_RECEIPT_ALLOCATION_id_invoice");
+            entity.HasIndex(e => e.IdInvoice, "IX_RECEIPT_ALLOCATION_id_invoice");
+            entity.HasIndex(e => new { e.IdBankReceipt, e.IdInvoice }, "UX_RECEIPT_ALLOCATION_receipt_invoice")
+                .IsUnique()
+                .HasFilter("[id_invoice] IS NOT NULL");
+        });
+
+        modelBuilder.Entity<CounterpartyBankAccount>(entity =>
+        {
+            entity.Property(e => e.BankCity).HasMaxLength(150).HasColumnName("Bank_city");
+            entity.Property(e => e.BankCountry).HasMaxLength(150).HasColumnName("Bank_country");
+            entity.Property(e => e.HasCorrespondentBank).HasDefaultValue(false).HasColumnName("Has_correspondent_bank");
+            entity.Property(e => e.CorrespondentBankName).HasMaxLength(255).HasColumnName("Correspondent_bank_name");
+            entity.Property(e => e.CorrespondentSwiftBic).HasMaxLength(100).HasColumnName("Correspondent_swift_bic");
+            entity.HasIndex(e => new { e.IdCounterparty, e.IdCurrency }, "UX_COUNTERPARTY_BANK_ACCOUNT_default_currency")
+                .IsUnique()
+                .HasFilter("[Is_active]=(1) AND [Is_default]=(1)");
+        });
+
+        modelBuilder.Entity<RemittanceRef>(entity =>
+        {
+            entity.Property(e => e.IdDisbursement).HasColumnName("Id_disbursement");
+            entity.Property(e => e.IdReceiptAllocation).HasColumnName("Id_receipt_allocation");
+            entity.Property(e => e.ConfirmedAt).HasColumnName("Confirmed_at");
+            entity.Property(e => e.ConfirmedBy).HasMaxLength(450).HasColumnName("Confirmed_by");
+            entity.HasOne(e => e.IdReceiptAllocationNavigation).WithMany()
+                .HasForeignKey(e => e.IdReceiptAllocation)
+                .HasConstraintName("FK_REMITTANCE_REF_id_receipt_allocation");
+            entity.HasIndex(e => new { e.IdReceiptAllocation, e.IdPanel }, "UX_REMITTANCE_REF_allocation_panel")
+                .IsUnique()
+                .HasFilter("[Id_receipt_allocation] IS NOT NULL AND [Id_panel] IS NOT NULL");
+        });
+
+        modelBuilder.Entity<Invoice>(entity =>
+        {
+            entity.Property(e => e.GrossPremium).HasColumnType("decimal(19,4)").HasColumnName("Gross_premium");
+            entity.Property(e => e.SequenceNumber).HasColumnName("Sequence_number");
+            entity.Property(e => e.IdempotencyKey).HasMaxLength(100).HasColumnName("Idempotency_key");
+            entity.Property(e => e.IdReceiptAllocation).HasColumnName("Id_receipt_allocation");
+            entity.Property(e => e.IdCurrency).HasColumnName("Id_currency");
+            entity.HasOne(e => e.IdReceiptAllocationNavigation).WithMany()
+                .HasForeignKey(e => e.IdReceiptAllocation)
+                .HasConstraintName("FK_INVOICE_id_receipt_allocation");
+            entity.HasOne(e => e.IdCurrencyNavigation).WithMany()
+                .HasForeignKey(e => e.IdCurrency)
+                .HasConstraintName("FK_INVOICE_id_currency");
+            entity.HasIndex(e => e.IdReceiptAllocation, "IX_INVOICE_id_receipt_allocation");
+            entity.HasIndex(e => e.IdempotencyKey, "UX_INVOICE_idempotency_key").IsUnique().HasFilter("[Idempotency_key] IS NOT NULL");
+            entity.HasIndex(e => e.InvoiceNumber, "UX_INVOICE_invoice_number").IsUnique();
+            entity.Property(e => e.IdCounterparty).HasColumnName("Id_counterparty");
+            entity.Property(e => e.IdPanel).HasColumnName("Id_panel");
+            entity.Property(e => e.RemittanceRef).HasColumnName("Remittance_ref");
+            entity.Property(e => e.IdDisbursement).HasColumnName("Id_disbursement");
+            entity.HasOne(e => e.IdCounterpartyNavigation).WithMany()
+                .HasForeignKey(e => e.IdCounterparty)
+                .HasConstraintName("FK_INVOICE_id_counterparty");
+            entity.HasOne(e => e.IdPanelNavigation).WithMany()
+                .HasForeignKey(e => e.IdPanel)
+                .HasConstraintName("FK_INVOICE_id_panel");
+            entity.HasOne(e => e.RemittanceRefNavigation).WithMany()
+                .HasForeignKey(e => e.RemittanceRef)
+                .HasConstraintName("FK_INVOICE_remittance_ref");
+            entity.HasOne(e => e.IdDisbursementNavigation).WithMany()
+                .HasForeignKey(e => e.IdDisbursement)
+                .HasConstraintName("FK_INVOICE_id_disbursement");
+            entity.HasIndex(e => e.IdDisbursement, "UX_INVOICE_id_disbursement")
+                .IsUnique()
+                .HasFilter("[Id_disbursement] IS NOT NULL");
+        });
+
+        modelBuilder.Entity<InvoicePanelAllocation>(entity =>
+        {
+            entity.HasKey(e => e.IdInvoiceAllocation);
+            entity.ToTable("INVOICE_PANEL_ALLOCATION");
+            entity.Property(e => e.IdInvoiceAllocation).HasColumnName("id_invoice_allocation");
+            entity.Property(e => e.IdInvoice).HasColumnName("id_invoice");
+            entity.Property(e => e.IdPanel).HasColumnName("id_panel");
+            entity.Property(e => e.IdCounterparty).HasColumnName("id_counterparty");
+            entity.Property(e => e.ReinsurerNameSnapshot).HasMaxLength(255).IsRequired().HasColumnName("reinsurer_name_snapshot");
+            entity.Property(e => e.SignedSharePctSnapshot).HasColumnType("decimal(19,8)").HasColumnName("signed_share_pct_snapshot");
+            entity.Property(e => e.AllocationRatio).HasColumnType("decimal(19,8)").HasColumnName("allocation_ratio");
+            entity.Property(e => e.GrossPremium).HasColumnType("decimal(19,4)").HasColumnName("gross_premium");
+            entity.Property(e => e.CedentCommissionPct).HasColumnType("decimal(19,8)").HasColumnName("cedent_commission_pct");
+            entity.Property(e => e.CedentCommissionAmount).HasColumnType("decimal(19,4)").HasColumnName("cedent_commission_amount");
+            entity.Property(e => e.BrokeragePct).HasColumnType("decimal(19,8)").HasColumnName("brokerage_pct");
+            entity.Property(e => e.BrokerageAmount).HasColumnType("decimal(19,4)").HasColumnName("brokerage_amount");
+            entity.Property(e => e.OtherDeductions).HasColumnType("decimal(19,4)").HasColumnName("other_deductions");
+            entity.Property(e => e.NetAmount).HasColumnType("decimal(19,4)").HasColumnName("net_amount");
+            entity.Property(e => e.CurrencyCodeSnapshot).HasMaxLength(20).IsRequired().HasColumnName("currency_code_snapshot");
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at");
+            entity.HasIndex(e => new { e.IdInvoice, e.IdPanel }, "UX_INVOICE_PANEL_ALLOCATION_invoice_panel").IsUnique();
+            entity.HasOne(e => e.IdInvoiceNavigation).WithMany(i => i.PanelAllocations).HasForeignKey(e => e.IdInvoice).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.IdPanelNavigation).WithMany().HasForeignKey(e => e.IdPanel).OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne(e => e.IdCounterpartyNavigation).WithMany().HasForeignKey(e => e.IdCounterparty).OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<Disbursement>(entity =>
+        {
+            entity.Property(e => e.BankReference).HasMaxLength(255).HasColumnName("Bank_reference");
+            entity.Property(e => e.StartedAt).HasColumnName("Started_at");
+            entity.Property(e => e.StartedBy).HasMaxLength(450).HasColumnName("Started_by");
+            entity.Property(e => e.ClosedAt).HasColumnName("Closed_at");
+            entity.Property(e => e.ClosedBy).HasMaxLength(450).HasColumnName("Closed_by");
+            entity.Property(e => e.BankNameSnapshot).HasMaxLength(255).HasColumnName("Bank_name_snapshot");
+            entity.Property(e => e.BankCitySnapshot).HasMaxLength(150).HasColumnName("Bank_city_snapshot");
+            entity.Property(e => e.BankCountrySnapshot).HasMaxLength(150).HasColumnName("Bank_country_snapshot");
+            entity.Property(e => e.IbanSnapshot).HasMaxLength(100).HasColumnName("Iban_snapshot");
+            entity.Property(e => e.SwiftBicSnapshot).HasMaxLength(100).HasColumnName("Swift_bic_snapshot");
+            entity.Property(e => e.CorrespondentBankNameSnapshot).HasMaxLength(255).HasColumnName("Correspondent_bank_name_snapshot");
+            entity.Property(e => e.CorrespondentSwiftBicSnapshot).HasMaxLength(100).HasColumnName("Correspondent_swift_bic_snapshot");
+            entity.Property(e => e.GrossPremiumSnapshot).HasColumnType("decimal(19, 4)").HasColumnName("Gross_premium_snapshot");
+            entity.Property(e => e.DeductionsSnapshot).HasColumnType("decimal(19, 4)").HasColumnName("Deductions_snapshot");
+            entity.Property(e => e.CurrencyCodeSnapshot).HasMaxLength(20).HasColumnName("Currency_code_snapshot");
+            entity.Property(e => e.ContractNameSnapshot).HasMaxLength(255).HasColumnName("Contract_name_snapshot");
+            entity.Property(e => e.UmrSnapshot).HasMaxLength(100).HasColumnName("Umr_snapshot");
+            entity.Property(e => e.CedentNameSnapshot).HasMaxLength(255).HasColumnName("Cedent_name_snapshot");
+            entity.Property(e => e.ReinsurerNameSnapshot).HasMaxLength(255).HasColumnName("Reinsurer_name_snapshot");
+            entity.Property(e => e.ReinsurerAddressSnapshot).HasMaxLength(500).HasColumnName("Reinsurer_address_snapshot");
+            entity.Property(e => e.ReinsurerCitySnapshot).HasMaxLength(150).HasColumnName("Reinsurer_city_snapshot");
+            entity.Property(e => e.ReinsurerCountrySnapshot).HasMaxLength(150).HasColumnName("Reinsurer_country_snapshot");
+            entity.Property(e => e.ReinsurerTaxIdSnapshot).HasMaxLength(100).HasColumnName("Reinsurer_tax_id_snapshot");
+            entity.Property(e => e.PanelReferenceSnapshot).HasMaxLength(255).HasColumnName("Panel_reference_snapshot");
+        });
+
+        modelBuilder.Entity<Notification>(entity =>
+        {
+            entity.HasKey(e => e.IdNotification);
+            entity.ToTable("NOTIFICATION");
+            entity.HasIndex(e => new { e.RecipientUserId, e.IsRead }, "IX_NOTIFICATION_recipient_read");
+            entity.Property(e => e.IdNotification).HasColumnName("id_notification");
+            entity.Property(e => e.RecipientUserId).HasMaxLength(450).IsRequired().HasColumnName("recipient_user_id");
+            entity.Property(e => e.RecipientRole).HasMaxLength(64).HasColumnName("recipient_role");
+            entity.Property(e => e.NotificationType).HasMaxLength(64).IsRequired().HasColumnName("notification_type");
+            entity.Property(e => e.Title).HasMaxLength(200).IsRequired();
+            entity.Property(e => e.Message).HasMaxLength(1000).IsRequired();
+            entity.Property(e => e.EntityType).HasMaxLength(64).IsRequired().HasColumnName("entity_type");
+            entity.Property(e => e.EntityId).HasColumnName("entity_id");
+            entity.Property(e => e.TargetRoute).HasMaxLength(255).HasColumnName("target_route");
+            entity.Property(e => e.IsRead).HasDefaultValue(false).HasColumnName("is_read");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("(sysutcdatetime())").HasColumnName("created_at");
+            entity.Property(e => e.ReadAt).HasColumnName("read_at");
+            entity.Property(e => e.CreatedBy).HasMaxLength(450).HasColumnName("created_by");
+        });
+
+        modelBuilder.Entity<BankReceipt>(entity =>
+        {
+            entity.Property(e => e.BusinessReference).HasMaxLength(255).HasColumnName("Business_reference");
+            entity.Property(e => e.DeclaredInvoiceNumber).HasMaxLength(100).HasColumnName("Declared_invoice_number");
+            entity.Property(e => e.DeclaredInvoiceMonth).HasColumnName("Declared_invoice_month");
         });
     }
 }

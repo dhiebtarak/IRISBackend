@@ -45,3 +45,4 @@ public partial class ContractPanel
 
     public virtual ICollection<RemittanceRef> RemittanceRefs { get; set; } = new List<RemittanceRef>();
 }
+

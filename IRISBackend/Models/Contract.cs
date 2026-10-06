@@ -103,3 +103,4 @@ public partial class Contract
 
     public virtual AspNetUser UpdatedByNavigation { get; set; }
 }
+

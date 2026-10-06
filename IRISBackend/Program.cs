@@ -141,6 +141,7 @@ builder.Services.AddScoped<IContractReadService, ContractReadService>();
 builder.Services.AddScoped<IContractPlacementService, ContractPlacementService>();
 builder.Services.AddScoped<ICoverageCatalogService, CoverageCatalogService>();
 builder.Services.AddScoped<ICoverageSelectionService, CoverageSelectionService>();
+builder.Services.AddScoped<IFinancialWorkflowService, FinancialWorkflowService>();
 builder.Services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
 builder.Services.AddScoped<IDocumentAttachmentRepository, DocumentAttachmentRepository>();
 builder.Services.AddScoped<ILoginAuditRepository, LoginAuditRepository>();

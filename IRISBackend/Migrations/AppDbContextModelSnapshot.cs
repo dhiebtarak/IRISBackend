@@ -262,6 +262,11 @@ namespace IRISBackend.Migrations
                         .HasColumnType("nvarchar(100)")
                         .HasColumnName("Bank_reference");
 
+                    b.Property<string>("BusinessReference")
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)")
+                        .HasColumnName("Business_reference");
+
                     b.Property<string>("CollectionType")
                         .HasMaxLength(255)
                         .HasColumnType("nvarchar(255)")
@@ -279,6 +284,15 @@ namespace IRISBackend.Migrations
                         .HasMaxLength(450)
                         .HasColumnType("nvarchar(450)")
                         .HasColumnName("Created_by");
+
+                    b.Property<DateOnly?>("DeclaredInvoiceMonth")
+                        .HasColumnType("date")
+                        .HasColumnName("Declared_invoice_month");
+
+                    b.Property<string>("DeclaredInvoiceNumber")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("Declared_invoice_number");
 
                     b.Property<string>("DetailsStatus")
                         .HasMaxLength(50)
@@ -859,13 +873,38 @@ namespace IRISBackend.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("IdPanel"));
 
+                    b.Property<decimal?>("BrokerageIrisAmount")
+                        .HasColumnType("decimal(19, 4)")
+                        .HasColumnName("Brokerage_iris_amount");
+
                     b.Property<decimal?>("BrokeragePct")
                         .HasColumnType("decimal(19, 8)")
                         .HasColumnName("Brokerage_pct");
 
+                    b.Property<decimal?>("CedentCommissionAmount")
+                        .HasColumnType("decimal(19, 4)")
+                        .HasColumnName("Cedent_commission_amount");
+
+                    b.Property<decimal?>("CedentCommissionPct")
+                        .HasColumnType("decimal(19, 8)")
+                        .HasColumnName("Cedent_commission_pct");
+
                     b.Property<decimal?>("Deductible")
                         .HasColumnType("decimal(19, 4)")
                         .HasColumnName("Deductible");
+
+                    b.Property<decimal?>("DeductibleAmount")
+                        .HasColumnType("decimal(19, 4)")
+                        .HasColumnName("Deductible_amount");
+
+                    b.Property<string>("DeductibleType")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)")
+                        .HasColumnName("Deductible_type");
+
+                    b.Property<decimal?>("DeductibleValue")
+                        .HasColumnType("decimal(19, 8)")
+                        .HasColumnName("Deductible_value");
 
                     b.Property<decimal?>("GrossPremium")
                         .HasColumnType("decimal(19, 4)")
@@ -878,6 +917,19 @@ namespace IRISBackend.Migrations
                     b.Property<int>("IdCounterparty")
                         .HasColumnType("int")
                         .HasColumnName("Id_counterparty");
+
+                    b.Property<decimal?>("LimitOfLiabilityAmount")
+                        .HasColumnType("decimal(19, 4)")
+                        .HasColumnName("Limit_of_liability_amount");
+
+                    b.Property<string>("LimitOfLiabilityType")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)")
+                        .HasColumnName("Limit_of_liability_type");
+
+                    b.Property<decimal?>("LimitOfLiabilityValue")
+                        .HasColumnType("decimal(19, 8)")
+                        .HasColumnName("Limit_of_liability_value");
 
                     b.Property<decimal?>("NetPremium")
                         .HasColumnType("decimal(19, 4)")
@@ -1420,11 +1472,31 @@ namespace IRISBackend.Migrations
                         .HasColumnType("nvarchar(100)")
                         .HasColumnName("Agency_code");
 
+                    b.Property<string>("BankCity")
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)")
+                        .HasColumnName("Bank_city");
+
+                    b.Property<string>("BankCountry")
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)")
+                        .HasColumnName("Bank_country");
+
                     b.Property<string>("BankName")
                         .IsRequired()
                         .HasMaxLength(255)
                         .HasColumnType("nvarchar(255)")
                         .HasColumnName("Bank_name");
+
+                    b.Property<string>("CorrespondentBankName")
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)")
+                        .HasColumnName("Correspondent_bank_name");
+
+                    b.Property<string>("CorrespondentSwiftBic")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("Correspondent_swift_bic");
 
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
@@ -1438,6 +1510,12 @@ namespace IRISBackend.Migrations
                         .HasMaxLength(450)
                         .HasColumnType("nvarchar(450)")
                         .HasColumnName("Created_by");
+
+                    b.Property<bool>("HasCorrespondentBank")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false)
+                        .HasColumnName("Has_correspondent_bank");
 
                     b.Property<string>("Iban")
                         .HasMaxLength(100)
@@ -1485,11 +1563,13 @@ namespace IRISBackend.Migrations
 
                     b.HasIndex("CreatedBy");
 
-                    b.HasIndex("IdCounterparty");
-
                     b.HasIndex("IdCurrency");
 
                     b.HasIndex("UpdatedBy");
+
+                    b.HasIndex(new[] { "IdCounterparty", "IdCurrency" }, "UX_COUNTERPARTY_BANK_ACCOUNT_default_currency")
+                        .IsUnique()
+                        .HasFilter("[Is_active]=(1) AND [Is_default]=(1)");
 
                     b.ToTable("COUNTERPARTY_BANK_ACCOUNT", (string)null);
                 });
@@ -1737,10 +1817,44 @@ namespace IRISBackend.Migrations
                         .HasColumnType("bit")
                         .HasAnnotation("Relational:DefaultConstraintName", "DF_DISBURSEMENT_attachment");
 
+                    b.Property<string>("BankCitySnapshot")
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)")
+                        .HasColumnName("Bank_city_snapshot");
+
+                    b.Property<string>("BankCountrySnapshot")
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)")
+                        .HasColumnName("Bank_country_snapshot");
+
+                    b.Property<string>("BankNameSnapshot")
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)")
+                        .HasColumnName("Bank_name_snapshot");
+
+                    b.Property<string>("BankReference")
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)")
+                        .HasColumnName("Bank_reference");
+
                     b.Property<string>("CaseReference")
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)")
                         .HasColumnName("Case_reference");
+
+                    b.Property<string>("CedentNameSnapshot")
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)")
+                        .HasColumnName("Cedent_name_snapshot");
+
+                    b.Property<DateTime?>("ClosedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("Closed_at");
+
+                    b.Property<string>("ClosedBy")
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)")
+                        .HasColumnName("Closed_by");
 
                     b.Property<DateOnly?>("CollectorSignatureDate")
                         .HasColumnType("date")
@@ -1749,6 +1863,21 @@ namespace IRISBackend.Migrations
                     b.Property<decimal?>("CommissionRetention")
                         .HasColumnType("decimal(19, 4)")
                         .HasColumnName("Commission_retention");
+
+                    b.Property<string>("ContractNameSnapshot")
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)")
+                        .HasColumnName("Contract_name_snapshot");
+
+                    b.Property<string>("CorrespondentBankNameSnapshot")
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)")
+                        .HasColumnName("Correspondent_bank_name_snapshot");
+
+                    b.Property<string>("CorrespondentSwiftBicSnapshot")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("Correspondent_swift_bic_snapshot");
 
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
@@ -1763,12 +1892,30 @@ namespace IRISBackend.Migrations
                         .HasColumnType("nvarchar(450)")
                         .HasColumnName("Created_by");
 
+                    b.Property<string>("CurrencyCodeSnapshot")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)")
+                        .HasColumnName("Currency_code_snapshot");
+
+                    b.Property<decimal?>("DeductionsSnapshot")
+                        .HasColumnType("decimal(19, 4)")
+                        .HasColumnName("Deductions_snapshot");
+
                     b.Property<string>("Description")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<DateOnly?>("FinancialOfficerSignatureDate")
                         .HasColumnType("date")
                         .HasColumnName("Financial_officer_signature_date");
+
+                    b.Property<decimal?>("GrossPremiumSnapshot")
+                        .HasColumnType("decimal(19, 4)")
+                        .HasColumnName("Gross_premium_snapshot");
+
+                    b.Property<string>("IbanSnapshot")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("Iban_snapshot");
 
                     b.Property<int>("IdBankAccount")
                         .HasColumnType("int")
@@ -1792,15 +1939,59 @@ namespace IRISBackend.Migrations
                         .HasColumnType("date")
                         .HasColumnName("Operation_date");
 
+                    b.Property<string>("PanelReferenceSnapshot")
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)")
+                        .HasColumnName("Panel_reference_snapshot");
+
                     b.Property<string>("PaymentMethode")
                         .HasMaxLength(255)
                         .HasColumnType("nvarchar(255)")
                         .HasColumnName("Payment_methode");
 
+                    b.Property<string>("ReinsurerAddressSnapshot")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("Reinsurer_address_snapshot");
+
+                    b.Property<string>("ReinsurerCitySnapshot")
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)")
+                        .HasColumnName("Reinsurer_city_snapshot");
+
+                    b.Property<string>("ReinsurerCountrySnapshot")
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)")
+                        .HasColumnName("Reinsurer_country_snapshot");
+
+                    b.Property<string>("ReinsurerNameSnapshot")
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)")
+                        .HasColumnName("Reinsurer_name_snapshot");
+
+                    b.Property<string>("ReinsurerTaxIdSnapshot")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("Reinsurer_tax_id_snapshot");
+
                     b.Property<string>("SignatureStatus")
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)")
                         .HasColumnName("Signature_status");
+
+                    b.Property<DateTime?>("StartedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("Started_at");
+
+                    b.Property<string>("StartedBy")
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)")
+                        .HasColumnName("Started_by");
+
+                    b.Property<string>("SwiftBicSnapshot")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("Swift_bic_snapshot");
 
                     b.Property<decimal>("TotalAmount")
                         .HasColumnType("decimal(19, 4)")
@@ -1809,6 +2000,11 @@ namespace IRISBackend.Migrations
                     b.Property<DateOnly?>("TransferDate")
                         .HasColumnType("date")
                         .HasColumnName("Transfer_date");
+
+                    b.Property<string>("UmrSnapshot")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("Umr_snapshot");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime2")
@@ -2107,19 +2303,48 @@ namespace IRISBackend.Migrations
                         .HasColumnType("date")
                         .HasColumnName("End_date");
 
+                    b.Property<decimal?>("GrossPremium")
+                        .HasColumnType("decimal(19,4)")
+                        .HasColumnName("Gross_premium");
+
                     b.Property<int>("IdContract")
                         .HasColumnType("int")
                         .HasColumnName("Id_contract");
 
+                    b.Property<int?>("IdCounterparty")
+                        .HasColumnType("int")
+                        .HasColumnName("Id_counterparty");
+
+                    b.Property<int?>("IdCurrency")
+                        .HasColumnType("int")
+                        .HasColumnName("Id_currency");
+
+                    b.Property<int?>("IdDisbursement")
+                        .HasColumnType("int")
+                        .HasColumnName("Id_disbursement");
+
                     b.Property<int?>("IdEndorsement")
                         .HasColumnType("int")
                         .HasColumnName("Id_endorsement");
+
+                    b.Property<int?>("IdPanel")
+                        .HasColumnType("int")
+                        .HasColumnName("Id_panel");
+
+                    b.Property<int?>("IdReceiptAllocation")
+                        .HasColumnType("int")
+                        .HasColumnName("Id_receipt_allocation");
 
                     b.Property<string>("IdUser")
                         .IsRequired()
                         .HasMaxLength(450)
                         .HasColumnType("nvarchar(450)")
                         .HasColumnName("Id_user");
+
+                    b.Property<string>("IdempotencyKey")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("Idempotency_key");
 
                     b.Property<DateOnly>("InvoiceDate")
                         .HasColumnType("date")
@@ -2161,9 +2386,19 @@ namespace IRISBackend.Migrations
                         .HasColumnName("Net_premium_in_words");
 
                     b.Property<string>("RecoveryStatus")
+                        .ValueGeneratedOnAdd()
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)")
+                        .HasDefaultValue("Unpaired")
                         .HasColumnName("Recovery_status");
+
+                    b.Property<int?>("RemittanceRef")
+                        .HasColumnType("int")
+                        .HasColumnName("Remittance_ref");
+
+                    b.Property<int?>("SequenceNumber")
+                        .HasColumnType("int")
+                        .HasColumnName("Sequence_number");
 
                     b.Property<string>("SettlementMethod")
                         .HasMaxLength(255)
@@ -2192,15 +2427,215 @@ namespace IRISBackend.Migrations
 
                     b.HasIndex("CreatedBy");
 
+                    b.HasIndex("IdCounterparty");
+
+                    b.HasIndex("IdCurrency");
+
                     b.HasIndex("IdEndorsement");
 
+                    b.HasIndex("IdPanel");
+
                     b.HasIndex("IdUser");
+
+                    b.HasIndex("RemittanceRef");
 
                     b.HasIndex("UpdatedBy");
 
                     b.HasIndex(new[] { "IdContract" }, "IX_INVOICE_id_contract");
 
+                    b.HasIndex(new[] { "IdReceiptAllocation" }, "IX_INVOICE_id_receipt_allocation");
+
+                    b.HasIndex(new[] { "IdDisbursement" }, "UX_INVOICE_id_disbursement")
+                        .IsUnique()
+                        .HasFilter("[Id_disbursement] IS NOT NULL");
+
+                    b.HasIndex(new[] { "IdempotencyKey" }, "UX_INVOICE_idempotency_key")
+                        .IsUnique()
+                        .HasFilter("[Idempotency_key] IS NOT NULL");
+
+                    b.HasIndex(new[] { "InvoiceNumber" }, "UX_INVOICE_invoice_number")
+                        .IsUnique();
+
                     b.ToTable("INVOICE", (string)null);
+                });
+
+            modelBuilder.Entity("IRISBackend.Models.InvoiceNumberSequence", b =>
+                {
+                    b.Property<int>("InvoiceYear")
+                        .HasColumnType("int")
+                        .HasColumnName("invoice_year");
+
+                    b.Property<int>("LastSequence")
+                        .HasColumnType("int")
+                        .HasColumnName("last_sequence");
+
+                    b.HasKey("InvoiceYear");
+
+                    b.ToTable("INVOICE_NUMBER_SEQUENCE", (string)null);
+                });
+
+            modelBuilder.Entity("IRISBackend.Models.InvoicePanelAllocation", b =>
+                {
+                    b.Property<int>("IdInvoiceAllocation")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("id_invoice_allocation");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("IdInvoiceAllocation"));
+
+                    b.Property<decimal>("AllocationRatio")
+                        .HasColumnType("decimal(19,8)")
+                        .HasColumnName("allocation_ratio");
+
+                    b.Property<decimal>("BrokerageAmount")
+                        .HasColumnType("decimal(19,4)")
+                        .HasColumnName("brokerage_amount");
+
+                    b.Property<decimal?>("BrokeragePct")
+                        .HasColumnType("decimal(19,8)")
+                        .HasColumnName("brokerage_pct");
+
+                    b.Property<decimal>("CedentCommissionAmount")
+                        .HasColumnType("decimal(19,4)")
+                        .HasColumnName("cedent_commission_amount");
+
+                    b.Property<decimal?>("CedentCommissionPct")
+                        .HasColumnType("decimal(19,8)")
+                        .HasColumnName("cedent_commission_pct");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("CurrencyCodeSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)")
+                        .HasColumnName("currency_code_snapshot");
+
+                    b.Property<decimal>("GrossPremium")
+                        .HasColumnType("decimal(19,4)")
+                        .HasColumnName("gross_premium");
+
+                    b.Property<int>("IdCounterparty")
+                        .HasColumnType("int")
+                        .HasColumnName("id_counterparty");
+
+                    b.Property<int>("IdInvoice")
+                        .HasColumnType("int")
+                        .HasColumnName("id_invoice");
+
+                    b.Property<int>("IdPanel")
+                        .HasColumnType("int")
+                        .HasColumnName("id_panel");
+
+                    b.Property<decimal>("NetAmount")
+                        .HasColumnType("decimal(19,4)")
+                        .HasColumnName("net_amount");
+
+                    b.Property<decimal>("OtherDeductions")
+                        .HasColumnType("decimal(19,4)")
+                        .HasColumnName("other_deductions");
+
+                    b.Property<string>("ReinsurerNameSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)")
+                        .HasColumnName("reinsurer_name_snapshot");
+
+                    b.Property<decimal?>("SignedSharePctSnapshot")
+                        .HasColumnType("decimal(19,8)")
+                        .HasColumnName("signed_share_pct_snapshot");
+
+                    b.HasKey("IdInvoiceAllocation");
+
+                    b.HasIndex("IdCounterparty");
+
+                    b.HasIndex("IdPanel");
+
+                    b.HasIndex(new[] { "IdInvoice", "IdPanel" }, "UX_INVOICE_PANEL_ALLOCATION_invoice_panel")
+                        .IsUnique();
+
+                    b.ToTable("INVOICE_PANEL_ALLOCATION", (string)null);
+                });
+
+            modelBuilder.Entity("IRISBackend.Models.Notification", b =>
+                {
+                    b.Property<int>("IdNotification")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("id_notification");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("IdNotification"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("(sysutcdatetime())");
+
+                    b.Property<string>("CreatedBy")
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)")
+                        .HasColumnName("created_by");
+
+                    b.Property<int?>("EntityId")
+                        .HasColumnType("int")
+                        .HasColumnName("entity_id");
+
+                    b.Property<string>("EntityType")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)")
+                        .HasColumnName("entity_type");
+
+                    b.Property<bool>("IsRead")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_read");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("NotificationType")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)")
+                        .HasColumnName("notification_type");
+
+                    b.Property<DateTime?>("ReadAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("read_at");
+
+                    b.Property<string>("RecipientRole")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)")
+                        .HasColumnName("recipient_role");
+
+                    b.Property<string>("RecipientUserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)")
+                        .HasColumnName("recipient_user_id");
+
+                    b.Property<string>("TargetRoute")
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)")
+                        .HasColumnName("target_route");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.HasKey("IdNotification");
+
+                    b.HasIndex(new[] { "RecipientUserId", "IsRead" }, "IX_NOTIFICATION_recipient_read");
+
+                    b.ToTable("NOTIFICATION", (string)null);
                 });
 
             modelBuilder.Entity("IRISBackend.Models.PremiumRef", b =>
@@ -2340,9 +2775,21 @@ namespace IRISBackend.Migrations
                         .HasColumnType("int")
                         .HasColumnName("Id_bank_receipt");
 
+                    b.Property<int?>("IdContract")
+                        .HasColumnType("int")
+                        .HasColumnName("Id_contract");
+
                     b.Property<int>("IdCurrency")
                         .HasColumnType("int")
                         .HasColumnName("Id_currency");
+
+                    b.Property<int?>("IdInvoice")
+                        .HasColumnType("int")
+                        .HasColumnName("id_invoice");
+
+                    b.Property<int?>("IdPanel")
+                        .HasColumnType("int")
+                        .HasColumnName("Id_panel");
 
                     b.Property<string>("IdUser")
                         .IsRequired()
@@ -2371,13 +2818,21 @@ namespace IRISBackend.Migrations
 
                     b.HasIndex("ClaimRef");
 
-                    b.HasIndex("IdBankReceipt");
+                    b.HasIndex("IdContract");
 
                     b.HasIndex("IdCurrency");
+
+                    b.HasIndex("IdPanel");
 
                     b.HasIndex("IdUser");
 
                     b.HasIndex("PremiumRef");
+
+                    b.HasIndex(new[] { "IdInvoice" }, "IX_RECEIPT_ALLOCATION_id_invoice");
+
+                    b.HasIndex(new[] { "IdBankReceipt", "IdInvoice" }, "UX_RECEIPT_ALLOCATION_receipt_invoice")
+                        .IsUnique()
+                        .HasFilter("[id_invoice] IS NOT NULL");
 
                     b.ToTable("RECEIPT_ALLOCATION", (string)null);
                 });
@@ -2398,6 +2853,15 @@ namespace IRISBackend.Migrations
                     b.Property<DateOnly?>("ClosingIssuedDate")
                         .HasColumnType("date")
                         .HasColumnName("Closing_issued_date");
+
+                    b.Property<DateTime?>("ConfirmedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("Confirmed_at");
+
+                    b.Property<string>("ConfirmedBy")
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)")
+                        .HasColumnName("Confirmed_by");
 
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
@@ -2426,13 +2890,17 @@ namespace IRISBackend.Migrations
                         .HasColumnType("int")
                         .HasColumnName("Id_currency");
 
-                    b.Property<int>("IdDisbursement")
+                    b.Property<int?>("IdDisbursement")
                         .HasColumnType("int")
                         .HasColumnName("Id_disbursement");
 
                     b.Property<int?>("IdPanel")
                         .HasColumnType("int")
                         .HasColumnName("Id_panel");
+
+                    b.Property<int?>("IdReceiptAllocation")
+                        .HasColumnType("int")
+                        .HasColumnName("Id_receipt_allocation");
 
                     b.Property<decimal?>("NetPayableAmount")
                         .HasColumnType("decimal(19, 4)")
@@ -2496,6 +2964,10 @@ namespace IRISBackend.Migrations
                     b.HasIndex("PremiumRef");
 
                     b.HasIndex("UpdatedBy");
+
+                    b.HasIndex(new[] { "IdReceiptAllocation", "IdPanel" }, "UX_REMITTANCE_REF_allocation_panel")
+                        .IsUnique()
+                        .HasFilter("[Id_receipt_allocation] IS NOT NULL AND [Id_panel] IS NOT NULL");
 
                     b.ToTable("REMITTANCE_REF", (string)null);
                 });
@@ -3221,16 +3693,46 @@ namespace IRISBackend.Migrations
                         .IsRequired()
                         .HasConstraintName("FK_INVOICE_id_contract");
 
+                    b.HasOne("IRISBackend.Models.Counterparty", "IdCounterpartyNavigation")
+                        .WithMany()
+                        .HasForeignKey("IdCounterparty")
+                        .HasConstraintName("FK_INVOICE_id_counterparty");
+
+                    b.HasOne("IRISBackend.Models.Currency", "IdCurrencyNavigation")
+                        .WithMany()
+                        .HasForeignKey("IdCurrency")
+                        .HasConstraintName("FK_INVOICE_id_currency");
+
+                    b.HasOne("IRISBackend.Models.Disbursement", "IdDisbursementNavigation")
+                        .WithMany()
+                        .HasForeignKey("IdDisbursement")
+                        .HasConstraintName("FK_INVOICE_id_disbursement");
+
                     b.HasOne("IRISBackend.Models.Endorsement", "IdEndorsementNavigation")
                         .WithMany("Invoices")
                         .HasForeignKey("IdEndorsement")
                         .HasConstraintName("FK_INVOICE_id_endorsement");
+
+                    b.HasOne("IRISBackend.Models.ContractPanel", "IdPanelNavigation")
+                        .WithMany()
+                        .HasForeignKey("IdPanel")
+                        .HasConstraintName("FK_INVOICE_id_panel");
+
+                    b.HasOne("IRISBackend.Models.ReceiptAllocation", "IdReceiptAllocationNavigation")
+                        .WithMany()
+                        .HasForeignKey("IdReceiptAllocation")
+                        .HasConstraintName("FK_INVOICE_id_receipt_allocation");
 
                     b.HasOne("IRISBackend.Models.AspNetUser", "IdUserNavigation")
                         .WithMany("InvoiceIdUserNavigations")
                         .HasForeignKey("IdUser")
                         .IsRequired()
                         .HasConstraintName("FK_INVOICE_id_user_USER");
+
+                    b.HasOne("IRISBackend.Models.RemittanceRef", "RemittanceRefNavigation")
+                        .WithMany()
+                        .HasForeignKey("RemittanceRef")
+                        .HasConstraintName("FK_INVOICE_remittance_ref");
 
                     b.HasOne("IRISBackend.Models.AspNetUser", "UpdatedByNavigation")
                         .WithMany("InvoiceUpdatedByNavigations")
@@ -3241,11 +3743,50 @@ namespace IRISBackend.Migrations
 
                     b.Navigation("IdContractNavigation");
 
+                    b.Navigation("IdCounterpartyNavigation");
+
+                    b.Navigation("IdCurrencyNavigation");
+
+                    b.Navigation("IdDisbursementNavigation");
+
                     b.Navigation("IdEndorsementNavigation");
+
+                    b.Navigation("IdPanelNavigation");
+
+                    b.Navigation("IdReceiptAllocationNavigation");
 
                     b.Navigation("IdUserNavigation");
 
+                    b.Navigation("RemittanceRefNavigation");
+
                     b.Navigation("UpdatedByNavigation");
+                });
+
+            modelBuilder.Entity("IRISBackend.Models.InvoicePanelAllocation", b =>
+                {
+                    b.HasOne("IRISBackend.Models.Counterparty", "IdCounterpartyNavigation")
+                        .WithMany()
+                        .HasForeignKey("IdCounterparty")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("IRISBackend.Models.Invoice", "IdInvoiceNavigation")
+                        .WithMany("PanelAllocations")
+                        .HasForeignKey("IdInvoice")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("IRISBackend.Models.ContractPanel", "IdPanelNavigation")
+                        .WithMany()
+                        .HasForeignKey("IdPanel")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.Navigation("IdCounterpartyNavigation");
+
+                    b.Navigation("IdInvoiceNavigation");
+
+                    b.Navigation("IdPanelNavigation");
                 });
 
             modelBuilder.Entity("IRISBackend.Models.PremiumRef", b =>
@@ -3311,11 +3852,28 @@ namespace IRISBackend.Migrations
                         .IsRequired()
                         .HasConstraintName("FK_RECEIPT_ALLOCATION_id_bank_receipt");
 
+                    b.HasOne("IRISBackend.Models.Contract", "IdContractNavigation")
+                        .WithMany("ReceiptAllocations")
+                        .HasForeignKey("IdContract")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .HasConstraintName("FK_RECEIPT_ALLOCATION_id_contract");
+
                     b.HasOne("IRISBackend.Models.Currency", "IdCurrencyNavigation")
                         .WithMany("ReceiptAllocations")
                         .HasForeignKey("IdCurrency")
                         .IsRequired()
                         .HasConstraintName("FK_RECEIPT_ALLOCATION_id_currency");
+
+                    b.HasOne("IRISBackend.Models.Invoice", "IdInvoiceNavigation")
+                        .WithMany("ReceiptAllocations")
+                        .HasForeignKey("IdInvoice")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .HasConstraintName("FK_RECEIPT_ALLOCATION_id_invoice");
+
+                    b.HasOne("IRISBackend.Models.ContractPanel", "IdPanelNavigation")
+                        .WithMany()
+                        .HasForeignKey("IdPanel")
+                        .HasConstraintName("FK_RECEIPT_ALLOCATION_id_panel");
 
                     b.HasOne("IRISBackend.Models.AspNetUser", "IdUserNavigation")
                         .WithMany("ReceiptAllocations")
@@ -3332,7 +3890,13 @@ namespace IRISBackend.Migrations
 
                     b.Navigation("IdBankReceiptNavigation");
 
+                    b.Navigation("IdContractNavigation");
+
                     b.Navigation("IdCurrencyNavigation");
+
+                    b.Navigation("IdInvoiceNavigation");
+
+                    b.Navigation("IdPanelNavigation");
 
                     b.Navigation("IdUserNavigation");
 
@@ -3367,13 +3931,17 @@ namespace IRISBackend.Migrations
                     b.HasOne("IRISBackend.Models.Disbursement", "IdDisbursementNavigation")
                         .WithMany("RemittanceRefs")
                         .HasForeignKey("IdDisbursement")
-                        .IsRequired()
                         .HasConstraintName("FK_REMITTANCE_REF_id_disbursement");
 
                     b.HasOne("IRISBackend.Models.ContractPanel", "IdPanelNavigation")
                         .WithMany("RemittanceRefs")
                         .HasForeignKey("IdPanel")
                         .HasConstraintName("FK_REMITTANCE_REF_id_panel");
+
+                    b.HasOne("IRISBackend.Models.ReceiptAllocation", "IdReceiptAllocationNavigation")
+                        .WithMany()
+                        .HasForeignKey("IdReceiptAllocation")
+                        .HasConstraintName("FK_REMITTANCE_REF_id_receipt_allocation");
 
                     b.HasOne("IRISBackend.Models.PremiumRef", "PremiumRefNavigation")
                         .WithMany("RemittanceRefs")
@@ -3396,6 +3964,8 @@ namespace IRISBackend.Migrations
                     b.Navigation("IdDisbursementNavigation");
 
                     b.Navigation("IdPanelNavigation");
+
+                    b.Navigation("IdReceiptAllocationNavigation");
 
                     b.Navigation("PremiumRefNavigation");
 
@@ -3557,6 +4127,8 @@ namespace IRISBackend.Migrations
                     b.Navigation("Invoices");
 
                     b.Navigation("PremiumRefs");
+
+                    b.Navigation("ReceiptAllocations");
                 });
 
             modelBuilder.Entity("IRISBackend.Models.ContractPanel", b =>
@@ -3641,6 +4213,13 @@ namespace IRISBackend.Migrations
                     b.Navigation("DocumentAttachments");
 
                     b.Navigation("Invoices");
+                });
+
+            modelBuilder.Entity("IRISBackend.Models.Invoice", b =>
+                {
+                    b.Navigation("PanelAllocations");
+
+                    b.Navigation("ReceiptAllocations");
                 });
 
             modelBuilder.Entity("IRISBackend.Models.PremiumRef", b =>

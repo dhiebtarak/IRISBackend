@@ -24,12 +24,13 @@ namespace IRISBackend.Services
             return new ServiceResult<T>(value, null, statusCode);
         }
 
-        public static ServiceResult<T> Failure(string message, IEnumerable<string>? errors = null, int statusCode = StatusCodes.Status400BadRequest)
+        public static ServiceResult<T> Failure(string message, IEnumerable<string>? errors = null, int statusCode = StatusCodes.Status400BadRequest, string? code = null)
         {
             return new ServiceResult<T>(
                 default,
                 new ApiErrorResponseDto
                 {
+                    Code = code,
                     Message = message,
                     Errors = errors ?? []
                 },

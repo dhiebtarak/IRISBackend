@@ -11,6 +11,7 @@ namespace IRISBackend.Services
         public const string CancelledStatus = "Cancelled";
         public const string ConfirmedPanelStatus = "Confirmed";
         public const string NotTakenUpPanelStatus = "NotTakenUp";
+        public const string CancelledPanelStatus = "Cancelled";
         public const string FrontOfficerDepartment = "Reassurance";
         public const string FrontOfficerPosition = "Front officer";
 

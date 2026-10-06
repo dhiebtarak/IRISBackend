@@ -24,7 +24,7 @@ namespace IRISBackend.Services
             ContractListQueryDto query,
             CancellationToken cancellationToken = default)
         {
-            var userResult = await GetCurrentFrontOfficerAsync();
+            var userResult = await GetCurrentContractReaderAsync();
             if (!userResult.Succeeded)
             {
                 return MapFailure<PagedResponseDto<ContractListItemDto>>(userResult);
@@ -33,9 +33,11 @@ namespace IRISBackend.Services
             var pageNumber = Math.Max(query.PageNumber, 1);
             var pageSize = Math.Clamp(query.PageSize, 1, 100);
             var normalizedQuery = NormalizeQuery(query, pageNumber, pageSize);
+            var includeAllContracts = FrontOfficerAccessRules.IsBackOfficer(userResult.Value!);
             var (items, totalCount) = await _contractRepository.ListAsync(
                 normalizedQuery,
                 userResult.Value!.Id,
+                includeAllContracts,
                 cancellationToken);
 
             foreach (var item in items)
@@ -56,13 +58,16 @@ namespace IRISBackend.Services
         public async Task<ServiceResult<ContractDashboardSummaryDto>> GetDashboardSummaryAsync(
             CancellationToken cancellationToken = default)
         {
-            var userResult = await GetCurrentFrontOfficerAsync();
+            var userResult = await GetCurrentContractReaderAsync();
             if (!userResult.Succeeded)
             {
                 return MapFailure<ContractDashboardSummaryDto>(userResult);
             }
 
-            var data = await _contractRepository.GetDashboardDataAsync(userResult.Value!.Id, cancellationToken);
+            var data = await _contractRepository.GetDashboardDataAsync(
+                userResult.Value!.Id,
+                FrontOfficerAccessRules.IsBackOfficer(userResult.Value),
+                cancellationToken);
             var statusCounts = data.StatusCounts
                 .GroupBy(status => ContractConstants.NormalizeStatus(status.Status), StringComparer.OrdinalIgnoreCase)
                 .Select(group => new ContractStatusCount
@@ -105,17 +110,18 @@ namespace IRISBackend.Services
             int contractId,
             CancellationToken cancellationToken = default)
         {
-            var userResult = await GetCurrentFrontOfficerAsync();
+            var userResult = await GetCurrentContractReaderAsync();
             if (!userResult.Succeeded)
             {
                 return MapFailure<ContractOverviewDto>(userResult);
             }
 
-            await _contractRepository.MarkDraftReadyForPlacementAsync(contractId, userResult.Value!.Id, cancellationToken);
+            var includeAllContracts = FrontOfficerAccessRules.IsBackOfficer(userResult.Value!);
 
             var contract = await _contractRepository.GetAccessibleContractByIdAsync(
                 contractId,
-                userResult.Value.Id,
+                userResult.Value!.Id,
+                includeAllContracts,
                 cancellationToken);
 
             if (contract is null)
@@ -128,11 +134,36 @@ namespace IRISBackend.Services
             return ServiceResult<ContractOverviewDto>.Success(MapOverview(contract));
         }
 
+        public async Task<ServiceResult<ContractOverviewDto>> CompleteDraftAsync(
+            int contractId,
+            CancellationToken cancellationToken = default)
+        {
+            var userResult = await GetCurrentContractReaderAsync();
+            if (!userResult.Succeeded)
+            {
+                return MapFailure<ContractOverviewDto>(userResult);
+            }
+
+            if (!FrontOfficerAccessRules.IsFrontOfficer(userResult.Value!))
+            {
+                return ServiceResult<ContractOverviewDto>.Failure(
+                    "Only Front Officers can complete a contract draft.",
+                    statusCode: StatusCodes.Status403Forbidden);
+            }
+
+            await _contractRepository.MarkDraftReadyForPlacementAsync(
+                contractId,
+                userResult.Value!.Id,
+                cancellationToken);
+
+            return await GetOverviewAsync(contractId, cancellationToken);
+        }
+
         public async Task<ServiceResult<SlipDownloadResult>> DownloadSlipsAsync(
             int contractId,
             CancellationToken cancellationToken = default)
         {
-            var userResult = await GetCurrentFrontOfficerAsync();
+            var userResult = await GetCurrentContractReaderAsync();
             if (!userResult.Succeeded)
             {
                 return MapFailure<SlipDownloadResult>(userResult);
@@ -141,6 +172,7 @@ namespace IRISBackend.Services
             var contract = await _contractRepository.GetAccessibleContractByIdAsync(
                 contractId,
                 userResult.Value!.Id,
+                FrontOfficerAccessRules.IsBackOfficer(userResult.Value),
                 cancellationToken);
 
             if (contract is null)
@@ -152,7 +184,8 @@ namespace IRISBackend.Services
 
             var slips = await _contractRepository.ListActiveCurrentSlipTemplatesForContractAsync(
                 contractId,
-                userResult.Value.Id,
+                userResult.Value!.Id,
+                FrontOfficerAccessRules.IsBackOfficer(userResult.Value),
                 cancellationToken);
 
             if (slips.Count == 0)
@@ -188,7 +221,7 @@ namespace IRISBackend.Services
             });
         }
 
-        private async Task<ServiceResult<UserProfileResponseDto>> GetCurrentFrontOfficerAsync()
+        private async Task<ServiceResult<UserProfileResponseDto>> GetCurrentContractReaderAsync()
         {
             var principal = _httpContextAccessor.HttpContext?.User;
             if (principal?.Identity?.IsAuthenticated != true)
@@ -204,10 +237,10 @@ namespace IRISBackend.Services
                 return userResult;
             }
 
-            return FrontOfficerAccessRules.IsFrontOfficer(userResult.Value)
+            return FrontOfficerAccessRules.IsFrontOrBackOfficer(userResult.Value)
                 ? userResult
                 : ServiceResult<UserProfileResponseDto>.Failure(
-                    "Only Front Officers can access contract workspace data.",
+                    "Only Front Officers and Back Officers can access contract workspace data.",
                     statusCode: StatusCodes.Status403Forbidden);
         }
 
@@ -251,6 +284,20 @@ namespace IRISBackend.Services
             var coverageSelection = MapCoverageSelection(contract);
             var selectedCount = contract.ContractCoverageSelections.Count;
             var availableSlipCount = contract.ContractCoverageSelections.Count(selection => selection.IdSlipTemplate.HasValue);
+            var availableShare = Math.Max(0m,
+                (contract.SignedSharePctCedent ?? 100m) - contract.ContractPanels
+                    .Where(panel => !string.Equals(panel.Status?.Trim(), ContractConstants.CancelledPanelStatus, StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(panel.Status?.Trim(), ContractConstants.NotTakenUpPanelStatus, StringComparison.OrdinalIgnoreCase))
+                    .Sum(panel => panel.SignedSharePct ?? 0m));
+            var panelDtos = contract.ContractPanels
+                .Where(panel => panel.IdContract == contract.IdContract)
+                .OrderBy(panel => panel.IdPanel)
+                .Select(ContractPanelDtoMapper.Map)
+                .ToArray();
+            foreach (var panel in panelDtos)
+            {
+                panel.AvailableShare = availableShare;
+            }
 
             return new ContractOverviewDto
             {
@@ -292,8 +339,13 @@ namespace IRISBackend.Services
                 PremiumRate = contract.ContractFac?.PremiumRate,
                 Fees = contract.Fees,
                 GrossPremium = contract.GrossPremium,
+                IrisCommission = contract.Fees,
                 CedentCommissionPct = contract.CedentCommission,
+                CedentCommission = contract.GrossPremium.HasValue
+                    ? FacultativeFinancialCalculator.RoundMoney(contract.GrossPremium.Value * (contract.CedentCommission ?? 0m) / 100m)
+                    : null,
                 NetPremiumCedent = contract.NetPremiumCedent,
+                NetPremium = contract.NetPremiumCedent,
                 IsFronting = contract.IsFronting,
                 FrontingReference = contract.FrontingReference,
                 IsHighPriority = contract.Flag,
@@ -309,10 +361,27 @@ namespace IRISBackend.Services
                     AvailableSlipCount = availableSlipCount,
                     MissingSlipCount = Math.Max(selectedCount - availableSlipCount, 0)
                 },
-                Panels = contract.ContractPanels
-                    .OrderBy(panel => panel.IdPanel)
-                    .Select(ContractPanelDtoMapper.Map)
-                    .ToArray()
+                Panels = panelDtos,
+                AvailableShare = availableShare,
+                ReceiptAllocations = contract.ReceiptAllocations
+                    .Where(allocation => allocation.AllocatedAmount.HasValue && allocation.AllocatedAmount.Value > 0m)
+                    .Select(allocation => new ContractReceiptAllocationDto
+                    {
+                        IdReceiptAllocation = allocation.IdReceiptAllocation,
+                        IdBankReceipt = allocation.IdBankReceipt,
+                        AllocatedAmount = allocation.AllocatedAmount ?? 0m,
+                        CurrencyId = allocation.IdCurrency
+                    })
+                    .ToArray(),
+                PairedAmount = contract.ReceiptAllocations.Sum(allocation => allocation.AllocatedAmount ?? 0m),
+                AlreadyInvoicedAmount = contract.Invoices
+                    .Where(invoice => invoice.Status != "Cancelled")
+                    .Sum(invoice => invoice.NetPremium ?? 0m),
+                AvailableAmount = Math.Max(0m,
+                    contract.ReceiptAllocations.Sum(allocation => allocation.AllocatedAmount ?? 0m) -
+                    contract.Invoices
+                        .Where(invoice => invoice.Status != "Cancelled")
+                        .Sum(invoice => invoice.NetPremium ?? 0m))
             };
         }
 
@@ -430,6 +499,11 @@ namespace IRISBackend.Services
 
         private static bool IsCoverageLevel(Models.ContractCoverageSelection selection, string level)
         {
+            if (string.Equals(level, CoverageConstants.MainCoverLevel, StringComparison.OrdinalIgnoreCase))
+            {
+                return CoverageConstants.IsMainCoverLevel(selection.IdCoverageItemNavigation.CoverageLevel);
+            }
+
             return string.Equals(
                 selection.IdCoverageItemNavigation.CoverageLevel?.Trim(),
                 level,

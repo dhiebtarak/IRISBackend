@@ -35,3 +35,4 @@ public partial class ContractCoverageSelection
 
     public virtual AspNetUser UpdatedByNavigation { get; set; }
 }
+

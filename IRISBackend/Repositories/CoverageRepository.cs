@@ -18,7 +18,10 @@ namespace IRISBackend.Repositories
         {
             return await _dbContext.CoverageItems
                 .AsNoTracking()
-                .Where(item => item.IsActive)
+                .Where(item =>
+                    item.IsActive &&
+                    (item.CoverageLevel.Trim().ToUpper() == "MAIN" ||
+                     item.CoverageLevel.Trim().ToUpper() == "MAIN_COVER"))
                 .Select(item => new
                 {
                     item.DisplayOrder,
@@ -55,10 +58,15 @@ namespace IRISBackend.Repositories
                 .Where(relation =>
                     relation.IsActive &&
                     relation.IdParentCoverageItem == parentCoverageItemId &&
-                    relation.RelationType == relationType &&
+                    ((relationType == CoverageConstants.HasSectionRelation &&
+                      (relation.RelationType.Trim().ToUpper() == CoverageConstants.HasSectionRelation ||
+                       relation.RelationType.Trim().ToUpper() == CoverageConstants.SectionLevel)) ||
+                     (relationType == CoverageConstants.HasExtensionRelation &&
+                      (relation.RelationType.Trim().ToUpper() == CoverageConstants.HasExtensionRelation ||
+                       relation.RelationType.Trim().ToUpper() == CoverageConstants.ExtensionLevel))) &&
                     relation.IdParentCoverageItemNavigation.IsActive &&
                     relation.IdChildCoverageItemNavigation.IsActive &&
-                    relation.IdChildCoverageItemNavigation.CoverageLevel == requestedLevel)
+                    relation.IdChildCoverageItemNavigation.CoverageLevel.Trim().ToUpper() == requestedLevel.Trim().ToUpper())
                 .Select(relation => new
                 {
                     relation.DisplayOrder,

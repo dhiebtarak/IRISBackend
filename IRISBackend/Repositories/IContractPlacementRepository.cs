@@ -8,9 +8,12 @@ namespace IRISBackend.Repositories
     {
         Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default);
 
+        Task<IDbContextTransaction> BeginSerializableTransactionAsync(CancellationToken cancellationToken = default);
+
         Task<Contract?> GetContractForPlacementAsync(
             int contractId,
             string userId,
+            bool includeAllContracts = false,
             CancellationToken cancellationToken = default);
 
         Task<ContractPanel?> GetPanelAsync(
@@ -22,6 +25,7 @@ namespace IRISBackend.Repositories
         Task<IReadOnlyList<ContractPanelResponseDto>> GetPanelsAsync(
             int contractId,
             string userId,
+            bool includeAllContracts = false,
             CancellationToken cancellationToken = default);
 
         Task<bool> IsActiveReinsurerAsync(

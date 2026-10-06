@@ -45,6 +45,7 @@ namespace IRISBackend.Tests
             var result = _validator.Validate(new ContractPanelRequestDto
             {
                 IdCounterparty = 1,
+                WrittenSharePct = 25m,
                 SignedSharePct = 20m,
                 OtherDeductions = -1m,
                 Status = "Draft"
@@ -54,6 +55,23 @@ namespace IRISBackend.Tests
             Assert.Contains(result.Errors, error =>
                 error.PropertyName == nameof(ContractPanelRequestDto.OtherDeductions) &&
                 error.ErrorMessage == "otherDeductions must be greater than or equal to 0.");
+        }
+
+        [Fact]
+        public void Validate_WhenWrittenSharePctIsZero_ReturnsPositiveShareError()
+        {
+            var result = _validator.Validate(new ContractPanelRequestDto
+            {
+                IdCounterparty = 1,
+                WrittenSharePct = 0m,
+                SignedSharePct = 0m,
+                Status = "Draft"
+            });
+
+            Assert.False(result.IsValid);
+            Assert.Contains(result.Errors, error =>
+                error.PropertyName == nameof(ContractPanelRequestDto.WrittenSharePct) &&
+                error.ErrorMessage == "writtenSharePct must be greater than 0 and no more than 100.");
         }
 
         [Fact]

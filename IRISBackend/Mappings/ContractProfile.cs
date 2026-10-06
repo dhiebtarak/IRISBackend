@@ -26,6 +26,9 @@ namespace IRISBackend.Mappings
                 .ForMember(destination => destination.SignedSharePct, options => options.MapFrom(source => source.SignedSharePctCedent))
                 .ForMember(destination => destination.IsHighPriority, options => options.MapFrom(source => source.Flag))
                 .ForMember(destination => destination.CedentCommissionPct, options => options.MapFrom(source => source.CedentCommission))
+                .ForMember(destination => destination.IrisCommission, options => options.MapFrom(source => source.Fees))
+                .ForMember(destination => destination.CedentCommission, options => options.MapFrom(source => CalculateCedentCommission(source)))
+                .ForMember(destination => destination.NetPremium, options => options.MapFrom(source => source.NetPremiumCedent))
                 .ForMember(destination => destination.Cedent, options => options.MapFrom(source => source.IdCounterpartyNavigation))
                 .ForMember(destination => destination.Currency, options => options.MapFrom(source => source.IdCurrencyNavigation))
                 .ForMember(destination => destination.SumInsured, options => options.MapFrom(source => source.ContractFac == null ? null : source.ContractFac.SumInsured))
@@ -47,7 +50,7 @@ namespace IRISBackend.Mappings
                 .ToList();
 
             var mainCovers = selections
-                .Where(selection => string.Equals(selection.IdCoverageItemNavigation.CoverageLevel?.Trim(), CoverageConstants.MainCoverLevel, StringComparison.OrdinalIgnoreCase))
+                .Where(selection => CoverageConstants.IsMainCoverLevel(selection.IdCoverageItemNavigation.CoverageLevel))
                 .OrderByDescending(selection => selection.IsPrimary)
                 .ThenBy(selection => selection.IdCoverageItem)
                 .ToArray();
@@ -87,6 +90,17 @@ namespace IRISBackend.Mappings
                 Sections = sections,
                 Extensions = extensions
             };
+        }
+
+        private static decimal? CalculateCedentCommission(Contract contract)
+        {
+            if (!contract.GrossPremium.HasValue)
+            {
+                return null;
+            }
+
+            return FacultativeFinancialCalculator.RoundMoney(
+                contract.GrossPremium.Value * (contract.CedentCommission ?? 0m) / 100m);
         }
 
         private static ContractCoverageSelectionItemDto MapSelectionItem(ContractCoverageSelection selection)

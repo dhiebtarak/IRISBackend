@@ -154,7 +154,7 @@ namespace IRISBackend.Tests
         }
 
         [Fact]
-        public async Task GetOverviewAsync_WhenDraftExists_MarksContractReadyForPlacement()
+        public async Task GetOverviewAsync_WhenDraftExists_IsReadOnly()
         {
             var repository = new FakeContractRepository
             {
@@ -164,6 +164,22 @@ namespace IRISBackend.Tests
             var service = CreateService(repository);
 
             var result = await service.GetOverviewAsync(10);
+
+            Assert.True(result.Succeeded);
+            Assert.Null(repository.ReadyForPlacementContractId);
+            Assert.Equal(ContractConstants.DraftStatus, repository.OverviewContract.Status);
+        }
+
+        [Fact]
+        public async Task CompleteDraftAsync_MovesDraftToReadyForPlacementThenReadsOverview()
+        {
+            var repository = new FakeContractRepository
+            {
+                OverviewContract = CreateOverviewContract()
+            };
+            var service = CreateService(repository);
+
+            var result = await service.CompleteDraftAsync(10);
 
             Assert.True(result.Succeeded);
             Assert.Equal(10, repository.ReadyForPlacementContractId);
@@ -334,12 +350,13 @@ namespace IRISBackend.Tests
             public Task<(IReadOnlyList<ContractListItemDto> Items, int TotalCount)> ListAsync(
                 ContractListQueryDto query,
                 string userId,
+                bool includeAllContracts = false,
                 CancellationToken cancellationToken = default)
             {
                 return Task.FromResult(((IReadOnlyList<ContractListItemDto>)Array.Empty<ContractListItemDto>(), 0));
             }
 
-            public Task<ContractDashboardData> GetDashboardDataAsync(string userId, CancellationToken cancellationToken = default)
+            public Task<ContractDashboardData> GetDashboardDataAsync(string userId, bool includeAllContracts = false, CancellationToken cancellationToken = default)
             {
                 return Task.FromResult(DashboardData);
             }
@@ -347,12 +364,13 @@ namespace IRISBackend.Tests
             public Task<Contract?> GetAccessibleContractByIdAsync(
                 int contractId,
                 string userId,
+                bool includeAllContracts = false,
                 CancellationToken cancellationToken = default)
             {
                 return Task.FromResult(
                     OverviewContract is not null &&
                     OverviewContract.IdContract == contractId &&
-                    OverviewContract.IdUser == userId
+                    (includeAllContracts || OverviewContract.IdUser == userId)
                         ? OverviewContract
                         : null);
             }
@@ -379,6 +397,7 @@ namespace IRISBackend.Tests
             public Task<IReadOnlyList<SlipTemplate>> ListActiveCurrentSlipTemplatesForContractAsync(
                 int contractId,
                 string userId,
+                bool includeAllContracts = false,
                 CancellationToken cancellationToken = default)
             {
                 return Task.FromResult(SlipTemplates);

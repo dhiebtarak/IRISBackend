@@ -32,6 +32,7 @@ namespace IRISBackend.Repositories
         Task<Contract?> GetAccessibleContractByIdAsync(
             int contractId,
             string userId,
+            bool includeAllContracts = false,
             CancellationToken cancellationToken = default);
 
         Task MarkDraftReadyForPlacementAsync(
@@ -42,15 +43,18 @@ namespace IRISBackend.Repositories
         Task<IReadOnlyList<SlipTemplate>> ListActiveCurrentSlipTemplatesForContractAsync(
             int contractId,
             string userId,
+            bool includeAllContracts = false,
             CancellationToken cancellationToken = default);
 
         Task<(IReadOnlyList<ContractListItemDto> Items, int TotalCount)> ListAsync(
             ContractListQueryDto query,
             string userId,
+            bool includeAllContracts = false,
             CancellationToken cancellationToken = default);
 
         Task<ContractDashboardData> GetDashboardDataAsync(
             string userId,
+            bool includeAllContracts = false,
             CancellationToken cancellationToken = default);
     }
 }

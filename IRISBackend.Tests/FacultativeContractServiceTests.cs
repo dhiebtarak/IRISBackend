@@ -48,6 +48,51 @@ namespace IRISBackend.Tests
         }
 
         [Fact]
+        public async Task CreateDraftAsync_CalculatesFinancialValuesAndIgnoresClientGrossPremium()
+        {
+            var referenceDataRepository = new FakeReferenceDataRepository();
+            var contractRepository = new FakeContractRepository(referenceDataRepository);
+            var service = CreateService(contractRepository, referenceDataRepository);
+            var request = CreateValidRequest();
+            request.SumInsured = 100000m;
+            request.PremiumRate = 0.02m;
+            request.Fees = 200m;
+            request.CedentCommissionPct = 5m;
+            request.GrossPremium = 999999m;
+
+            var result = await service.CreateDraftAsync(request);
+
+            Assert.True(result.Succeeded);
+            Assert.Equal(2000m, result.Value!.GrossPremium);
+            Assert.Equal(200m, result.Value.IrisCommission);
+            Assert.Equal(100m, result.Value.CedentCommission);
+            Assert.Equal(1700m, result.Value.NetPremium);
+            Assert.Equal(1700m, contractRepository.Contracts[0].NetPremiumCedent);
+        }
+
+        [Fact]
+        public async Task UpdateDraftAsync_UsesTheSameAuthoritativeCalculation()
+        {
+            var referenceDataRepository = new FakeReferenceDataRepository();
+            var contractRepository = new FakeContractRepository(referenceDataRepository);
+            SeedDraft(contractRepository);
+            var service = CreateService(contractRepository, referenceDataRepository);
+            var request = CreateValidRequest();
+            request.SumInsured = 100000m;
+            request.PremiumRate = 0.02m;
+            request.Fees = 200m;
+            request.CedentCommissionPct = 5m;
+            request.GrossPremium = 999999m;
+
+            var result = await service.UpdateDraftAsync(1, request);
+
+            Assert.True(result.Succeeded);
+            Assert.Equal(2000m, contractRepository.Contracts[0].GrossPremium);
+            Assert.Equal(1700m, contractRepository.Contracts[0].NetPremiumCedent);
+            Assert.Equal(1700m, result.Value!.NetPremium);
+        }
+
+        [Fact]
         public async Task CreateDraftAsync_WhenRequestHasCoverage_CreatesCoverageSelectionsInSameWorkflow()
         {
             var referenceDataRepository = new FakeReferenceDataRepository();
@@ -642,6 +687,7 @@ namespace IRISBackend.Tests
             public Task<(IReadOnlyList<ContractListItemDto> Items, int TotalCount)> ListAsync(
                 ContractListQueryDto query,
                 string userId,
+                bool includeAllContracts = false,
                 CancellationToken cancellationToken = default)
             {
                 return Task.FromResult(((IReadOnlyList<ContractListItemDto>)Array.Empty<ContractListItemDto>(), 0));
@@ -649,6 +695,7 @@ namespace IRISBackend.Tests
 
             public Task<ContractDashboardData> GetDashboardDataAsync(
                 string userId,
+                bool includeAllContracts = false,
                 CancellationToken cancellationToken = default)
             {
                 return Task.FromResult(new ContractDashboardData());
@@ -657,6 +704,7 @@ namespace IRISBackend.Tests
             public Task<Contract?> GetAccessibleContractByIdAsync(
                 int contractId,
                 string userId,
+                bool includeAllContracts = false,
                 CancellationToken cancellationToken = default)
             {
                 throw new NotSupportedException();
@@ -673,6 +721,7 @@ namespace IRISBackend.Tests
             public Task<IReadOnlyList<SlipTemplate>> ListActiveCurrentSlipTemplatesForContractAsync(
                 int contractId,
                 string userId,
+                bool includeAllContracts = false,
                 CancellationToken cancellationToken = default)
             {
                 throw new NotSupportedException();

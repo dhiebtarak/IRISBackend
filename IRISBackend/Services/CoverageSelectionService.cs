@@ -279,11 +279,26 @@ namespace IRISBackend.Services
 
         private static bool IsLevel(string? actualLevel, string expectedLevel)
         {
+            if (string.Equals(expectedLevel, CoverageConstants.MainCoverLevel, StringComparison.OrdinalIgnoreCase))
+            {
+                return CoverageConstants.IsMainCoverLevel(actualLevel);
+            }
+
             return string.Equals(actualLevel?.Trim(), expectedLevel, StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool IsRelation(string? actualRelation, string expectedRelation)
         {
+            if (string.Equals(expectedRelation, CoverageConstants.HasSectionRelation, StringComparison.OrdinalIgnoreCase))
+            {
+                return CoverageConstants.IsSectionRelation(actualRelation);
+            }
+
+            if (string.Equals(expectedRelation, CoverageConstants.HasExtensionRelation, StringComparison.OrdinalIgnoreCase))
+            {
+                return CoverageConstants.IsExtensionRelation(actualRelation);
+            }
+
             return string.Equals(actualRelation?.Trim(), expectedRelation, StringComparison.OrdinalIgnoreCase);
         }
 

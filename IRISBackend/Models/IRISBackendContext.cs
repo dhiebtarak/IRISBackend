@@ -67,7 +67,8 @@ public partial class IRISBackendContext : DbContext
 
     public virtual DbSet<Endorsement> Endorsements { get; set; }
 
-    public virtual DbSet<Invoice> Invoices { get; set; }
+        public virtual DbSet<Invoice> Invoices { get; set; }
+        public virtual DbSet<InvoicePanelAllocation> InvoicePanelAllocations { get; set; }
 
     public virtual DbSet<PremiumRef> PremiumRefs { get; set; }
 
@@ -76,6 +77,8 @@ public partial class IRISBackendContext : DbContext
     public virtual DbSet<RemittanceRef> RemittanceRefs { get; set; }
 
     public virtual DbSet<SlipTemplate> SlipTemplates { get; set; }
+
+    public virtual DbSet<Notification> Notifications { get; set; }
 
     public virtual DbSet<UserLoginAudit> UserLoginAudits { get; set; }
 
@@ -616,14 +619,41 @@ public partial class IRISBackendContext : DbContext
             entity.Property(e => e.BrokeragePct)
                 .HasColumnType("decimal(19, 8)")
                 .HasColumnName("Brokerage_pct");
+            entity.Property(e => e.BrokerageIrisAmount)
+                .HasColumnType("decimal(19, 4)")
+                .HasColumnName("Brokerage_iris_amount");
+            entity.Property(e => e.CedentCommissionAmount)
+                .HasColumnType("decimal(19, 4)")
+                .HasColumnName("Cedent_commission_amount");
+            entity.Property(e => e.CedentCommissionPct)
+                .HasColumnType("decimal(19, 8)")
+                .HasColumnName("Cedent_commission_pct");
             entity.Property(e => e.Deductible)
                 .HasColumnType("decimal(19, 4)")
                 .HasColumnName("Deductible");
+            entity.Property(e => e.DeductibleAmount)
+                .HasColumnType("decimal(19, 4)")
+                .HasColumnName("Deductible_amount");
+            entity.Property(e => e.DeductibleType)
+                .HasMaxLength(20)
+                .HasColumnName("Deductible_type");
+            entity.Property(e => e.DeductibleValue)
+                .HasColumnType("decimal(19, 8)")
+                .HasColumnName("Deductible_value");
             entity.Property(e => e.GrossPremium)
                 .HasColumnType("decimal(19, 4)")
                 .HasColumnName("Gross_premium");
             entity.Property(e => e.IdContract).HasColumnName("Id_contract");
             entity.Property(e => e.IdCounterparty).HasColumnName("Id_counterparty");
+            entity.Property(e => e.LimitOfLiabilityAmount)
+                .HasColumnType("decimal(19, 4)")
+                .HasColumnName("Limit_of_liability_amount");
+            entity.Property(e => e.LimitOfLiabilityType)
+                .HasMaxLength(20)
+                .HasColumnName("Limit_of_liability_type");
+            entity.Property(e => e.LimitOfLiabilityValue)
+                .HasColumnType("decimal(19, 8)")
+                .HasColumnName("Limit_of_liability_value");
             entity.Property(e => e.NetPremium)
                 .HasColumnType("decimal(19, 4)")
                 .HasColumnName("Net_premium");

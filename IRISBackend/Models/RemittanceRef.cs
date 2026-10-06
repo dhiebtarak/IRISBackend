@@ -9,7 +9,7 @@ public partial class RemittanceRef
 {
     public int RemittanceRef1 { get; set; }
 
-    public int IdDisbursement { get; set; }
+    public int? IdDisbursement { get; set; }
 
     public string SourceType { get; set; }
 

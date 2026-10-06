@@ -100,6 +100,37 @@ namespace IRISBackend.Tests
         }
 
         [Fact]
+        public async Task GetPanelsAsync_DoesNotLeakPanelsFromAnotherContract()
+        {
+            var contract = CreateContract();
+            contract.ContractPanels.Add(new ContractPanel
+            {
+                IdPanel = 1,
+                IdContract = 10,
+                IdCounterparty = 7,
+                Role = "Reinsurer",
+                Status = ContractConstants.DraftStatus
+            });
+            contract.ContractPanels.Add(new ContractPanel
+            {
+                IdPanel = 2,
+                IdContract = 11,
+                IdCounterparty = 8,
+                Role = "Reinsurer",
+                Status = ContractConstants.DraftStatus
+            });
+
+            var repository = new FakeContractPlacementRepository { Contract = contract };
+            var service = CreateService(repository);
+
+            var result = await service.GetPanelsAsync(10);
+
+            var panel = Assert.Single(result.Value!);
+            Assert.Equal(10, panel.IdContract);
+            Assert.DoesNotContain(result.Value!, item => item.IdContract == 11);
+        }
+
+        [Fact]
         public async Task AddPanelAsync_WhenFirstPanelIsAdded_UpdatesContractStatusAndCalculatesNetPremium()
         {
             var repository = new FakeContractPlacementRepository
@@ -113,7 +144,7 @@ namespace IRISBackend.Tests
             Assert.True(result.Succeeded);
             Assert.Single(repository.Contract.ContractPanels);
             Assert.Equal(ContractConstants.PlacementInProgressStatus, repository.Contract.Status);
-            Assert.Equal(13000m, repository.Contract.ContractPanels.Single().NetPremium);
+            Assert.Equal(10300m, repository.Contract.ContractPanels.Single().NetPremium);
             Assert.Equal(ContractConstants.PlacementInProgressStatus, result.Value!.Status);
         }
 
@@ -173,6 +204,32 @@ namespace IRISBackend.Tests
             Assert.False(result.Succeeded);
             Assert.Equal(StatusCodes.Status400BadRequest, result.StatusCode);
             Assert.Contains("already assigned", result.Error!.Errors.Single());
+        }
+
+        [Fact]
+        public async Task AddPanelAsync_WhenSignedShareExceedsAvailableContractShare_ReturnsBadRequest()
+        {
+            var contract = CreateContract();
+            contract.SignedSharePctCedent = 30m;
+            contract.ContractPanels.Add(new ContractPanel
+            {
+                IdPanel = 1,
+                IdContract = 10,
+                IdCounterparty = 8,
+                SignedSharePct = 20m,
+                Status = ContractConstants.DraftStatus
+            });
+            var repository = new FakeContractPlacementRepository { Contract = contract };
+            var service = CreateService(repository);
+            var request = CreateRequest();
+            request.IdCounterparty = 9;
+            request.SignedSharePct = 11m;
+
+            var result = await service.AddPanelAsync(10, request);
+
+            Assert.False(result.Succeeded);
+            Assert.Contains("available contract share", result.Error!.Errors.Single());
+            Assert.Single(repository.Contract.ContractPanels);
         }
 
         [Fact]
@@ -453,9 +510,14 @@ namespace IRISBackend.Tests
                 return Task.FromResult<IDbContextTransaction>(new FakeTransaction(Contract));
             }
 
-            public Task<Contract?> GetContractForPlacementAsync(int contractId, string userId, CancellationToken cancellationToken = default)
+            public Task<IDbContextTransaction> BeginSerializableTransactionAsync(CancellationToken cancellationToken = default)
             {
-                return Task.FromResult(Contract.IdContract == contractId && Contract.IdUser == userId ? Contract : null);
+                return Task.FromResult<IDbContextTransaction>(new FakeTransaction(Contract));
+            }
+
+            public Task<Contract?> GetContractForPlacementAsync(int contractId, string userId, bool includeAllContracts = false, CancellationToken cancellationToken = default)
+            {
+                return Task.FromResult(Contract.IdContract == contractId && (includeAllContracts || Contract.IdUser == userId) ? Contract : null);
             }
 
             public Task<ContractPanel?> GetPanelAsync(int contractId, int panelId, string userId, CancellationToken cancellationToken = default)
@@ -469,10 +531,10 @@ namespace IRISBackend.Tests
                 return Task.FromResult(panel);
             }
 
-            public Task<IReadOnlyList<ContractPanelResponseDto>> GetPanelsAsync(int contractId, string userId, CancellationToken cancellationToken = default)
+            public Task<IReadOnlyList<ContractPanelResponseDto>> GetPanelsAsync(int contractId, string userId, bool includeAllContracts = false, CancellationToken cancellationToken = default)
             {
-                IReadOnlyList<ContractPanelResponseDto> panels = Contract.IdContract == contractId && Contract.IdUser == userId
-                    ? Contract.ContractPanels
+                IReadOnlyList<ContractPanelResponseDto> panels = Contract.IdContract == contractId && (includeAllContracts || Contract.IdUser == userId)
+                    ? Contract.ContractPanels.Where(panel => panel.IdContract == contractId)
                         .OrderBy(panel => panel.IdPanel)
                         .Select(panel => new ContractPanelResponseDto
                         {
@@ -644,6 +706,11 @@ namespace IRISBackend.Tests
                         Status = panel.Status
                     }).ToArray()
                 }));
+            }
+
+            public Task<ServiceResult<ContractOverviewDto>> CompleteDraftAsync(int contractId, CancellationToken cancellationToken = default)
+            {
+                throw new NotSupportedException();
             }
 
             public Task<ServiceResult<SlipDownloadResult>> DownloadSlipsAsync(int contractId, CancellationToken cancellationToken = default)

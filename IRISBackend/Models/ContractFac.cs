@@ -21,3 +21,4 @@ public partial class ContractFac
 
     public virtual Contract IdContractNavigation { get; set; }
 }
+

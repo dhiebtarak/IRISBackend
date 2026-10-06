@@ -94,7 +94,9 @@ namespace IRISBackend.Repositories
                 Country = counterparty.Country,
                 City = counterparty.City,
                 Status = counterparty.Status,
-                IsActive = counterparty.IsActive
+                IsActive = counterparty.IsActive,
+                HasActiveBankAccount = counterparty.CounterpartyBankAccounts.Any(account => account.IsActive),
+                ActiveBankAccountCount = counterparty.CounterpartyBankAccounts.Count(account => account.IsActive)
             });
         }
     }

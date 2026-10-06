@@ -98,10 +98,10 @@ public sealed class ContractUmrGeneratorTests
         public void Update(Contract contract) => throw new NotSupportedException();
         public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<Contract?> GetFacultativeContractByIdAsync(int contractId, bool asNoTracking = false, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<Contract?> GetAccessibleContractByIdAsync(int contractId, string userId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<Contract?> GetAccessibleContractByIdAsync(int contractId, string userId, bool includeAllContracts = false, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task MarkDraftReadyForPlacementAsync(int contractId, string userId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<IReadOnlyList<SlipTemplate>> ListActiveCurrentSlipTemplatesForContractAsync(int contractId, string userId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<(IReadOnlyList<ContractListItemDto> Items, int TotalCount)> ListAsync(ContractListQueryDto query, string userId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<ContractDashboardData> GetDashboardDataAsync(string userId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<IReadOnlyList<SlipTemplate>> ListActiveCurrentSlipTemplatesForContractAsync(int contractId, string userId, bool includeAllContracts = false, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<(IReadOnlyList<ContractListItemDto> Items, int TotalCount)> ListAsync(ContractListQueryDto query, string userId, bool includeAllContracts = false, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<ContractDashboardData> GetDashboardDataAsync(string userId, bool includeAllContracts = false, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 }

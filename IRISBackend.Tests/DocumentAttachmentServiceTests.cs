@@ -155,7 +155,7 @@ public sealed class DocumentAttachmentServiceTests
 
         public FakeContractRepository(int accessibleContractId) => _accessibleContractId = accessibleContractId;
 
-        public Task<Contract?> GetAccessibleContractByIdAsync(int contractId, string userId, CancellationToken cancellationToken = default) =>
+        public Task<Contract?> GetAccessibleContractByIdAsync(int contractId, string userId, bool includeAllContracts = false, CancellationToken cancellationToken = default) =>
             Task.FromResult<Contract?>(contractId == _accessibleContractId ? new Contract { IdContract = contractId } : null);
 
         public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
@@ -167,9 +167,9 @@ public sealed class DocumentAttachmentServiceTests
         public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<Contract?> GetFacultativeContractByIdAsync(int contractId, bool asNoTracking = false, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task MarkDraftReadyForPlacementAsync(int contractId, string userId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<IReadOnlyList<SlipTemplate>> ListActiveCurrentSlipTemplatesForContractAsync(int contractId, string userId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<(IReadOnlyList<ContractListItemDto> Items, int TotalCount)> ListAsync(ContractListQueryDto query, string userId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<ContractDashboardData> GetDashboardDataAsync(string userId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<IReadOnlyList<SlipTemplate>> ListActiveCurrentSlipTemplatesForContractAsync(int contractId, string userId, bool includeAllContracts = false, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<(IReadOnlyList<ContractListItemDto> Items, int TotalCount)> ListAsync(ContractListQueryDto query, string userId, bool includeAllContracts = false, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<ContractDashboardData> GetDashboardDataAsync(string userId, bool includeAllContracts = false, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 
     private sealed class FakePlacementRepository : IContractPlacementRepository
@@ -189,8 +189,9 @@ public sealed class DocumentAttachmentServiceTests
                 : null);
 
         public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<Contract?> GetContractForPlacementAsync(int contractId, string userId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<IReadOnlyList<ContractPanelResponseDto>> GetPanelsAsync(int contractId, string userId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<IDbContextTransaction> BeginSerializableTransactionAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<Contract?> GetContractForPlacementAsync(int contractId, string userId, bool includeAllContracts = false, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<IReadOnlyList<ContractPanelResponseDto>> GetPanelsAsync(int contractId, string userId, bool includeAllContracts = false, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<bool> IsActiveReinsurerAsync(int counterpartyId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<bool> ContractHasReinsurerPanelAsync(int contractId, int counterpartyId, int? excludedPanelId = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task AddPanelAsync(ContractPanel panel, CancellationToken cancellationToken = default) => throw new NotSupportedException();

@@ -50,6 +50,12 @@ namespace IRISBackend.Services
                 return Forbidden("Only Front Officers can create facultative contract drafts.");
             }
 
+            var financialValidation = ValidateFinancialInputs(request);
+            if (!financialValidation.Succeeded)
+            {
+                return financialValidation;
+            }
+
             var validationResult = await ValidateBusinessReferencesAsync(request, cancellationToken);
             if (!validationResult.Succeeded)
             {
@@ -147,6 +153,12 @@ namespace IRISBackend.Services
                 return Forbidden("Only Front Officers can update facultative contract drafts.");
             }
 
+            var financialValidation = ValidateFinancialInputs(request);
+            if (!financialValidation.Succeeded)
+            {
+                return financialValidation;
+            }
+
             var contract = await _contractRepository.GetFacultativeContractByIdAsync(contractId, cancellationToken: cancellationToken);
             if (contract is null)
             {
@@ -226,6 +238,7 @@ namespace IRISBackend.Services
             string umr,
             DateTime now)
         {
+            var financials = CalculateFinancials(request);
             var contract = new Contract
             {
                 Umr = umr,
@@ -239,9 +252,9 @@ namespace IRISBackend.Services
                 Flag = request.IsHighPriority,
                 WrittenSharePctCedent = request.WrittenSharePct,
                 SignedSharePctCedent = request.SignedSharePct,
-                GrossPremium = request.GrossPremium,
+                GrossPremium = financials?.GrossPremium,
                 CedentCommission = request.CedentCommissionPct,
-                NetPremiumCedent = CalculateNetPremium(request.GrossPremium, request.CedentCommissionPct),
+                NetPremiumCedent = financials?.NetPremium,
                 CedentPremiumReference = NormalizeOptionalValue(request.CedentPremiumReference),
                 IsFronting = request.IsFronting,
                 FrontingReference = request.IsFronting ? NormalizeOptionalValue(request.FrontingReference) : null,
@@ -285,9 +298,10 @@ namespace IRISBackend.Services
             contract.Flag = request.IsHighPriority;
             contract.WrittenSharePctCedent = request.WrittenSharePct;
             contract.SignedSharePctCedent = request.SignedSharePct;
-            contract.GrossPremium = request.GrossPremium;
+            var financials = CalculateFinancials(request);
+            contract.GrossPremium = financials?.GrossPremium;
             contract.CedentCommission = request.CedentCommissionPct;
-            contract.NetPremiumCedent = CalculateNetPremium(request.GrossPremium, request.CedentCommissionPct);
+            contract.NetPremiumCedent = financials?.NetPremium;
             contract.CedentPremiumReference = NormalizeOptionalValue(request.CedentPremiumReference);
             contract.IsFronting = request.IsFronting;
             contract.FrontingReference = request.IsFronting ? NormalizeOptionalValue(request.FrontingReference) : null;
@@ -350,15 +364,50 @@ namespace IRISBackend.Services
                 coverageResult.StatusCode);
         }
 
-        private static decimal? CalculateNetPremium(decimal? grossPremium, decimal? cedentCommissionPct)
+        private static FacultativeFinancialCalculation? CalculateFinancials(UpsertFacultativeContractRequest request)
         {
-            if (!grossPremium.HasValue)
+            return FacultativeFinancialCalculator.Calculate(
+                request.SumInsured,
+                request.PremiumRate,
+                request.Fees,
+                request.CedentCommissionPct);
+        }
+
+        private static ServiceResult<FacultativeContractResponseDto> ValidateFinancialInputs(UpsertFacultativeContractRequest request)
+        {
+            var errors = new List<string>();
+            if (request.SumInsured is < 0m)
             {
-                return null;
+                errors.Add("sumInsured (TSI) must be greater than or equal to 0.");
             }
 
-            var commission = cedentCommissionPct ?? 0m;
-            return grossPremium.Value - (grossPremium.Value * commission / 100m);
+            if (request.PremiumRate is < 0m or > 1m)
+            {
+                errors.Add("premiumRate must be between 0 and 1 because it is stored as a fraction.");
+            }
+
+            if (request.Fees is < 0m)
+            {
+                errors.Add("fees (IRIS commission) must be greater than or equal to 0.");
+            }
+
+            var calculation = CalculateFinancials(request);
+            if (calculation is not null)
+            {
+                if (calculation.IrisCommission + calculation.CedentCommission > calculation.GrossPremium)
+                {
+                    errors.Add("IRIS commission and Cedent commission cannot exceed gross premium.");
+                }
+
+                if (calculation.NetPremium < 0m)
+                {
+                    errors.Add("Calculated net premium cannot be negative.");
+                }
+            }
+
+            return errors.Count == 0
+                ? ServiceResult<FacultativeContractResponseDto>.Success(new FacultativeContractResponseDto())
+                : ServiceResult<FacultativeContractResponseDto>.Failure("Validation failed.", errors, StatusCodes.Status400BadRequest);
         }
 
         private static string? NormalizeOptionalValue(string? value)

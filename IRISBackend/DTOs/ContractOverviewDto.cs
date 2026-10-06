@@ -50,9 +50,15 @@ namespace IRISBackend.DTOs
 
         public decimal? GrossPremium { get; set; }
 
+        public decimal? IrisCommission { get; set; }
+
         public decimal? CedentCommissionPct { get; set; }
 
+        public decimal? CedentCommission { get; set; }
+
         public decimal? NetPremiumCedent { get; set; }
+
+        public decimal? NetPremium { get; set; }
 
         public bool IsFronting { get; set; }
 
@@ -75,6 +81,16 @@ namespace IRISBackend.DTOs
         public ContractSlipAvailabilityDto SlipAvailability { get; set; } = new();
 
         public IReadOnlyList<ContractPanelResponseDto> Panels { get; set; } = [];
+
+        public decimal AvailableShare { get; set; }
+
+        public IReadOnlyList<ContractReceiptAllocationDto> ReceiptAllocations { get; set; } = [];
+
+        public decimal PairedAmount { get; set; }
+
+        public decimal AlreadyInvoicedAmount { get; set; }
+
+        public decimal AvailableAmount { get; set; }
     }
 
     public sealed class ContractAuditUserDto
@@ -99,5 +115,13 @@ namespace IRISBackend.DTOs
         public bool HasAnySlip => AvailableSlipCount > 0;
 
         public bool HasAllSlips => SelectedCoverageItemCount > 0 && MissingSlipCount == 0;
+    }
+
+    public sealed class ContractReceiptAllocationDto
+    {
+        public int IdReceiptAllocation { get; set; }
+        public int IdBankReceipt { get; set; }
+        public decimal AllocatedAmount { get; set; }
+        public int CurrencyId { get; set; }
     }
 }
