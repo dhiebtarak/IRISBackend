@@ -6,21 +6,37 @@ using System.Globalization;
 using System.Data;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.Options;
 
 namespace IRISBackend.Services;
 
-public sealed class FinancialWorkflowService : IFinancialWorkflowService
+public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
 {
     private const string CedentPremiumInvoiceType = "CEDENT_PREMIUM_INVOICE";
     private readonly IRISBackendContext _db;
     private readonly IHttpContextAccessor _http;
     private readonly ILogger<FinancialWorkflowService> _logger;
+    private readonly IrisInvoiceBrandingOptions _invoiceBranding;
+    private readonly IrisBankAccountsOptions _irisBankAccounts;
+    private readonly IConfiguration? _configuration;
+    private readonly Microsoft.AspNetCore.Hosting.IWebHostEnvironment? _hostingEnvironment;
 
-    public FinancialWorkflowService(IRISBackendContext db, IHttpContextAccessor http, ILogger<FinancialWorkflowService> logger)
+    public FinancialWorkflowService(
+        IRISBackendContext db,
+        IHttpContextAccessor http,
+        ILogger<FinancialWorkflowService> logger,
+        IOptions<IrisInvoiceBrandingOptions>? invoiceBranding = null,
+        Microsoft.AspNetCore.Hosting.IWebHostEnvironment? hostingEnvironment = null,
+        IOptions<IrisBankAccountsOptions>? irisBankAccounts = null,
+        IConfiguration? configuration = null)
     {
         _db = db;
         _http = http;
         _logger = logger;
+        _invoiceBranding = invoiceBranding?.Value ?? new IrisInvoiceBrandingOptions();
+        _irisBankAccounts = irisBankAccounts?.Value ?? new IrisBankAccountsOptions();
+        _configuration = configuration;
+        _hostingEnvironment = hostingEnvironment;
     }
 
     public async Task<ServiceResult<IReadOnlyList<BankAccountResponseDto>>> GetBankAccountsAsync(int counterpartyId, bool activeOnly, CancellationToken cancellationToken)
@@ -252,7 +268,7 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
                 && invoice.IdCurrency == receipt.IdCurrency
                 && invoice.IdContractNavigation.IdCounterparty == receipt.IdCounterparty
                 && (invoice.GrossPremium ?? 0m) > _db.ReceiptAllocations
-                    .Where(allocation => allocation.IdInvoice == invoice.IdInvoice)
+                    .Where(allocation => allocation.IsActive && allocation.IdInvoice == invoice.IdInvoice)
                     .Sum(allocation => allocation.AllocatedAmount ?? 0m));
         if (!string.IsNullOrWhiteSpace(search))
         {
@@ -277,144 +293,25 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
                 Umr = invoice.IdContractNavigation.Umr,
                 CedentId = invoice.IdContractNavigation.IdCounterparty,
                 CedentName = invoice.IdContractNavigation.IdCounterpartyNavigation.Name,
+                InvoiceAmount = invoice.GrossPremium ?? 0m,
+                SettledAmount = _db.ReceiptAllocations.Where(allocation => allocation.IsActive && allocation.IdInvoice == invoice.IdInvoice).Sum(allocation => allocation.AllocatedAmount ?? 0m),
+                RemainingAmount = (invoice.GrossPremium ?? 0m) > _db.ReceiptAllocations.Where(allocation => allocation.IsActive && allocation.IdInvoice == invoice.IdInvoice).Sum(allocation => allocation.AllocatedAmount ?? 0m)
+                    ? (invoice.GrossPremium ?? 0m) - _db.ReceiptAllocations.Where(allocation => allocation.IsActive && allocation.IdInvoice == invoice.IdInvoice).Sum(allocation => allocation.AllocatedAmount ?? 0m)
+                    : 0m,
+                PaymentStatus = _db.ReceiptAllocations.Where(allocation => allocation.IsActive && allocation.IdInvoice == invoice.IdInvoice).Sum(allocation => allocation.AllocatedAmount ?? 0m) <= 0m
+                    ? InvoiceRecoveryCalculator.Unsettled
+                    : _db.ReceiptAllocations.Where(allocation => allocation.IsActive && allocation.IdInvoice == invoice.IdInvoice).Sum(allocation => allocation.AllocatedAmount ?? 0m) >= (invoice.GrossPremium ?? 0m)
+                        ? InvoiceRecoveryCalculator.Settled
+                        : InvoiceRecoveryCalculator.PartiallySettled,
                 GrossAmount = invoice.GrossPremium ?? 0m,
-                AlreadyPairedAmount = _db.ReceiptAllocations.Where(allocation => allocation.IdInvoice == invoice.IdInvoice).Sum(allocation => allocation.AllocatedAmount ?? 0m),
-                OutstandingAmount = (invoice.GrossPremium ?? 0m) - _db.ReceiptAllocations.Where(allocation => allocation.IdInvoice == invoice.IdInvoice).Sum(allocation => allocation.AllocatedAmount ?? 0m),
+                AlreadyPairedAmount = _db.ReceiptAllocations.Where(allocation => allocation.IsActive && allocation.IdInvoice == invoice.IdInvoice).Sum(allocation => allocation.AllocatedAmount ?? 0m),
+                OutstandingAmount = (invoice.GrossPremium ?? 0m) - _db.ReceiptAllocations.Where(allocation => allocation.IsActive && allocation.IdInvoice == invoice.IdInvoice).Sum(allocation => allocation.AllocatedAmount ?? 0m),
                 CurrencyCode = invoice.IdCurrencyNavigation == null ? string.Empty : invoice.IdCurrencyNavigation.CurrencyCode
             })
             .ToListAsync(cancellationToken);
         return ServiceResult<IReadOnlyList<EligibleInvoiceDto>>.Success(items);
     }
 
-    public async Task<ServiceResult<ReceiptBatchAllocationResponseDto>> AllocateReceiptInvoicesAsync(int receiptId, InvoiceReceiptAllocationRequestDto request, CancellationToken cancellationToken)
-    {
-        if (!CanBack()) return Forbidden<ReceiptBatchAllocationResponseDto>();
-        var user = CurrentUser();
-        if (user is null) return Unauthorized<ReceiptBatchAllocationResponseDto>();
-        var items = request.Allocations ?? [];
-        if (items.Count == 0) return Failure<ReceiptBatchAllocationResponseDto>("At least one invoice allocation is required.");
-        if (items.Any(item => item.InvoiceId <= 0 || item.AllocatedAmount <= 0m))
-            return Failure<ReceiptBatchAllocationResponseDto>("Each allocation requires a positive invoiceId and allocatedAmount.");
-        var invoiceIds = items.Select(item => item.InvoiceId).ToArray();
-        if (invoiceIds.Distinct().Count() != invoiceIds.Length)
-            return Failure<ReceiptBatchAllocationResponseDto>("Invoice IDs must be unique in a batch allocation.");
-
-        await using var transaction = await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
-        try
-        {
-            var receipt = await _db.BankReceipts.Include(item => item.ReceiptAllocations)
-                .FirstOrDefaultAsync(item => item.IdBankReceipt == receiptId, cancellationToken);
-            if (receipt is null) return NotFound<ReceiptBatchAllocationResponseDto>("Bank receipt was not found.");
-
-            var invoices = await _db.Invoices
-                .Include(invoice => invoice.IdContractNavigation).ThenInclude(contract => contract.IdCounterpartyNavigation)
-                .Include(invoice => invoice.IdCurrencyNavigation)
-                .Where(invoice => invoiceIds.Contains(invoice.IdInvoice))
-                .ToListAsync(cancellationToken);
-            if (invoices.Count != invoiceIds.Length)
-                return NotFound<ReceiptBatchAllocationResponseDto>("One or more invoices were not found.");
-
-            var priorRows = await _db.ReceiptAllocations
-                .Where(allocation => allocation.IdBankReceipt == receiptId && allocation.IdInvoice.HasValue && invoiceIds.Contains(allocation.IdInvoice.Value))
-                .ToListAsync(cancellationToken);
-            if (priorRows.Count > 0)
-            {
-                var exactRetry = priorRows.Count == items.Count && items.All(item =>
-                    priorRows.Any(row => row.IdInvoice == item.InvoiceId && row.AllocatedAmount == item.AllocatedAmount));
-                if (!exactRetry)
-                    return Failure<ReceiptBatchAllocationResponseDto>("This receipt already has an allocation for one or more selected invoices.", status: StatusCodes.Status409Conflict);
-                var totalExisting = receipt.ReceiptAllocations.Sum(allocation => allocation.AllocatedAmount ?? 0m);
-                await transaction.CommitAsync(cancellationToken);
-                return ServiceResult<ReceiptBatchAllocationResponseDto>.Success(new ReceiptBatchAllocationResponseDto
-                {
-                    ReceiptId = receiptId,
-                    Allocations = priorRows.Select(row => new ReceiptBatchAllocationItemDto { IdReceiptAllocation = row.IdReceiptAllocation, InvoiceId = row.IdInvoice, AllocatedAmount = row.AllocatedAmount ?? 0m }).ToList(),
-                    TotalAllocated = totalExisting,
-                    RemainingAmount = Math.Max(0m, receipt.AmountReceived - totalExisting),
-                    PairingStatus = InvoiceRecoveryCalculator.GetReceiptPairingStatus(receipt.AmountReceived, totalExisting)
-                });
-            }
-
-            var existingReceiptAmount = receipt.ReceiptAllocations.Sum(allocation => allocation.AllocatedAmount ?? 0m);
-            var newReceiptAmount = items.Sum(item => item.AllocatedAmount);
-            if (existingReceiptAmount + newReceiptAmount > receipt.AmountReceived)
-                return Failure<ReceiptBatchAllocationResponseDto>("Allocation exceeds the encaissement balance.", status: StatusCodes.Status409Conflict);
-
-            var pairedByInvoice = await _db.ReceiptAllocations.AsNoTracking()
-                .Where(allocation => allocation.IdInvoice.HasValue && invoiceIds.Contains(allocation.IdInvoice.Value))
-                .GroupBy(allocation => allocation.IdInvoice!.Value)
-                .Select(group => new { InvoiceId = group.Key, Amount = group.Sum(allocation => allocation.AllocatedAmount ?? 0m) })
-                .ToDictionaryAsync(group => group.InvoiceId, group => group.Amount, cancellationToken);
-
-            foreach (var item in items)
-            {
-                var invoice = invoices.Single(value => value.IdInvoice == item.InvoiceId);
-                if (!string.Equals(invoice.InvoiceType, CedentPremiumInvoiceType, StringComparison.OrdinalIgnoreCase))
-                    return Failure<ReceiptBatchAllocationResponseDto>("Only cedent premium invoices can be paired with an incoming encaissement.");
-                if (string.Equals(invoice.Status?.Trim(), "Cancelled", StringComparison.OrdinalIgnoreCase))
-                    return Failure<ReceiptBatchAllocationResponseDto>("Cancelled invoices cannot receive allocations.", status: StatusCodes.Status409Conflict);
-                if (invoice.IdContractNavigation.IdCounterparty != receipt.IdCounterparty)
-                    return Failure<ReceiptBatchAllocationResponseDto>("The invoice cedent does not match the encaissement counterparty.");
-                if (invoice.IdCurrency != receipt.IdCurrency)
-                    return Failure<ReceiptBatchAllocationResponseDto>("The invoice currency does not match the encaissement currency.");
-                var previouslyPaired = pairedByInvoice.GetValueOrDefault(invoice.IdInvoice);
-                if (previouslyPaired + item.AllocatedAmount > (invoice.GrossPremium ?? 0m))
-                    return Failure<ReceiptBatchAllocationResponseDto>($"Allocation exceeds the outstanding amount for invoice {invoice.InvoiceNumber}.", status: StatusCodes.Status409Conflict);
-            }
-
-            var created = new List<ReceiptBatchAllocationItemDto>();
-            foreach (var item in items)
-            {
-                var allocation = new ReceiptAllocation
-                {
-                    IdBankReceipt = receiptId,
-                    IdInvoice = item.InvoiceId,
-                    TargetType = "INVOICE",
-                    AllocatedAmount = item.AllocatedAmount,
-                    IdCurrency = receipt.IdCurrency,
-                    ExchangeRate = 1m,
-                    PairedAt = DateTime.UtcNow,
-                    IdUser = user
-                };
-                _db.ReceiptAllocations.Add(allocation);
-                created.Add(new ReceiptBatchAllocationItemDto { InvoiceId = item.InvoiceId, AllocatedAmount = item.AllocatedAmount });
-            }
-            await _db.SaveChangesAsync(cancellationToken);
-            foreach (var item in items)
-            {
-                var invoice = invoices.Single(value => value.IdInvoice == item.InvoiceId);
-                var paired = pairedByInvoice.GetValueOrDefault(invoice.IdInvoice) + item.AllocatedAmount;
-                invoice.RecoveryStatus = InvoiceRecoveryCalculator.Calculate(invoice.GrossPremium ?? 0m, paired).Status;
-                invoice.UpdatedAt = DateTime.UtcNow;
-                invoice.UpdatedBy = user;
-                var row = created.Single(value => value.InvoiceId == item.InvoiceId);
-                row.IdReceiptAllocation = _db.ReceiptAllocations.Local.Single(value => value.IdInvoice == item.InvoiceId && value.IdBankReceipt == receiptId).IdReceiptAllocation;
-            }
-
-            var totalAllocated = existingReceiptAmount + newReceiptAmount;
-            receipt.DetailsStatus = InvoiceRecoveryCalculator.GetReceiptPairingStatus(receipt.AmountReceived, totalAllocated);
-            receipt.UpdatedAt = DateTime.UtcNow;
-            receipt.UpdatedBy = user;
-            await _db.Notifications
-                .Where(notification => notification.RecipientUserId == user && notification.EntityType == "BANK_RECEIPT" && notification.EntityId == receiptId && !notification.IsRead)
-                .ExecuteUpdateAsync(setters => setters.SetProperty(notification => notification.IsRead, true).SetProperty(notification => notification.ReadAt, DateTime.UtcNow), cancellationToken);
-            await _db.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-            return ServiceResult<ReceiptBatchAllocationResponseDto>.Success(new ReceiptBatchAllocationResponseDto
-            {
-                ReceiptId = receiptId,
-                Allocations = created,
-                TotalAllocated = totalAllocated,
-                RemainingAmount = Math.Max(0m, receipt.AmountReceived - totalAllocated),
-                PairingStatus = receipt.DetailsStatus
-            });
-        }
-        catch
-        {
-            await transaction.RollbackAsync(CancellationToken.None);
-            throw;
-        }
-    }
 
     public async Task<ServiceResult<BankReceiptResponseDto>> AllocateReceiptAsync(int receiptId, ReceiptAllocationRequestDto request, CancellationToken cancellationToken)
     {
@@ -424,6 +321,7 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
         await using var tx = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken);
         try
         {
+        await LockOutgoingWorkflowAsync(cancellationToken);
         _logger.LogInformation("Receipt allocation stage=TransactionStarted ReceiptId={ReceiptId} ContractId={ContractId} UserId={UserId}", receiptId, request.ContractId, user);
         var receipt = await _db.BankReceipts.Include(x => x.ReceiptAllocations).FirstOrDefaultAsync(x => x.IdBankReceipt == receiptId, cancellationToken);
         if (receipt is null) return NotFound<BankReceiptResponseDto>("Bank receipt was not found.");
@@ -448,7 +346,7 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
             return Failure<BankReceiptResponseDto>("One or more confirmed reinsurer panels reference an invalid or inactive reinsurer counterparty.");
         var totalShare = panels.Sum(x => x.SignedSharePct!.Value);
         if (totalShare > 100m) return Failure<BankReceiptResponseDto>("Confirmed reinsurer shares exceed 100 percent.");
-        var allocated = receipt.ReceiptAllocations.Sum(x => x.AllocatedAmount ?? 0m);
+        var allocated = receipt.ReceiptAllocations.Where(a => a.IsActive).Sum(x => x.AllocatedAmount ?? 0m);
         if (allocated + request.AllocatedAmount > receipt.AmountReceived) return Failure<BankReceiptResponseDto>("Allocation exceeds the encaissement balance.", status: StatusCodes.Status409Conflict);
         // TargetType describes the incoming business flow; IdContract is the authoritative contract target.
         var allocation = new ReceiptAllocation { IdBankReceipt = receiptId, IdContract = contract.IdContract, TargetType = "PREMIUM", AllocatedAmount = request.AllocatedAmount, IdCurrency = receipt.IdCurrency, ExchangeRate = 1m, PairedAt = DateTime.UtcNow, IdUser = user };
@@ -465,15 +363,7 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
                 receiptId, contract.IdContract, receipt.IdCurrency, user, allocation.TargetType, exception.InnerException?.ToString());
             throw;
         }
-        foreach (var panel in panels)
-        {
-            var gross = decimal.Round(request.AllocatedAmount * panel.SignedSharePct!.Value / 100m, 4, MidpointRounding.AwayFromZero);
-            var brokerage = decimal.Round(gross * (panel.BrokeragePct ?? 0m) / 100m, 4, MidpointRounding.AwayFromZero);
-            var deductions = brokerage + (panel.OtherDeductions ?? 0m);
-            var net = Math.Max(0m, decimal.Round(gross - deductions, 4, MidpointRounding.AwayFromZero));
-            if (!await _db.RemittanceRefs.AnyAsync(x => x.IdReceiptAllocation == allocation.IdReceiptAllocation && x.IdPanel == panel.IdPanel, cancellationToken))
-                _db.RemittanceRefs.Add(new RemittanceRef { IdReceiptAllocation = allocation.IdReceiptAllocation, IdPanel = panel.IdPanel, IdCounterparty = panel.IdCounterparty, IdCurrency = receipt.IdCurrency, SourceType = "Premium", PremiumSignedLine = gross, Deductions = deductions, NetPremiumDue = net, NetPayableAmount = net, Status = "Draft", SignatureStatus = "Draft", Description = "Generated from contract encaissement allocation", CreatedAt = DateTime.UtcNow, CreatedBy = user });
-        }
+        await GeneratePanelRemittancesAsync(receipt, user, cancellationToken);
         _logger.LogInformation("Receipt allocation stage=DraftRemittancesPrepared ReceiptId={ReceiptId} AllocationId={AllocationId} PanelCount={PanelCount}", receiptId, allocation.IdReceiptAllocation, panels.Count);
         receipt.DetailsStatus = InvoiceRecoveryCalculator.GetReceiptPairingStatus(receipt.AmountReceived, allocated + request.AllocatedAmount);
         receipt.UpdatedAt = DateTime.UtcNow; receipt.UpdatedBy = user;
@@ -496,6 +386,12 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
         await tx.CommitAsync(cancellationToken);
         _logger.LogInformation("Receipt allocation stage=TransactionCommitted ReceiptId={ReceiptId} ContractId={ContractId} AllocationId={AllocationId}", receiptId, contract.IdContract, allocation.IdReceiptAllocation);
         return await GetReceiptAsync(receiptId, cancellationToken);
+        }
+        catch (OutgoingRemittanceValidationException exception)
+        {
+            await tx.RollbackAsync(CancellationToken.None);
+            _db.ChangeTracker.Clear();
+            return Failure<BankReceiptResponseDto>(exception.Message, status: StatusCodes.Status409Conflict);
         }
         catch (Exception exception)
         {
@@ -536,12 +432,13 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
         await using var transaction = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken);
         try
         {
+            await LockOutgoingWorkflowAsync(cancellationToken);
             var receipt = await _db.BankReceipts
                 .Include(item => item.ReceiptAllocations)
                 .FirstOrDefaultAsync(item => item.IdBankReceipt == receiptId, cancellationToken);
             if (receipt is null) return NotFound<ReceiptBatchAllocationResponseDto>("Bank receipt was not found.");
 
-            var existingAmount = receipt.ReceiptAllocations.Sum(item => item.AllocatedAmount ?? 0m);
+            var existingAmount = receipt.ReceiptAllocations.Where(a => a.IsActive).Sum(item => item.AllocatedAmount ?? 0m);
             var requestedAmount = items.Sum(item => item.AllocatedAmount);
             var createdAllocations = new List<ReceiptBatchAllocationItemDto>();
             if (existingAmount + requestedAmount > receipt.AmountReceived)
@@ -599,33 +496,10 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
                     AllocatedAmount = allocation.AllocatedAmount!.Value
                 });
 
-                foreach (var panel in panels)
-                {
-                    var gross = decimal.Round(item.AllocatedAmount * panel.SignedSharePct!.Value / 100m, 4, MidpointRounding.AwayFromZero);
-                    var brokerage = decimal.Round(gross * (panel.BrokeragePct ?? 0m) / 100m, 4, MidpointRounding.AwayFromZero);
-                    var deductions = brokerage + (panel.OtherDeductions ?? 0m);
-                    var net = Math.Max(0m, decimal.Round(gross - deductions, 4, MidpointRounding.AwayFromZero));
-                    _db.RemittanceRefs.Add(new RemittanceRef
-                    {
-                        IdReceiptAllocation = allocation.IdReceiptAllocation,
-                        IdPanel = panel.IdPanel,
-                        IdCounterparty = panel.IdCounterparty,
-                        IdCurrency = receipt.IdCurrency,
-                        SourceType = "Premium",
-                        PremiumSignedLine = gross,
-                        Deductions = deductions,
-                        NetPremiumDue = net,
-                        NetPayableAmount = net,
-                        Status = "Draft",
-                        SignatureStatus = "Draft",
-                        Description = "Generated from contract encaissement allocation",
-                        CreatedAt = DateTime.UtcNow,
-                        CreatedBy = user
-                    });
-                }
             }
 
             var finalAmount = existingAmount + requestedAmount;
+            await GeneratePanelRemittancesAsync(receipt, user, cancellationToken);
             receipt.DetailsStatus = InvoiceRecoveryCalculator.GetReceiptPairingStatus(receipt.AmountReceived, finalAmount);
             receipt.UpdatedAt = DateTime.UtcNow;
             receipt.UpdatedBy = user;
@@ -643,6 +517,12 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
                 PairingStatus = receipt.DetailsStatus ?? string.Empty
             });
         }
+        catch (OutgoingRemittanceValidationException exception)
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            _db.ChangeTracker.Clear();
+            return Failure<ReceiptBatchAllocationResponseDto>(exception.Message, status: StatusCodes.Status409Conflict);
+        }
         catch
         {
             await transaction.RollbackAsync(cancellationToken);
@@ -652,9 +532,9 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
 
     public async Task<ServiceResult<IReadOnlyList<RemittanceResponseDto>>> ListRemittancesAsync(CancellationToken cancellationToken)
     {
-        if (!CanBack()) return Forbidden<IReadOnlyList<RemittanceResponseDto>>();
-        var list = await _db.RemittanceRefs.AsNoTracking().Include(x => x.IdCounterpartyNavigation).Include(x => x.IdCurrencyNavigation).Select(x => new RemittanceResponseDto { RemittanceRef = x.RemittanceRef1, ReceiptAllocationId = x.IdReceiptAllocation, DisbursementId = x.IdDisbursement, PanelId = x.IdPanel, CounterpartyId = x.IdCounterparty, CounterpartyName = x.IdCounterpartyNavigation.Name, NetPremiumDue = x.NetPremiumDue, NetPayableAmount = x.NetPayableAmount, CurrencyId = x.IdCurrency, CurrencyCode = x.IdCurrencyNavigation.CurrencyCode, Status = x.Status, Description = x.Description }).ToListAsync(cancellationToken);
-        return ServiceResult<IReadOnlyList<RemittanceResponseDto>>.Success(list);
+        if (!CanFinanceOrBack()) return Forbidden<IReadOnlyList<RemittanceResponseDto>>();
+        var list = await RemittanceDetails().Where(x => x.IsActive).ToListAsync(cancellationToken);
+        return ServiceResult<IReadOnlyList<RemittanceResponseDto>>.Success(list.Select(MapOutgoingRemittance).ToList());
     }
 
     public async Task<ServiceResult<RemittanceResponseDto>> ConfirmRemittanceAsync(int remittanceRef, CancellationToken cancellationToken)
@@ -796,6 +676,7 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
                 Message = item.Message,
                 EntityType = item.EntityType,
                 EntityId = item.EntityId,
+                ClosingId = item.ClosingId,
                 RecipientRole = item.RecipientRole,
                 TargetRoute = item.TargetRoute,
                 IsRead = item.IsRead,
@@ -841,7 +722,7 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
     {
         if (!CanFinance()) return Forbidden<IReadOnlyList<RemittanceResponseDto>>();
         var incompletePaymentIds = await _db.RemittanceRefs.AsNoTracking()
-            .Where(x => x.Status == "PaymentInProgress" &&
+            .Where(x => x.Status == "PaymentInProgress" && !x.ClosingLines.Any(l => l.IsActive && l.Closing.IsActive) &&
                 (!x.IdDisbursement.HasValue || !_db.Invoices.Any(invoice => invoice.IdDisbursement == x.IdDisbursement.Value)))
             .Select(x => x.RemittanceRef1)
             .ToListAsync(cancellationToken);
@@ -852,11 +733,13 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
                 _logger.LogWarning("Could not repair PaymentInProgress remittance {RemittanceRef}: {Message}", remittanceRef, repair.Error?.Message);
         }
         var list = await _db.RemittanceRefs.AsNoTracking().Include(x => x.IdCounterpartyNavigation).Include(x => x.IdCurrencyNavigation)
-            .Where(x => x.Status == "AwaitingFinanceDisbursement" || x.Status == "PaymentInProgress" || x.Status == "Closed")
+            .Where(x => x.IsActive && (x.Status == "AwaitingFinanceDisbursement" || x.Status == "PaymentInProgress" || x.Status == "Closed"))
             .Select(x => new RemittanceResponseDto
             {
                 RemittanceRef = x.RemittanceRef1,
                 RemittanceReference = x.RemittanceRef1.ToString(),
+                ClosingId = x.ClosingLines.Where(l => l.IsActive && l.Closing.IsActive).Select(l => (int?)l.ClosingId).FirstOrDefault(),
+                ClosingReference = x.ClosingLines.Where(l => l.IsActive && l.Closing.IsActive).Select(l => l.Closing.Reference).FirstOrDefault(),
                 ReceiptAllocationId = x.IdReceiptAllocation,
                 DisbursementId = x.IdDisbursement,
                 InvoiceId = x.IdDisbursement.HasValue
@@ -900,6 +783,8 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
             .Include(x => x.IdPanelNavigation)
             .FirstOrDefaultAsync(x => x.RemittanceRef1 == remittanceRef, cancellationToken);
         if (remittance is null) return NotFound<DisbursementContextDto>("Remittance was not found.");
+        var closingId = await _db.OutgoingClosingLines.AsNoTracking().Where(x => x.RemittanceId == remittanceRef && x.IsActive && x.Closing.IsActive)
+            .Select(x => (int?)x.ClosingId).SingleOrDefaultAsync(cancellationToken);
 
         var panel = remittance.IdPanel.HasValue
             ? await _db.ContractPanels.AsNoTracking().Include(x => x.IdCounterpartyNavigation).FirstOrDefaultAsync(x => x.IdPanel == remittance.IdPanel.Value, cancellationToken)
@@ -910,7 +795,7 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
         var invoice = remittance.IdDisbursement.HasValue
             ? await _db.Invoices.AsNoTracking().FirstOrDefaultAsync(x => x.IdDisbursement == remittance.IdDisbursement.Value, cancellationToken)
             : null;
-        if (string.Equals(remittance.Status, "PaymentInProgress", StringComparison.OrdinalIgnoreCase) &&
+        if (!closingId.HasValue && string.Equals(remittance.Status, "PaymentInProgress", StringComparison.OrdinalIgnoreCase) &&
             (!remittance.IdDisbursement.HasValue || invoice is null))
         {
             var repair = await StartDisbursementAsync(remittanceRef, cancellationToken);
@@ -933,12 +818,14 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
         var account = accountSelection.Account;
         var validAccount = accountSelection.IsValid;
         var status = remittance.Status?.Trim() ?? string.Empty;
-        var canStart = string.Equals(status, "AwaitingFinanceDisbursement", StringComparison.OrdinalIgnoreCase) && validAccount && remittance.NetPayableAmount > 0m;
-        var canConfirm = string.Equals(status, "PaymentInProgress", StringComparison.OrdinalIgnoreCase) && invoice is not null;
+        var canStart = !closingId.HasValue && string.Equals(status, "AwaitingFinanceDisbursement", StringComparison.OrdinalIgnoreCase) && validAccount && remittance.NetPayableAmount > 0m;
+        var canConfirm = !closingId.HasValue && string.Equals(status, "PaymentInProgress", StringComparison.OrdinalIgnoreCase) && invoice is not null;
         var selectedBankAccount = account is null ? null : MapBankAccountSnapshot(account);
         return ServiceResult<DisbursementContextDto>.Success(new DisbursementContextDto
         {
             RemittanceId = remittanceRef,
+            ClosingId = closingId,
+            ClosingContextUrl = closingId.HasValue ? $"/api/finance/closings/{closingId}/disbursement-context" : null,
             ContractId = contract?.IdContract,
             ContractName = contract?.Name,
             Umr = contract?.Umr,
@@ -968,9 +855,13 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
     public async Task<ServiceResult<StartDisbursementResponseDto>> StartDisbursementAsync(int remittanceRef, CancellationToken cancellationToken)
     {
         if (!CanFinance()) return Forbidden<StartDisbursementResponseDto>();
+        var batchId = await _db.OutgoingClosingLines.AsNoTracking().Where(x => x.RemittanceId == remittanceRef && x.IsActive && x.Closing.IsActive)
+            .Select(x => (int?)x.ClosingId).SingleOrDefaultAsync(cancellationToken);
+        if (batchId.HasValue) return ServiceResult<StartDisbursementResponseDto>.Failure($"Remittance belongs to closing {batchId}. Start payment through /api/finance/closings/{batchId}/start-disbursement.", statusCode: 409, code: "CLOSING_BATCH_REQUIRED");
         var user = CurrentUser();
         if (user is null) return Unauthorized<StartDisbursementResponseDto>();
         await using var transaction = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken);
+        await LockOutgoingWorkflowAsync(cancellationToken);
         var remittance = await _db.RemittanceRefs.Include(x => x.IdCurrencyNavigation).FirstOrDefaultAsync(x => x.RemittanceRef1 == remittanceRef, cancellationToken);
         if (remittance is null) return NotFound<StartDisbursementResponseDto>("Remittance was not found.");
         var paymentInProgress = string.Equals(remittance.Status, "PaymentInProgress", StringComparison.OrdinalIgnoreCase);
@@ -1085,7 +976,7 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
             InvoiceDate = DateOnly.FromDateTime(now),
             GrossPremium = disbursement.TotalAmount,
             NetPremium = disbursement.TotalAmount,
-            RecoveryStatus = "Unpaired",
+            RecoveryStatus = InvoiceRecoveryCalculator.Unsettled,
             Label = $"Payment for remittance {remittanceRef}",
             SettlementMethod = "BankTransfer",
             Status = "Issued",
@@ -1162,7 +1053,7 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
                 InvoiceDate = request.TransferDate ?? request.OperationDate,
                 GrossPremium = item.TotalAmount,
                 NetPremium = item.TotalAmount,
-                RecoveryStatus = "Unpaired",
+                RecoveryStatus = InvoiceRecoveryCalculator.Unsettled,
                 Label = $"Payment for remittance {remittance.RemittanceRef1}; bank reference {request.BankReference ?? "N/A"}",
                 SettlementMethod = request.PaymentMethod.Trim(),
                 Status = "Issued",
@@ -1199,6 +1090,8 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
     public async Task<ServiceResult<ConfirmTransferResponseDto>> ConfirmTransferAsync(int id, CancellationToken cancellationToken)
     {
         if (!CanFinance()) return Forbidden<ConfirmTransferResponseDto>();
+        var batchId = await _db.OutgoingClosings.AsNoTracking().Where(x => x.IdDisbursement == id && x.IsActive).Select(x => (int?)x.Id).SingleOrDefaultAsync(cancellationToken);
+        if (batchId.HasValue) return ServiceResult<ConfirmTransferResponseDto>.Failure($"Disbursement belongs to closing {batchId}. Confirm the entire closing through /api/finance/closings/{batchId}/confirm-transfer.", statusCode: 409, code: "CLOSING_BATCH_REQUIRED");
         var user = CurrentUser();
         if (user is null) return Unauthorized<ConfirmTransferResponseDto>();
         await using var transaction = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken);
@@ -1246,6 +1139,8 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
     public async Task<ServiceResult<PrintablePaymentDocumentDto>> GetDisbursementInvoiceAsync(int disbursementId, CancellationToken cancellationToken)
     {
         if (!CanFinance()) return Forbidden<PrintablePaymentDocumentDto>();
+        var batchId = await _db.OutgoingClosings.AsNoTracking().Where(x => x.IdDisbursement == disbursementId && x.IsActive).Select(x => (int?)x.Id).SingleOrDefaultAsync(cancellationToken);
+        if (batchId.HasValue) return await GetFinanceClosingPdfAsync(batchId.Value, cancellationToken);
         var disbursement = await _db.Disbursements.AsNoTracking()
             .Include(x => x.IdCounterpartyNavigation)
             .Include(x => x.IdBankAccountNavigation).ThenInclude(x => x.IdCurrencyNavigation)
@@ -1321,6 +1216,18 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
                 : trimmed;
         }
 
+        static string? NormalizePaymentStatus(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return null;
+            return value.Trim().ToLowerInvariant().Replace(" ", string.Empty, StringComparison.Ordinal).Replace("_", string.Empty, StringComparison.Ordinal) switch
+            {
+                "unsettled" or "unpaired" => InvoiceRecoveryCalculator.Unsettled,
+                "partiallysettled" or "partial" => InvoiceRecoveryCalculator.PartiallySettled,
+                "settled" or "paired" => InvoiceRecoveryCalculator.Settled,
+                _ => null
+            };
+        }
+
         var q = _db.Invoices.AsNoTracking();
         if (query.ContractId.HasValue) q = q.Where(x => x.IdContract == query.ContractId.Value);
         if (query.CounterpartyId.HasValue) q = q.Where(x => x.IdCounterparty == query.CounterpartyId.Value);
@@ -1328,12 +1235,15 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
         if (query.PanelId.HasValue) q = q.Where(x => x.IdPanel == query.PanelId.Value || x.PanelAllocations.Any(line => line.IdPanel == query.PanelId.Value));
         var invoiceType = FilterValue(query.InvoiceType);
         if (invoiceType is not null) q = q.Where(x => x.InvoiceType == invoiceType);
-        var requestedPairingStatus = FilterValue(query.PairingStatus)?.ToLowerInvariant();
-        if (requestedPairingStatus is "paired" or "unpaired")
+        var requestedPaymentStatus = NormalizePaymentStatus(FilterValue(query.PaymentStatus) ?? FilterValue(query.PairingStatus));
+        if (requestedPaymentStatus is not null)
         {
-            q = requestedPairingStatus == "paired"
-                ? q.Where(x => (x.GrossPremium ?? 0m) > 0m && _db.ReceiptAllocations.Where(a => a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m) >= (x.GrossPremium ?? 0m))
-                : q.Where(x => (x.GrossPremium ?? 0m) <= 0m || _db.ReceiptAllocations.Where(a => a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m) < (x.GrossPremium ?? 0m));
+            q = requestedPaymentStatus == InvoiceRecoveryCalculator.Unsettled
+                ? q.Where(x => _db.ReceiptAllocations.Where(a => a.IsActive && a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m) <= 0m)
+                : requestedPaymentStatus == InvoiceRecoveryCalculator.PartiallySettled
+                    ? q.Where(x => _db.ReceiptAllocations.Where(a => a.IsActive && a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m) > 0m
+                        && _db.ReceiptAllocations.Where(a => a.IsActive && a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m) < (x.GrossPremium ?? 0m))
+                    : q.Where(x => _db.ReceiptAllocations.Where(a => a.IsActive && a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m) >= (x.GrossPremium ?? 0m));
         }
         if (int.TryParse(FilterValue(query.CurrencyId), out var currencyId) && currencyId > 0)
             q = q.Where(x => x.IdCurrency == currencyId);
@@ -1370,9 +1280,13 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
             "cedentname" => descending ? q.OrderByDescending(x => x.IdContractNavigation.IdCounterpartyNavigation.Name) : q.OrderBy(x => x.IdContractNavigation.IdCounterpartyNavigation.Name),
             "grossamount" or "amount" => descending ? q.OrderByDescending(x => x.GrossPremium) : q.OrderBy(x => x.GrossPremium),
             "netamount" => descending ? q.OrderByDescending(x => x.NetPremium) : q.OrderBy(x => x.NetPremium),
-            "pairingstatus" => descending
-                ? q.OrderByDescending(x => (x.GrossPremium ?? 0m) > 0m && _db.ReceiptAllocations.Where(a => a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m) >= (x.GrossPremium ?? 0m))
-                : q.OrderBy(x => (x.GrossPremium ?? 0m) > 0m && _db.ReceiptAllocations.Where(a => a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m) >= (x.GrossPremium ?? 0m)),
+            "paymentstatus" or "pairingstatus" => descending
+                ? q.OrderByDescending(x => _db.ReceiptAllocations.Where(a => a.IsActive && a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m) <= 0m
+                    ? 0
+                    : _db.ReceiptAllocations.Where(a => a.IsActive && a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m) >= (x.GrossPremium ?? 0m) ? 2 : 1)
+                : q.OrderBy(x => _db.ReceiptAllocations.Where(a => a.IsActive && a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m) <= 0m
+                    ? 0
+                    : _db.ReceiptAllocations.Where(a => a.IsActive && a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m) >= (x.GrossPremium ?? 0m) ? 2 : 1),
             "invoicetype" => descending ? q.OrderByDescending(x => x.InvoiceType) : q.OrderBy(x => x.InvoiceType),
             _ => descending ? q.OrderByDescending(x => x.InvoiceDate) : q.OrderBy(x => x.InvoiceDate)
         };
@@ -1398,18 +1312,31 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
                 InvoiceNumber = x.InvoiceNumber,
                 InvoiceType = x.InvoiceType,
                 InvoiceDate = x.InvoiceDate,
+                InvoiceAmount = x.GrossPremium ?? 0m,
+                SettledAmount = _db.ReceiptAllocations.Where(a => a.IsActive && a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m),
+                RemainingAmount = (x.GrossPremium ?? 0m) > _db.ReceiptAllocations.Where(a => a.IsActive && a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m)
+                    ? (x.GrossPremium ?? 0m) - _db.ReceiptAllocations.Where(a => a.IsActive && a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m) : 0m,
+                PaymentStatus = _db.ReceiptAllocations.Where(a => a.IsActive && a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m) <= 0m
+                    ? InvoiceRecoveryCalculator.Unsettled
+                    : _db.ReceiptAllocations.Where(a => a.IsActive && a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m) >= (x.GrossPremium ?? 0m)
+                        ? InvoiceRecoveryCalculator.Settled
+                        : InvoiceRecoveryCalculator.PartiallySettled,
                 GrossAmount = x.GrossPremium ?? 0m,
                 NetPremium = x.NetPremium,
                 NetAmount = x.NetPremium,
-                RecoveryStatus = (x.GrossPremium ?? 0m) > 0m && _db.ReceiptAllocations.Where(a => a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m) >= (x.GrossPremium ?? 0m)
-                    ? "Paired"
-                    : "Unpaired",
-                PairingStatus = (x.GrossPremium ?? 0m) > 0m && _db.ReceiptAllocations.Where(a => a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m) >= (x.GrossPremium ?? 0m)
-                    ? "Paired"
-                    : "Unpaired",
-                PairedAmount = _db.ReceiptAllocations.Where(a => a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m),
-                OutstandingAmount = (x.GrossPremium ?? 0m) > _db.ReceiptAllocations.Where(a => a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m)
-                    ? (x.GrossPremium ?? 0m) - _db.ReceiptAllocations.Where(a => a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m) : 0m,
+                RecoveryStatus = _db.ReceiptAllocations.Where(a => a.IsActive && a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m) <= 0m
+                    ? InvoiceRecoveryCalculator.Unsettled
+                    : _db.ReceiptAllocations.Where(a => a.IsActive && a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m) >= (x.GrossPremium ?? 0m)
+                        ? InvoiceRecoveryCalculator.Settled
+                        : InvoiceRecoveryCalculator.PartiallySettled,
+                PairingStatus = _db.ReceiptAllocations.Where(a => a.IsActive && a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m) <= 0m
+                    ? InvoiceRecoveryCalculator.Unsettled
+                    : _db.ReceiptAllocations.Where(a => a.IsActive && a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m) >= (x.GrossPremium ?? 0m)
+                        ? InvoiceRecoveryCalculator.Settled
+                        : InvoiceRecoveryCalculator.PartiallySettled,
+                PairedAmount = _db.ReceiptAllocations.Where(a => a.IsActive && a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m),
+                OutstandingAmount = (x.GrossPremium ?? 0m) > _db.ReceiptAllocations.Where(a => a.IsActive && a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m)
+                    ? (x.GrossPremium ?? 0m) - _db.ReceiptAllocations.Where(a => a.IsActive && a.IdInvoice == x.IdInvoice).Sum(a => a.AllocatedAmount ?? 0m) : 0m,
                 Label = x.Label ?? string.Empty,
                 Status = x.Status,
                 ReinsurerName = x.IdCounterpartyNavigation != null ? x.IdCounterpartyNavigation.Name : x.PanelAllocations.Select(line => line.IdCounterpartyNavigation.Name).FirstOrDefault()
@@ -1573,7 +1500,7 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
             InvoiceDate = invoiceDate,
             GrossPremium = request.GrossAmount,
             NetPremium = calculation.TotalNetAmount,
-            RecoveryStatus = "Unpaired",
+            RecoveryStatus = InvoiceRecoveryCalculator.Unsettled,
             SequenceNumber = sequence,
             Label = request.Label?.Trim() ?? "Original Premium",
             Status = "Draft",
@@ -1736,6 +1663,7 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
             .Where(invoice => invoice.IdContract == contractId &&
                 (invoice.InvoiceType == CedentPremiumInvoiceType || invoice.InvoiceType == "REINSURER_PAYABLE"))
             .Include(invoice => invoice.IdCurrencyNavigation)
+            .Include(invoice => invoice.ReceiptAllocations)
             .Include(invoice => invoice.PanelAllocations).ThenInclude(allocation => allocation.IdCounterpartyNavigation)
             .OrderBy(invoice => invoice.InvoiceDate)
             .ThenBy(invoice => invoice.SequenceNumber)
@@ -1762,38 +1690,70 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
     public async Task<ServiceResult<PrintablePaymentDocumentDto>> GetPremiumInvoiceDocumentAsync(int invoiceId, CancellationToken cancellationToken)
     {
         if (!CanBack()) return Forbidden<PrintablePaymentDocumentDto>();
-        var invoice = await _db.Invoices.AsNoTracking().Include(item => item.IdContractNavigation).ThenInclude(contract => contract.IdCounterpartyNavigation).Include(item => item.IdContractNavigation).ThenInclude(contract => contract.ContractFac).Include(item => item.IdCurrencyNavigation).Include(item => item.PanelAllocations).FirstOrDefaultAsync(item => item.IdInvoice == invoiceId && item.InvoiceType == CedentPremiumInvoiceType, cancellationToken);
+        var invoice = await _db.Invoices.AsNoTracking()
+            .Include(item => item.IdContractNavigation).ThenInclude(contract => contract.IdCounterpartyNavigation)
+            .Include(item => item.IdContractNavigation).ThenInclude(contract => contract.ContractFac)
+            .Include(item => item.IdContractNavigation).ThenInclude(contract => contract.ContractCoverageSelections)
+                .ThenInclude(selection => selection.IdCoverageItemNavigation)
+            .Include(item => item.IdCurrencyNavigation)
+            .Include(item => item.PanelAllocations)
+            .FirstOrDefaultAsync(item => item.IdInvoice == invoiceId && item.InvoiceType == CedentPremiumInvoiceType, cancellationToken);
         if (invoice is null) return NotFound<PrintablePaymentDocumentDto>("Invoice was not found.");
-        var contractGrossPremium = PremiumDebitNoteFinancials.ResolveContractGrossPremium(invoice.IdContractNavigation);
-        var previouslyInvoiced = await _db.Invoices.AsNoTracking().Where(item => item.IdContract == invoice.IdContract && item.InvoiceType == CedentPremiumInvoiceType && item.IdInvoice < invoice.IdInvoice && item.Status != "Cancelled").SumAsync(item => item.GrossPremium ?? 0m, cancellationToken);
-        var invoicedIncludingCurrent = previouslyInvoiced + (invoice.InvoiceType == CedentPremiumInvoiceType && invoice.Status != "Cancelled" ? invoice.GrossPremium ?? 0m : 0m);
-        var lines = new List<string>
-        {
-            "IRIS - PREMIUM INVOICE",
-            $"Number: {invoice.InvoiceNumber}",
-            $"Date: {invoice.InvoiceDate:yyyy-MM-dd}",
-            $"Contract: {invoice.IdContractNavigation.Name}",
-            $"UMR: {invoice.IdContractNavigation.Umr}",
-            $"Invoiced to: {invoice.IdContractNavigation.IdCounterpartyNavigation?.Name}",
-            $"Cedent address: {invoice.IdContractNavigation.IdCounterpartyNavigation?.AddressLine}",
-            $"Cedent location: {invoice.IdContractNavigation.IdCounterpartyNavigation?.City}, {invoice.IdContractNavigation.IdCounterpartyNavigation?.Country}",
-            $"Transaction: Original Premium",
-            $"Currency: {invoice.IdCurrencyNavigation?.CurrencyCode}",
-            $"Gross invoice amount: {invoice.GrossPremium:0.0000} {invoice.IdCurrencyNavigation?.CurrencyCode}",
-            $"Contract gross premium: {contractGrossPremium:0.0000}",
-            $"Previously invoiced: {previouslyInvoiced:0.0000}",
-            $"Remaining after this invoice: {Math.Max(0m, contractGrossPremium - invoicedIncludingCurrent):0.0000}",
-            $"Net value due: {invoice.NetPremium:0.0000} {invoice.IdCurrencyNavigation?.CurrencyCode}",
-            "Payment instructions: settle to the IRIS collection account configured for the invoice currency.",
-            $"Status: {invoice.Status}"
-        };
-        lines.AddRange(invoice.PanelAllocations.Select(item => $"Reinsurer: {item.ReinsurerNameSnapshot}; Gross: {item.GrossPremium:0.0000}; Cedent commission: {item.CedentCommissionAmount:0.0000} ({item.CedentCommissionPct:0.####}%); IRIS brokerage: {item.BrokerageAmount:0.0000}; Other deductions: {item.OtherDeductions:0.0000}; Net: {item.NetAmount:0.0000}"));
+        var grossAmount = invoice.GrossPremium ?? 0m;
+        var cedentCommissionAmount = invoice.PanelAllocations.Count > 0
+            ? invoice.PanelAllocations.Sum(item => item.CedentCommissionAmount)
+            : grossAmount * (invoice.IdContractNavigation.CedentCommission ?? 0m) / 100m;
+        var netAmount = grossAmount - cedentCommissionAmount;
+        var bankAccounts = LoadIrisInvoiceBankAccounts();
+        if (bankAccounts.Count == 0)
+            return ServiceResult<PrintablePaymentDocumentDto>.Failure(
+                "No active IRIS bank account is configured.",
+                statusCode: StatusCodes.Status409Conflict,
+                code: "IRIS_BANK_ACCOUNT_NOT_CONFIGURED");
+        var logo = LoadIrisInvoiceLogo();
         return ServiceResult<PrintablePaymentDocumentDto>.Success(new PrintablePaymentDocumentDto
         {
-            FileName = $"Invoice-{invoice.InvoiceNumber}.pdf",
-            Content = BuildPdf(lines),
+            FileName = $"Facture_{invoice.InvoiceNumber}.pdf",
+            Content = BuildFrenchCedentInvoicePdf(
+                invoice,
+                grossAmount,
+                cedentCommissionAmount,
+                netAmount,
+                _invoiceBranding,
+                logo,
+                bankAccounts),
             ContentType = "application/pdf"
         });
+    }
+
+    private IReadOnlyList<IrisInvoiceBankAccount> LoadIrisInvoiceBankAccounts()
+    {
+        var accounts = _irisBankAccounts.Accounts ?? [];
+        var active = accounts.Where(account => account.IsActive).ToList();
+        var sectionExists = _configuration?.GetSection(IrisBankAccountsOptions.SectionName).Exists() ?? false;
+        var environment = _hostingEnvironment?.EnvironmentName ?? "unknown";
+        _logger.LogInformation(
+            "Invoice bank-account configuration: Environment={Environment}, SectionExists={SectionExists}, ConfiguredAccounts={ConfiguredAccounts}, ActiveAccounts={ActiveAccounts}, Accounts={Accounts}",
+            environment,
+            sectionExists,
+            accounts.Count,
+            active.Count,
+            string.Join(", ", active.Select(account => $"{account.BankName}/{account.Currency}")));
+
+        return active
+            .Select(account => new IrisInvoiceBankAccount(
+                account.BankName,
+                account.Currency,
+                account.Iban,
+                account.SwiftBic))
+            .ToList();
+    }
+
+    private byte[]? LoadIrisInvoiceLogo()
+    {
+        var root = _hostingEnvironment?.ContentRootPath ?? AppContext.BaseDirectory;
+        var path = Path.Combine(root, "Assets", "Branding", "iris-logo.png");
+        return File.Exists(path) ? File.ReadAllBytes(path) : null;
     }
 
     private async Task<PremiumDebitNoteData> LoadPremiumInvoiceDataAsync(int contractId, CancellationToken cancellationToken)
@@ -1828,6 +1788,7 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
     {
         var invoice = await _db.Invoices.AsNoTracking()
             .Include(item => item.IdCurrencyNavigation)
+            .Include(item => item.ReceiptAllocations)
             .Include(item => item.PanelAllocations)
                 .ThenInclude(item => item.IdCounterpartyNavigation)
             .FirstOrDefaultAsync(item => item.IdInvoice == invoiceId && item.InvoiceType == CedentPremiumInvoiceType, cancellationToken);
@@ -1843,7 +1804,12 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
         return ServiceResult<PremiumDebitNoteResponseDto>.Success(MapContractInvoice(invoice, invoiceable, already, Math.Max(0m, invoiceable - already - (invoice.Status == "Cancelled" ? 0m : invoice.GrossPremium ?? 0m))));
     }
 
-    private static PremiumDebitNoteResponseDto MapContractInvoice(Invoice invoice, decimal invoiceable, decimal already, decimal remaining) => new()
+    private static PremiumDebitNoteResponseDto MapContractInvoice(Invoice invoice, decimal invoiceable, decimal already, decimal remaining)
+    {
+        var settledAmount = invoice.ReceiptAllocations.Where(a => a.IsActive).Sum(allocation => allocation.AllocatedAmount ?? 0m);
+        var paymentStatus = InvoiceRecoveryCalculator.GetInvoicePaymentStatus(invoice.GrossPremium ?? 0m, settledAmount);
+
+        return new()
         {
             InvoiceId = invoice.IdInvoice,
             ContractId = invoice.IdContract,
@@ -1859,6 +1825,8 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
             TotalNetAmount = invoice.NetPremium ?? 0m,
             CurrencyCode = invoice.IdCurrencyNavigation?.CurrencyCode ?? string.Empty,
             Status = invoice.Status,
+            PaymentStatus = paymentStatus,
+            RecoveryStatus = paymentStatus,
             Label = invoice.Label ?? string.Empty,
             Allocations = invoice.PanelAllocations.Select(item => new PremiumDebitNoteAllocationDto
             {
@@ -1877,6 +1845,7 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
                 CurrencyCode = item.CurrencyCodeSnapshot
             }).ToArray()
         };
+    }
 
     private static int? ResolveInvoiceSequence(Invoice invoice)
     {
@@ -1973,7 +1942,7 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
             InvoiceType = invoiceType,
             InvoiceDate = invoiceDate,
             GrossPremium = amount,
-            RecoveryStatus = "Unpaired",
+            RecoveryStatus = InvoiceRecoveryCalculator.Unsettled,
             SequenceNumber = sequence,
             NetPremium = amount,
             Label = request.Label?.Trim() ?? string.Empty,
@@ -2053,12 +2022,12 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
         foreach (var account in accounts) { account.IsDefault = false; account.UpdatedAt = DateTime.UtcNow; account.UpdatedBy = user; }
     }
 
-    private async Task NotifyRoleAsync(string position, string title, string message, string entityType, int entityId, CancellationToken cancellationToken)
+    private async Task NotifyRoleAsync(string position, string title, string message, string entityType, int entityId, CancellationToken cancellationToken, string? notificationType = null)
     {
         var users = await _db.AspNetUsers.Where(x => x.Position != null && x.Position.Trim().ToLower() == position.ToLower()).Select(x => x.Id).ToListAsync(cancellationToken);
         var creator = CurrentUser();
-        var targetRoute = entityType == "BANK_RECEIPT" ? $"/back-office/bank-receipts/{entityId}/pairing" : entityType == "REMITTANCE_REF" ? "/finance/disbursement-queue" : "/finance/disbursements";
-        foreach (var id in users) _db.Notifications.Add(new Notification { RecipientUserId = id, RecipientRole = position, NotificationType = entityType == "BANK_RECEIPT" ? "ReceiptRequiresPairing" : entityType, Title = title, Message = message, EntityType = entityType, EntityId = entityId, TargetRoute = targetRoute, CreatedAt = DateTime.UtcNow, CreatedBy = creator });
+        var targetRoute = entityType == "OUTGOING_CLOSING" ? $"/workspace/reassurance/finance-officer/disbursement-queue?closingId={entityId}" : entityType == "BANK_RECEIPT" ? $"/back-office/bank-receipts/{entityId}/pairing" : entityType == "REMITTANCE_REF" ? "/finance/disbursement-queue" : "/finance/disbursements";
+        foreach (var id in users) _db.Notifications.Add(new Notification { RecipientUserId = id, RecipientRole = position, NotificationType = notificationType ?? (entityType == "BANK_RECEIPT" ? "ReceiptRequiresPairing" : entityType), Title = title, Message = message, EntityType = entityType, EntityId = entityId, ClosingId = entityType == "OUTGOING_CLOSING" ? entityId : null, TargetRoute = targetRoute, CreatedAt = DateTime.UtcNow, CreatedBy = creator });
     }
 
     private static byte[] BuildPdf(IEnumerable<string> lines)
@@ -2115,14 +2084,14 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
     private static string? MaskIban(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Length <= 4 ? value : $"{value[..2]}****{value[^4..]}";
     private static BankAccountResponseDto MapBankAccount(CounterpartyBankAccount x) => new() { IdBankAccount = x.IdBankAccount, IdCounterparty = x.IdCounterparty, BeneficiaryName = x.IdCounterpartyNavigation?.Name ?? string.Empty, BeneficiaryAddress = x.IdCounterpartyNavigation?.AddressLine, BeneficiaryCity = x.IdCounterpartyNavigation?.City, BeneficiaryCountry = x.IdCounterpartyNavigation?.Country, CurrencyId = x.IdCurrency, CurrencyCode = x.IdCurrencyNavigation?.CurrencyCode ?? string.Empty, BankName = x.BankName, BankCity = x.BankCity, BankCountry = x.BankCountry, AgencyCode = x.AgencyCode, Rib = x.Rib, Iban = x.Iban, MaskedIban = MaskIban(x.Iban), SwiftBic = x.SwiftBic, HasCorrespondentBank = x.HasCorrespondentBank, CorrespondentBankName = x.CorrespondentBankName, CorrespondentSwiftBic = x.CorrespondentSwiftBic, AccountLabel = x.AccountLabel, IsDefault = x.IsDefault, IsActive = x.IsActive };
     private static readonly System.Linq.Expressions.Expression<Func<CounterpartyBankAccount, BankAccountResponseDto>> MapBankAccountExpression = x => new() { IdBankAccount = x.IdBankAccount, IdCounterparty = x.IdCounterparty, BeneficiaryName = x.IdCounterpartyNavigation.Name, BeneficiaryAddress = x.IdCounterpartyNavigation.AddressLine, BeneficiaryCity = x.IdCounterpartyNavigation.City, BeneficiaryCountry = x.IdCounterpartyNavigation.Country, CurrencyId = x.IdCurrency, CurrencyCode = x.IdCurrencyNavigation.CurrencyCode, BankName = x.BankName, BankCity = x.BankCity, BankCountry = x.BankCountry, AgencyCode = x.AgencyCode, Rib = x.Rib, MaskedIban = x.Iban == null ? null : x.Iban.Length <= 4 ? x.Iban : x.Iban.Substring(0, 2) + "****" + x.Iban.Substring(x.Iban.Length - 4, 4), SwiftBic = x.SwiftBic, HasCorrespondentBank = x.HasCorrespondentBank, CorrespondentBankName = x.CorrespondentBankName, CorrespondentSwiftBic = x.CorrespondentSwiftBic, AccountLabel = x.AccountLabel, IsDefault = x.IsDefault, IsActive = x.IsActive };
-    private static readonly System.Linq.Expressions.Expression<Func<BankReceipt, BankReceiptResponseDto>> ToReceiptExpression = x => new() { IdBankReceipt = x.IdBankReceipt, BankAccountId = x.IdBankAccount, CounterpartyId = x.IdCounterparty, CounterpartyName = x.IdCounterpartyNavigation.Name, BankName = x.IdBankAccountNavigation.BankName, MaskedIban = x.IdBankAccountNavigation.Iban == null || x.IdBankAccountNavigation.Iban == "" ? null : x.IdBankAccountNavigation.Iban.Length <= 4 ? x.IdBankAccountNavigation.Iban : x.IdBankAccountNavigation.Iban.Substring(0, 2) + "****" + x.IdBankAccountNavigation.Iban.Substring(x.IdBankAccountNavigation.Iban.Length - 4, 4), ReceptionDate = x.ReceptionDate, OperationDate = x.OperationDate, ReceiptMonth = x.OperationDate.Year.ToString() + "-" + (x.OperationDate.Month < 10 ? "0" : "") + x.OperationDate.Month.ToString(), AmountReceived = x.AmountReceived, CurrencyId = x.IdCurrency, CurrencyCode = x.IdCurrencyNavigation.CurrencyCode, AppliedExchangeRate = x.AppliedExchangeRate, AvailableAmount = x.AmountReceived - x.ReceiptAllocations.Sum(a => a.AllocatedAmount ?? 0m), AllocatedAmount = x.ReceiptAllocations.Sum(a => a.AllocatedAmount ?? 0m), PairingStatus = x.AmountReceived > 0m && x.ReceiptAllocations.Sum(a => a.AllocatedAmount ?? 0m) >= x.AmountReceived ? "Paired" : "Unpaired", SettlementMethod = x.SettlementMethod, CollectionType = x.CollectionType, BankReference = x.BankReference, SettlementLabel = x.SettlementLabel, BusinessReference = x.BusinessReference, DeclaredInvoiceNumber = x.DeclaredInvoiceNumber, DeclaredInvoiceMonth = x.DeclaredInvoiceMonth, Reason = x.Reason };
-    private static BankReceiptResponseDto ToReceiptEntity(BankReceipt x) => new() { IdBankReceipt = x.IdBankReceipt, BankAccountId = x.IdBankAccount, CounterpartyId = x.IdCounterparty, CounterpartyName = x.IdCounterpartyNavigation?.Name ?? string.Empty, BankName = x.IdBankAccountNavigation?.BankName ?? string.Empty, MaskedIban = MaskIban(x.IdBankAccountNavigation?.Iban), ReceptionDate = x.ReceptionDate, OperationDate = x.OperationDate, ReceiptMonth = x.OperationDate.ToString("yyyy-MM"), AmountReceived = x.AmountReceived, CurrencyId = x.IdCurrency, CurrencyCode = x.IdCurrencyNavigation?.CurrencyCode ?? string.Empty, AppliedExchangeRate = x.AppliedExchangeRate, AvailableAmount = x.AmountReceived - x.ReceiptAllocations.Sum(a => a.AllocatedAmount ?? 0m), AllocatedAmount = x.ReceiptAllocations.Sum(a => a.AllocatedAmount ?? 0m), PairingStatus = InvoiceRecoveryCalculator.GetReceiptPairingStatus(x.AmountReceived, x.ReceiptAllocations.Sum(a => a.AllocatedAmount ?? 0m)), SettlementMethod = x.SettlementMethod, CollectionType = x.CollectionType, BankReference = x.BankReference, SettlementLabel = x.SettlementLabel, BusinessReference = x.BusinessReference, DeclaredInvoiceNumber = x.DeclaredInvoiceNumber, DeclaredInvoiceMonth = x.DeclaredInvoiceMonth, Reason = x.Reason };
+    private static readonly System.Linq.Expressions.Expression<Func<BankReceipt, BankReceiptResponseDto>> ToReceiptExpression = x => new() { IdBankReceipt = x.IdBankReceipt, BankAccountId = x.IdBankAccount, CounterpartyId = x.IdCounterparty, CounterpartyName = x.IdCounterpartyNavigation.Name, BankName = x.IdBankAccountNavigation.BankName, MaskedIban = x.IdBankAccountNavigation.Iban == null || x.IdBankAccountNavigation.Iban == "" ? null : x.IdBankAccountNavigation.Iban.Length <= 4 ? x.IdBankAccountNavigation.Iban : x.IdBankAccountNavigation.Iban.Substring(0, 2) + "****" + x.IdBankAccountNavigation.Iban.Substring(x.IdBankAccountNavigation.Iban.Length - 4, 4), ReceptionDate = x.ReceptionDate, OperationDate = x.OperationDate, ReceiptMonth = x.OperationDate.Year.ToString() + "-" + (x.OperationDate.Month < 10 ? "0" : "") + x.OperationDate.Month.ToString(), AmountReceived = x.AmountReceived, CurrencyId = x.IdCurrency, CurrencyCode = x.IdCurrencyNavigation.CurrencyCode, AppliedExchangeRate = x.AppliedExchangeRate, AvailableAmount = x.AmountReceived - x.ReceiptAllocations.Where(a => a.IsActive).Sum(a => a.AllocatedAmount ?? 0m), AllocatedAmount = x.ReceiptAllocations.Where(a => a.IsActive).Sum(a => a.AllocatedAmount ?? 0m), PairingStatus = x.AmountReceived > 0m && x.ReceiptAllocations.Where(a => a.IsActive).Sum(a => a.AllocatedAmount ?? 0m) >= x.AmountReceived ? "Paired" : "Unpaired", SettlementMethod = x.SettlementMethod, CollectionType = x.CollectionType, BankReference = x.BankReference, SettlementLabel = x.SettlementLabel, BusinessReference = x.BusinessReference, DeclaredInvoiceNumber = x.DeclaredInvoiceNumber, DeclaredInvoiceMonth = x.DeclaredInvoiceMonth, Reason = x.Reason };
+    private static BankReceiptResponseDto ToReceiptEntity(BankReceipt x) => new() { IdBankReceipt = x.IdBankReceipt, BankAccountId = x.IdBankAccount, CounterpartyId = x.IdCounterparty, CounterpartyName = x.IdCounterpartyNavigation?.Name ?? string.Empty, BankName = x.IdBankAccountNavigation?.BankName ?? string.Empty, MaskedIban = MaskIban(x.IdBankAccountNavigation?.Iban), ReceptionDate = x.ReceptionDate, OperationDate = x.OperationDate, ReceiptMonth = x.OperationDate.ToString("yyyy-MM"), AmountReceived = x.AmountReceived, CurrencyId = x.IdCurrency, CurrencyCode = x.IdCurrencyNavigation?.CurrencyCode ?? string.Empty, AppliedExchangeRate = x.AppliedExchangeRate, AvailableAmount = x.AmountReceived - x.ReceiptAllocations.Where(a => a.IsActive).Sum(a => a.AllocatedAmount ?? 0m), AllocatedAmount = x.ReceiptAllocations.Where(a => a.IsActive).Sum(a => a.AllocatedAmount ?? 0m), PairingStatus = InvoiceRecoveryCalculator.GetReceiptPairingStatus(x.AmountReceived, x.ReceiptAllocations.Where(a => a.IsActive).Sum(a => a.AllocatedAmount ?? 0m)), SettlementMethod = x.SettlementMethod, CollectionType = x.CollectionType, BankReference = x.BankReference, SettlementLabel = x.SettlementLabel, BusinessReference = x.BusinessReference, DeclaredInvoiceNumber = x.DeclaredInvoiceNumber, DeclaredInvoiceMonth = x.DeclaredInvoiceMonth, Reason = x.Reason };
     private static RemittanceResponseDto ToRemittance(RemittanceRef x) => new() { RemittanceRef = x.RemittanceRef1, RemittanceReference = x.RemittanceRef1.ToString(), ReceiptAllocationId = x.IdReceiptAllocation, DisbursementId = x.IdDisbursement, PanelId = x.IdPanel, ContractId = x.IdPanelNavigation?.IdContract, ContractName = x.IdPanelNavigation?.IdContractNavigation?.Name, Umr = x.IdPanelNavigation?.IdContractNavigation?.Umr, CedentName = x.IdPanelNavigation?.IdContractNavigation?.IdCounterpartyNavigation?.Name, CounterpartyId = x.IdCounterparty, CounterpartyName = x.IdCounterpartyNavigation?.Name ?? string.Empty, GrossPremium = x.PremiumSignedLine, OtherDeductions = x.Deductions, NetPremiumDue = x.NetPremiumDue, NetPayableAmount = x.NetPayableAmount, CurrencyId = x.IdCurrency, CurrencyCode = x.IdCurrencyNavigation?.CurrencyCode ?? string.Empty, Status = x.Status, Description = x.Description, ConfirmedAt = x.ConfirmedAt, ConfirmedBy = x.ConfirmedBy };
     private static DisbursementResponseDto ToDisbursement(Disbursement x, RemittanceRef? remittance) => new() { IdDisbursement = x.IdDisbursement, RemittanceRef = remittance?.RemittanceRef1 ?? 0, CounterpartyId = x.IdCounterparty, CounterpartyName = x.IdCounterpartyNavigation?.Name ?? remittance?.IdCounterpartyNavigation?.Name ?? string.Empty, TotalAmount = x.TotalAmount, CurrencyId = x.IdBankAccountNavigation?.IdCurrency ?? remittance?.IdCurrency ?? 0, CurrencyCode = x.IdBankAccountNavigation?.IdCurrencyNavigation?.CurrencyCode ?? remittance?.IdCurrencyNavigation?.CurrencyCode ?? string.Empty, OperationDate = x.OperationDate, SignatureStatus = x.SignatureStatus };
     private static InvoiceResponseDto ToInvoice(Invoice x)
     {
         var gross = x.GrossPremium ?? 0m;
-        var paired = x.ReceiptAllocations.Sum(allocation => allocation.AllocatedAmount ?? 0m);
+        var paired = x.ReceiptAllocations.Where(a => a.IsActive).Sum(allocation => allocation.AllocatedAmount ?? 0m);
         var recovery = InvoiceRecoveryCalculator.Calculate(gross, paired);
         return new InvoiceResponseDto
         {
@@ -2143,6 +2112,10 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
             InvoiceNumber = x.InvoiceNumber,
             InvoiceType = x.InvoiceType,
             InvoiceDate = x.InvoiceDate,
+            InvoiceAmount = gross,
+            SettledAmount = recovery.PairedAmount,
+            RemainingAmount = recovery.OutstandingAmount,
+            PaymentStatus = recovery.Status,
             GrossAmount = gross,
             NetPremium = x.NetPremium,
             NetAmount = x.NetPremium,
@@ -2174,15 +2147,33 @@ public sealed class FinancialWorkflowService : IFinancialWorkflowService
         InvoiceNumber = x.InvoiceNumber,
         InvoiceType = x.InvoiceType,
         InvoiceDate = x.InvoiceDate,
+        InvoiceAmount = x.GrossPremium ?? 0m,
+        SettledAmount = x.ReceiptAllocations.Where(a => a.IsActive).Sum(allocation => allocation.AllocatedAmount ?? 0m),
+        RemainingAmount = (x.GrossPremium ?? 0m) > x.ReceiptAllocations.Where(a => a.IsActive).Sum(allocation => allocation.AllocatedAmount ?? 0m)
+            ? (x.GrossPremium ?? 0m) - x.ReceiptAllocations.Where(a => a.IsActive).Sum(allocation => allocation.AllocatedAmount ?? 0m)
+            : 0m,
+        PaymentStatus = x.ReceiptAllocations.Where(a => a.IsActive).Sum(allocation => allocation.AllocatedAmount ?? 0m) <= 0m
+            ? InvoiceRecoveryCalculator.Unsettled
+            : x.ReceiptAllocations.Where(a => a.IsActive).Sum(allocation => allocation.AllocatedAmount ?? 0m) >= (x.GrossPremium ?? 0m)
+                ? InvoiceRecoveryCalculator.Settled
+                : InvoiceRecoveryCalculator.PartiallySettled,
         GrossAmount = x.GrossPremium ?? 0m,
         NetPremium = x.NetPremium,
         NetAmount = x.NetPremium,
-        PairedAmount = x.ReceiptAllocations.Sum(allocation => allocation.AllocatedAmount ?? 0m),
-        OutstandingAmount = (x.GrossPremium ?? 0m) > x.ReceiptAllocations.Sum(allocation => allocation.AllocatedAmount ?? 0m)
-            ? (x.GrossPremium ?? 0m) - x.ReceiptAllocations.Sum(allocation => allocation.AllocatedAmount ?? 0m)
+        PairedAmount = x.ReceiptAllocations.Where(a => a.IsActive).Sum(allocation => allocation.AllocatedAmount ?? 0m),
+        OutstandingAmount = (x.GrossPremium ?? 0m) > x.ReceiptAllocations.Where(a => a.IsActive).Sum(allocation => allocation.AllocatedAmount ?? 0m)
+            ? (x.GrossPremium ?? 0m) - x.ReceiptAllocations.Where(a => a.IsActive).Sum(allocation => allocation.AllocatedAmount ?? 0m)
             : 0m,
-        RecoveryStatus = (x.GrossPremium ?? 0m) > 0m && x.ReceiptAllocations.Sum(allocation => allocation.AllocatedAmount ?? 0m) >= (x.GrossPremium ?? 0m) ? "Paired" : "Unpaired",
-        PairingStatus = (x.GrossPremium ?? 0m) > 0m && x.ReceiptAllocations.Sum(allocation => allocation.AllocatedAmount ?? 0m) >= (x.GrossPremium ?? 0m) ? "Paired" : "Unpaired",
+        RecoveryStatus = x.ReceiptAllocations.Where(a => a.IsActive).Sum(allocation => allocation.AllocatedAmount ?? 0m) <= 0m
+            ? InvoiceRecoveryCalculator.Unsettled
+            : x.ReceiptAllocations.Where(a => a.IsActive).Sum(allocation => allocation.AllocatedAmount ?? 0m) >= (x.GrossPremium ?? 0m)
+                ? InvoiceRecoveryCalculator.Settled
+                : InvoiceRecoveryCalculator.PartiallySettled,
+        PairingStatus = x.ReceiptAllocations.Where(a => a.IsActive).Sum(allocation => allocation.AllocatedAmount ?? 0m) <= 0m
+            ? InvoiceRecoveryCalculator.Unsettled
+            : x.ReceiptAllocations.Where(a => a.IsActive).Sum(allocation => allocation.AllocatedAmount ?? 0m) >= (x.GrossPremium ?? 0m)
+                ? InvoiceRecoveryCalculator.Settled
+                : InvoiceRecoveryCalculator.PartiallySettled,
         Status = x.Status,
         Label = x.Label ?? string.Empty
     };

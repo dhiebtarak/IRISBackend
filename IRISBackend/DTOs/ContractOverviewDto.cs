@@ -56,6 +56,10 @@ namespace IRISBackend.DTOs
 
         public decimal? CedentCommission { get; set; }
 
+        public decimal? CedentCommissionPercentage { get; set; }
+
+        public decimal? CedentCommissionAmount { get; set; }
+
         public decimal? NetPremiumCedent { get; set; }
 
         public decimal? NetPremium { get; set; }

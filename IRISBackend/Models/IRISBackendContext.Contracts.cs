@@ -4,11 +4,36 @@ namespace IRISBackend.Models;
 
 public partial class IRISBackendContext
 {
+    public virtual DbSet<IrisBankAccount> IrisBankAccounts { get; set; }
+
     partial void OnModelCreatingPartial(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<IrisBankAccount>(entity =>
+        {
+            entity.ToTable("IRIS_BANK_ACCOUNT");
+            entity.HasKey(account => account.IdIrisBankAccount);
+            entity.Property(account => account.IdIrisBankAccount).HasColumnName("id_iris_bank_account");
+            entity.Property(account => account.BankName).HasMaxLength(255).IsRequired().HasColumnName("bank_name");
+            entity.Property(account => account.IdCurrency).IsRequired().HasColumnName("id_currency");
+            entity.Property(account => account.Iban).HasMaxLength(34).IsRequired().HasColumnName("iban");
+            entity.Property(account => account.BicSwift).HasMaxLength(11).IsRequired().HasColumnName("bic_swift");
+            entity.Property(account => account.DisplayOrder).HasDefaultValue(0).HasColumnName("display_order");
+            entity.Property(account => account.IsActive).HasDefaultValue(true).HasColumnName("is_active");
+            entity.Property(account => account.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()").HasColumnName("created_at");
+            entity.Property(account => account.CreatedBy).HasMaxLength(450).HasColumnName("created_by");
+            entity.Property(account => account.UpdatedAt).HasColumnName("updated_at");
+            entity.Property(account => account.UpdatedBy).HasMaxLength(450).HasColumnName("updated_by");
+            entity.HasIndex(account => account.IsActive).HasDatabaseName("IX_IRIS_BANK_ACCOUNT_is_active");
+            entity.HasOne(account => account.IdCurrencyNavigation).WithMany()
+                .HasForeignKey(account => account.IdCurrency)
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_IRIS_BANK_ACCOUNT_CURRENCY");
+        });
+
+        ConfigureOutgoingRemittances(modelBuilder);
         modelBuilder.Entity<Invoice>()
             .Property(invoice => invoice.RecoveryStatus)
-            .HasDefaultValue("Unpaired");
+            .HasDefaultValue("Unsettled");
 
         modelBuilder.Entity<InvoiceNumberSequence>(entity =>
         {
@@ -89,7 +114,17 @@ public partial class IRISBackendContext
             entity.HasIndex(e => e.IdInvoice, "IX_RECEIPT_ALLOCATION_id_invoice");
             entity.HasIndex(e => new { e.IdBankReceipt, e.IdInvoice }, "UX_RECEIPT_ALLOCATION_receipt_invoice")
                 .IsUnique()
-                .HasFilter("[id_invoice] IS NOT NULL");
+                .HasFilter("[id_invoice] IS NOT NULL AND [is_active] = 1");
+        });
+
+        modelBuilder.Entity<DocumentAttachment>(entity =>
+        {
+            entity.Property(e => e.IdBankReceipt).HasColumnName("id_bank_receipt");
+            entity.HasIndex(e => e.IdBankReceipt, "IX_DOCUMENT_ATTACHMENT_id_bank_receipt");
+            entity.HasOne(e => e.IdBankReceiptNavigation).WithMany(receipt => receipt.DocumentAttachments)
+                .HasForeignKey(e => e.IdBankReceipt)
+                .OnDelete(DeleteBehavior.NoAction)
+                .HasConstraintName("FK_DOCUMENT_ATTACHMENT_id_bank_receipt");
         });
 
         modelBuilder.Entity<CounterpartyBankAccount>(entity =>

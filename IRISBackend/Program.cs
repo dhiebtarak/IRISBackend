@@ -76,6 +76,18 @@ builder.Services.Configure<CounterpartyAttachmentStorageOptions>(
     builder.Configuration.GetSection(CounterpartyAttachmentStorageOptions.SectionName));
 builder.Services.Configure<DocumentStorageOptions>(
     builder.Configuration.GetSection(DocumentStorageOptions.SectionName));
+builder.Services.AddOptions<IrisInvoiceBrandingOptions>()
+    .Bind(builder.Configuration.GetSection(IrisInvoiceBrandingOptions.SectionName))
+    .Validate(options => !string.IsNullOrWhiteSpace(options.CompanyName), "IrisInvoiceBranding:CompanyName is required.")
+    .Validate(options => !string.IsNullOrWhiteSpace(options.AddressLine1), "IrisInvoiceBranding:AddressLine1 is required.")
+    .Validate(options => !string.IsNullOrWhiteSpace(options.AddressLine2), "IrisInvoiceBranding:AddressLine2 is required.")
+    .Validate(options => !string.IsNullOrWhiteSpace(options.Phone), "IrisInvoiceBranding:Phone is required.")
+    .Validate(options => !string.IsNullOrWhiteSpace(options.TaxIdentifier), "IrisInvoiceBranding:TaxIdentifier is required.")
+    .Validate(options => !string.IsNullOrWhiteSpace(options.CommercialRegister), "IrisInvoiceBranding:CommercialRegister is required.")
+    .ValidateOnStart();
+builder.Services
+    .AddOptions<IrisBankAccountsOptions>()
+    .Bind(builder.Configuration.GetSection("IrisBankAccounts"));
 
 builder.Services.AddDbContext<IRISBackendContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DevDB")));
@@ -163,6 +175,19 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+var irisBankAccountOptions = app.Services
+    .GetRequiredService<Microsoft.Extensions.Options.IOptions<IrisBankAccountsOptions>>()
+    .Value;
+var configuredIrisBankAccounts = irisBankAccountOptions.Accounts ?? [];
+var activeIrisBankAccounts = configuredIrisBankAccounts.Where(account => account.IsActive).ToList();
+app.Logger.LogInformation(
+    "IRIS bank-account configuration: Environment={Environment}, SectionExists={SectionExists}, ConfiguredAccounts={ConfiguredAccounts}, ActiveAccounts={ActiveAccounts}, Accounts={Accounts}",
+    app.Environment.EnvironmentName,
+    builder.Configuration.GetSection(IrisBankAccountsOptions.SectionName).Exists(),
+    configuredIrisBankAccounts.Count,
+    activeIrisBankAccounts.Count,
+    string.Join(", ", activeIrisBankAccounts.Select(account => $"{account.BankName}/{account.Currency}")));
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseMiddleware<RequestLoggingMiddleware>();

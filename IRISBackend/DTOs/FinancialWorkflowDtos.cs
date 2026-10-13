@@ -181,6 +181,10 @@ public sealed class EligibleInvoiceDto
     public string? Umr { get; set; }
     public int CedentId { get; set; }
     public string CedentName { get; set; } = string.Empty;
+    public decimal InvoiceAmount { get; set; }
+    public decimal SettledAmount { get; set; }
+    public decimal RemainingAmount { get; set; }
+    public string PaymentStatus { get; set; } = string.Empty;
     public decimal GrossAmount { get; set; }
     public decimal AlreadyPairedAmount { get; set; }
     public decimal OutstandingAmount { get; set; }
@@ -201,6 +205,18 @@ public sealed class EligibleContractDto
 
 public sealed class RemittanceResponseDto
 {
+    public int RemittanceId { get; set; }
+    public string? ReceiptReference { get; set; }
+    public string? InvoiceNumber { get; set; }
+    public string? PanelName { get; set; }
+    public int ReinsurerId { get; set; }
+    public string ReinsurerName { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; }
+    public DateOnly? ClosingIssuedDate { get; set; }
+    public int? ClosingId { get; set; }
+    public string? ClosingReference { get; set; }
+    public bool ClosingEligible { get; set; }
+    public decimal RemainingPayableAmount { get; set; }
     public int RemittanceRef { get; set; }
     public string RemittanceReference { get; set; } = string.Empty;
     public int? ReceiptAllocationId { get; set; }
@@ -228,8 +244,34 @@ public sealed class RemittanceResponseDto
     public string? Action { get; set; }
 }
 
+public sealed class RemittanceQueryDto
+{
+    public string? Search { get; set; }
+    public string? Reinsurer { get; set; }
+    public int? ReinsurerId { get; set; }
+    public string? Contract { get; set; }
+    public string? Umr { get; set; }
+    public int? ContractId { get; set; }
+    public string? Status { get; set; }
+    public string? Currency { get; set; }
+    public int? CurrencyId { get; set; }
+    public DateOnly? DateFrom { get; set; }
+    public DateOnly? DateTo { get; set; }
+    public int PageNumber { get; set; } = 1;
+    public int PageSize { get; set; } = 20;
+    public string? SortBy { get; set; }
+    public string? SortDirection { get; set; }
+}
+
+public sealed class OutgoingClosingRequestDto
+{
+    public IReadOnlyList<int> RemittanceIds { get; set; } = [];
+}
+
 public sealed class DisbursementContextDto
 {
+    public int? ClosingId { get; set; }
+    public string? ClosingContextUrl { get; set; }
     public int RemittanceId { get; set; }
     public int? ContractId { get; set; }
     public string? ContractName { get; set; }
@@ -322,6 +364,7 @@ public sealed class InvoiceQueryDto
     public int? CedentId { get; set; }
     public int? PanelId { get; set; }
     public string? InvoiceType { get; set; }
+    public string? PaymentStatus { get; set; }
     public string? PairingStatus { get; set; }
     // String-bound so UI placeholders such as "All currencies" can be ignored
     // instead of causing ASP.NET model binding to reject the entire request.
@@ -356,6 +399,10 @@ public sealed class InvoiceResponseDto
     public string InvoiceNumber { get; set; } = string.Empty;
     public string InvoiceType { get; set; } = string.Empty;
     public DateOnly InvoiceDate { get; set; }
+    public decimal InvoiceAmount { get; set; }
+    public decimal SettledAmount { get; set; }
+    public decimal RemainingAmount { get; set; }
+    public string PaymentStatus { get; set; } = string.Empty;
     public decimal GrossAmount { get; set; }
     public decimal? NetPremium { get; set; }
     public decimal? NetAmount { get; set; }
@@ -464,12 +511,15 @@ public sealed class PremiumDebitNoteResponseDto
     public decimal TotalNetAmount { get; set; }
     public string CurrencyCode { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
+    public string PaymentStatus { get; set; } = string.Empty;
+    public string RecoveryStatus { get; set; } = string.Empty;
     public string Label { get; set; } = string.Empty;
     public IReadOnlyList<PremiumDebitNoteAllocationDto> Allocations { get; set; } = [];
 }
 
 public sealed class NotificationResponseDto
 {
+    public int? ClosingId { get; set; }
     public int IdNotification { get; set; }
     public string NotificationType { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;

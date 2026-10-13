@@ -107,6 +107,24 @@ namespace IRISBackend.Tests
         }
 
         [Fact]
+        public async Task GetOverviewAsync_CalculatesContractNetPremiumFromGrossAndCedentCommission()
+        {
+            var contract = CreateOverviewContract();
+            contract.GrossPremium = 50000m;
+            contract.CedentCommission = 10m;
+            contract.NetPremiumCedent = 123m;
+            var service = CreateService(new FakeContractRepository { OverviewContract = contract });
+
+            var result = await service.GetOverviewAsync(contract.IdContract);
+
+            Assert.True(result.Succeeded);
+            Assert.Equal(50000m, result.Value!.GrossPremium);
+            Assert.Equal(10m, result.Value.CedentCommissionPercentage);
+            Assert.Equal(5000m, result.Value.CedentCommissionAmount);
+            Assert.Equal(45000m, result.Value.NetPremium);
+        }
+
+        [Fact]
         public async Task DownloadSlipsAsync_WhenNoSlipExists_ReturnsNonBlockingUnavailableResponse()
         {
             var repository = new FakeContractRepository

@@ -3,6 +3,7 @@ using IRISBackend.Models;
 using IRISBackend.Repositories;
 using IRISBackend.Services;
 using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Linq.Expressions;
@@ -83,6 +84,39 @@ public sealed class DocumentAttachmentServiceTests
         Assert.Equal("Active", document.Status);
     }
 
+    [Fact]
+    public async Task UploadBankReceiptDocumentAsync_BackOfficerReturnsForbidden()
+    {
+        var document = CreateDocument(14, 5, null);
+        var repository = new FakeDocumentRepository(document);
+        var service = CreateService(repository, accessibleContractId: 5, position: "Back Officer");
+
+        var result = await service.UploadBankReceiptDocumentAsync(22, new DocumentUploadRequestDto
+        {
+            FileName = "receipt.pdf",
+            MimeType = "application/pdf",
+            ContentBase64 = "QUJD"
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(StatusCodes.Status403Forbidden, result.StatusCode);
+    }
+
+    [Fact]
+    public async Task ArchiveBankReceiptDocumentAsync_BackOfficerReturnsForbidden()
+    {
+        var document = CreateBankReceiptDocument(15, 22);
+        var repository = new FakeDocumentRepository(document);
+        var service = CreateService(repository, accessibleContractId: 5, position: "Back Officer");
+
+        var result = await service.ArchiveBankReceiptDocumentAsync(22, document.IdDocument);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(StatusCodes.Status403Forbidden, result.StatusCode);
+        Assert.True(document.IsActive);
+        Assert.Equal("Active", document.Status);
+    }
+
     private static DocumentAttachment CreateDocument(int id, int contractId, int? panelId)
     {
         return new DocumentAttachment
@@ -103,17 +137,42 @@ public sealed class DocumentAttachmentServiceTests
         };
     }
 
+    private static DocumentAttachment CreateBankReceiptDocument(int id, int receiptId)
+    {
+        return new DocumentAttachment
+        {
+            IdDocument = id,
+            IdBankReceipt = receiptId,
+            DocumentType = "BankReceiptAttachment",
+            DocumentCategory = "BankReceipt",
+            OriginalFileName = "receipt.pdf",
+            FileName = "receipt.pdf",
+            FilePath = $"bank-receipts/{receiptId}/receipt.pdf",
+            MimeType = "application/pdf",
+            Status = "Active",
+            IsActive = true,
+            CreatedBy = "user-1",
+            CreatedAt = DateTime.UtcNow
+        };
+    }
+
     private static DocumentAttachmentService CreateService(
         FakeDocumentRepository documentRepository,
         int accessibleContractId,
-        int? accessiblePanelId = null)
+        int? accessiblePanelId = null,
+        string? position = null)
     {
+        var claims = new List<SecurityClaim> { new(ClaimTypes.NameIdentifier, "user-1") };
+        if (!string.IsNullOrWhiteSpace(position))
+        {
+            claims.Add(new SecurityClaim("position", position));
+        }
+
         var httpContextAccessor = new HttpContextAccessor
         {
             HttpContext = new DefaultHttpContext
             {
-                User = new ClaimsPrincipal(new ClaimsIdentity(
-                [new SecurityClaim(ClaimTypes.NameIdentifier, "user-1")], "Test"))
+                User = new ClaimsPrincipal(new ClaimsIdentity(claims, "Test"))
             }
         };
 
@@ -121,9 +180,18 @@ public sealed class DocumentAttachmentServiceTests
             documentRepository,
             new FakeContractRepository(accessibleContractId),
             new FakePlacementRepository(accessibleContractId, accessiblePanelId),
+            CreateUnusedDbContext(),
             new FakeStorageService(),
             httpContextAccessor,
             NullLogger<DocumentAttachmentService>.Instance);
+    }
+
+    private static IRISBackendContext CreateUnusedDbContext()
+    {
+        var options = new DbContextOptionsBuilder<IRISBackendContext>()
+            .UseSqlServer("Server=(localdb)\\mssqllocaldb;Database=IRISBackend_DocumentAttachmentTests;Trusted_Connection=True;")
+            .Options;
+        return new IRISBackendContext(options);
     }
 
     private sealed class FakeDocumentRepository : IDocumentAttachmentRepository

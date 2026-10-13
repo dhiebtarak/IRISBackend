@@ -2,13 +2,23 @@ namespace IRISBackend.Services;
 
 public static class InvoiceRecoveryCalculator
 {
+    public const string Unsettled = "Unsettled";
+    public const string PartiallySettled = "PartiallySettled";
+    public const string Settled = "Settled";
+
     public static InvoiceRecoveryAmounts Calculate(decimal grossAmount, decimal pairedAmount)
     {
         var outstanding = Math.Max(0m, grossAmount - pairedAmount);
         return new InvoiceRecoveryAmounts(
             pairedAmount,
             outstanding,
-            grossAmount > 0m && pairedAmount >= grossAmount ? "Paired" : "Unpaired");
+            GetInvoicePaymentStatus(grossAmount, pairedAmount));
+    }
+
+    public static string GetInvoicePaymentStatus(decimal invoiceAmount, decimal settledAmount)
+    {
+        if (settledAmount <= 0m) return Unsettled;
+        return settledAmount >= invoiceAmount ? Settled : PartiallySettled;
     }
 
     public static string GetReceiptPairingStatus(decimal receiptAmount, decimal allocatedAmount) =>

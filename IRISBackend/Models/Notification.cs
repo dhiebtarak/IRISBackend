@@ -10,6 +10,7 @@ public partial class Notification
     public string Message { get; set; } = string.Empty;
     public string EntityType { get; set; } = string.Empty;
     public int? EntityId { get; set; }
+    public int? ClosingId { get; set; }
     public string? TargetRoute { get; set; }
     public bool IsRead { get; set; }
     public DateTime CreatedAt { get; set; }

@@ -37,11 +37,47 @@ public sealed class BackOfficeController : ApiControllerBase
             });
         }
 
-        return FromServiceResult(await _service.AllocateReceiptInvoicesAsync(id, request, cancellationToken));
+        var result = await _service.AllocateReceiptInvoicesAsync(id, request, cancellationToken);
+        if (!result.Succeeded && result.Error?.Code is { } code && result.StatusCode is 400 or 409)
+        {
+            var problem = new ProblemDetails
+            {
+                Status = result.StatusCode,
+                Title = "Invoice allocation could not be completed.",
+                Detail = result.Error.Message,
+                Type = $"urn:iris:invoice-allocation:{code}",
+                Instance = HttpContext.Request.Path
+            };
+            problem.Extensions["code"] = code;
+            problem.Extensions["receiptId"] = id;
+            problem.Extensions["traceId"] = HttpContext.TraceIdentifier;
+            return new ObjectResult(problem) { StatusCode = result.StatusCode, ContentTypes = { "application/problem+json" } };
+        }
+        return FromServiceResult(result);
     }
 
     [HttpGet("remittances")]
-    public async Task<IActionResult> Remittances(CancellationToken cancellationToken) => FromServiceResult(await _service.ListRemittancesAsync(cancellationToken));
+    public async Task<IActionResult> Remittances([FromQuery] RemittanceQueryDto query, CancellationToken cancellationToken) => FromServiceResult(await _service.ListRemittancesAsync(query, cancellationToken));
+
+    [HttpPost("bank-receipts/{id:int}/remittances/generate")]
+    public async Task<IActionResult> GenerateRemittances(int id, CancellationToken cancellationToken) =>
+        FromServiceResult(await _service.GenerateReceiptRemittancesAsync(id, cancellationToken));
+
+    [HttpPost("remittances/closings")]
+    public async Task<IActionResult> PrintClosing([FromBody] OutgoingClosingRequestDto request, CancellationToken cancellationToken)
+    {
+        var result = await _service.CreateOutgoingClosingAsync(request, cancellationToken);
+        if (!result.Succeeded) return FromServiceResult(result);
+        return File(result.Value!.Content, result.Value.ContentType, result.Value.FileName);
+    }
+
+    [HttpGet("remittances/closings/{closingId:int}/document")]
+    public async Task<IActionResult> ClosingDocument(int closingId, CancellationToken cancellationToken)
+    {
+        var result = await _service.GetOutgoingClosingDocumentAsync(closingId, cancellationToken);
+        if (!result.Succeeded) return FromServiceResult(result);
+        return File(result.Value!.Content, result.Value.ContentType, result.Value.FileName);
+    }
 
     [HttpPost("remittances/{remittanceRef:int}/confirm")]
     public async Task<IActionResult> ConfirmRemittance(int remittanceRef, CancellationToken cancellationToken) => FromServiceResult(await _service.ConfirmRemittanceAsync(remittanceRef, cancellationToken));

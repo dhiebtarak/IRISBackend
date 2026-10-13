@@ -38,6 +38,25 @@ public sealed class FinanceController : ApiControllerBase
     public async Task<IActionResult> DisbursementContext(int id, CancellationToken cancellationToken) =>
         FromServiceResult(await _service.GetDisbursementContextAsync(id, cancellationToken));
 
+    [HttpGet("closings/{closingId:int}/disbursement-context")]
+    public async Task<IActionResult> ClosingDisbursementContext(int closingId, CancellationToken cancellationToken) =>
+        FromServiceResult(await _service.GetClosingDisbursementContextAsync(closingId, cancellationToken));
+
+    [HttpGet("closings/{closingId:int}/pdf")]
+    public async Task<IActionResult> ClosingPdf(int closingId, CancellationToken cancellationToken)
+    {
+        var result = await _service.GetFinanceClosingPdfAsync(closingId, cancellationToken);
+        return result.Succeeded ? File(result.Value!.Content, result.Value.ContentType, result.Value.FileName) : FromServiceResult(result);
+    }
+
+    [HttpPost("closings/{closingId:int}/start-disbursement")]
+    public async Task<IActionResult> StartClosingDisbursement(int closingId, CancellationToken cancellationToken) =>
+        FromServiceResult(await _service.StartClosingDisbursementAsync(closingId, cancellationToken));
+
+    [HttpPost("closings/{closingId:int}/confirm-transfer")]
+    public async Task<IActionResult> ConfirmClosingTransfer(int closingId, CancellationToken cancellationToken) =>
+        FromServiceResult(await _service.ConfirmClosingTransferAsync(closingId, cancellationToken));
+
     [HttpPost("remittances/{id:int}/start-disbursement")]
     public async Task<IActionResult> StartDisbursement(int id, CancellationToken cancellationToken) =>
         FromServiceResult(await _service.StartDisbursementAsync(id, cancellationToken));

@@ -281,6 +281,15 @@ namespace IRISBackend.Services
 
         private static ContractOverviewDto MapOverview(Models.Contract contract)
         {
+            var cedentCommissionPercentage = contract.CedentCommission ?? 0m;
+            var cedentCommissionAmount = contract.GrossPremium.HasValue
+                ? FacultativeFinancialCalculator.RoundMoney(
+                    contract.GrossPremium.Value * cedentCommissionPercentage / 100m)
+                : (decimal?)null;
+            var netPremium = contract.GrossPremium.HasValue
+                ? FacultativeFinancialCalculator.RoundMoney(
+                    contract.GrossPremium.Value - (cedentCommissionAmount ?? 0m))
+                : (decimal?)null;
             var coverageSelection = MapCoverageSelection(contract);
             var selectedCount = contract.ContractCoverageSelections.Count;
             var availableSlipCount = contract.ContractCoverageSelections.Count(selection => selection.IdSlipTemplate.HasValue);
@@ -341,11 +350,11 @@ namespace IRISBackend.Services
                 GrossPremium = contract.GrossPremium,
                 IrisCommission = contract.Fees,
                 CedentCommissionPct = contract.CedentCommission,
-                CedentCommission = contract.GrossPremium.HasValue
-                    ? FacultativeFinancialCalculator.RoundMoney(contract.GrossPremium.Value * (contract.CedentCommission ?? 0m) / 100m)
-                    : null,
+                CedentCommission = cedentCommissionAmount,
+                CedentCommissionPercentage = contract.CedentCommission,
+                CedentCommissionAmount = cedentCommissionAmount,
                 NetPremiumCedent = contract.NetPremiumCedent,
-                NetPremium = contract.NetPremiumCedent,
+                NetPremium = netPremium,
                 IsFronting = contract.IsFronting,
                 FrontingReference = contract.FrontingReference,
                 IsHighPriority = contract.Flag,

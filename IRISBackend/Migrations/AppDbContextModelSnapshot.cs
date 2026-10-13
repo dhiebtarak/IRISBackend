@@ -2089,6 +2089,10 @@ namespace IRISBackend.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("File_size");
 
+                    b.Property<int?>("IdBankReceipt")
+                        .HasColumnType("int")
+                        .HasColumnName("id_bank_receipt");
+
                     b.Property<int?>("IdContract")
                         .HasColumnType("int")
                         .HasColumnName("Id_contract");
@@ -2161,6 +2165,8 @@ namespace IRISBackend.Migrations
                     b.HasIndex("IdPanel");
 
                     b.HasIndex("UpdatedBy");
+
+                    b.HasIndex(new[] { "IdBankReceipt" }, "IX_DOCUMENT_ATTACHMENT_id_bank_receipt");
 
                     b.HasIndex(new[] { "IdContract" }, "IX_DOCUMENT_ATTACHMENT_id_contract");
 
@@ -2389,7 +2395,7 @@ namespace IRISBackend.Migrations
                         .ValueGeneratedOnAdd()
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)")
-                        .HasDefaultValue("Unpaired")
+                        .HasDefaultValue("Unsettled")
                         .HasColumnName("Recovery_status");
 
                     b.Property<int?>("RemittanceRef")
@@ -2472,6 +2478,85 @@ namespace IRISBackend.Migrations
                     b.HasKey("InvoiceYear");
 
                     b.ToTable("INVOICE_NUMBER_SEQUENCE", (string)null);
+                });
+
+            modelBuilder.Entity("IRISBackend.Models.InvoicePairingOperation", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("PairingStatus")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<int>("ReceiptId")
+                        .HasColumnType("int");
+
+                    b.Property<decimal>("RemainingAmount")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("decimal(19,4)");
+
+                    b.Property<string>("RequestHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<decimal>("TotalAllocated")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("decimal(19,4)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedBy");
+
+                    b.HasIndex("ReceiptId", "RequestHash")
+                        .IsUnique()
+                        .HasFilter("[IsActive] = 1");
+
+                    b.ToTable("INVOICE_PAIRING_OPERATION", (string)null);
+                });
+
+            modelBuilder.Entity("IRISBackend.Models.InvoicePairingOperationLine", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("OperationId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("ReceiptAllocationId")
+                        .HasColumnType("int");
+
+                    b.Property<decimal>("RequestedAmount")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("decimal(19,4)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ReceiptAllocationId");
+
+                    b.HasIndex("OperationId", "ReceiptAllocationId")
+                        .IsUnique();
+
+                    b.ToTable("INVOICE_PAIRING_OPERATION_LINE", (string)null);
                 });
 
             modelBuilder.Entity("IRISBackend.Models.InvoicePanelAllocation", b =>
@@ -2559,6 +2644,79 @@ namespace IRISBackend.Migrations
                     b.ToTable("INVOICE_PANEL_ALLOCATION", (string)null);
                 });
 
+            modelBuilder.Entity("IRISBackend.Models.IrisBankAccount", b =>
+                {
+                    b.Property<int>("IdIrisBankAccount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("id_iris_bank_account");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("IdIrisBankAccount"));
+
+                    b.Property<string>("BankName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)")
+                        .HasColumnName("bank_name");
+
+                    b.Property<string>("BicSwift")
+                        .IsRequired()
+                        .HasMaxLength(11)
+                        .HasColumnType("nvarchar(11)")
+                        .HasColumnName("bic_swift");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<string>("CreatedBy")
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)")
+                        .HasColumnName("created_by");
+
+                    b.Property<int>("DisplayOrder")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0)
+                        .HasColumnName("display_order");
+
+                    b.Property<string>("Iban")
+                        .IsRequired()
+                        .HasMaxLength(34)
+                        .HasColumnType("nvarchar(34)")
+                        .HasColumnName("iban");
+
+                    b.Property<int>("IdCurrency")
+                        .HasColumnType("int")
+                        .HasColumnName("id_currency");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true)
+                        .HasColumnName("is_active");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("IdIrisBankAccount");
+
+                    b.HasIndex("IdCurrency");
+
+                    b.HasIndex("IsActive")
+                        .HasDatabaseName("IX_IRIS_BANK_ACCOUNT_is_active");
+
+                    b.ToTable("IRIS_BANK_ACCOUNT", (string)null);
+                });
+
             modelBuilder.Entity("IRISBackend.Models.Notification", b =>
                 {
                     b.Property<int>("IdNotification")
@@ -2567,6 +2725,10 @@ namespace IRISBackend.Migrations
                         .HasColumnName("id_notification");
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("IdNotification"));
+
+                    b.Property<int?>("ClosingId")
+                        .HasColumnType("int")
+                        .HasColumnName("closing_id");
 
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
@@ -2633,9 +2795,115 @@ namespace IRISBackend.Migrations
 
                     b.HasKey("IdNotification");
 
+                    b.HasIndex("ClosingId");
+
                     b.HasIndex(new[] { "RecipientUserId", "IsRead" }, "IX_NOTIFICATION_recipient_read");
 
                     b.ToTable("NOTIFICATION", (string)null);
+                });
+
+            modelBuilder.Entity("IRISBackend.Models.OutgoingClosing", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<int>("IdCounterparty")
+                        .HasColumnType("int");
+
+                    b.Property<int>("IdCurrency")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("IdDisbursement")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime>("IssuedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<byte[]>("PdfContent")
+                        .IsRequired()
+                        .HasColumnType("varbinary(max)");
+
+                    b.Property<string>("Reference")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("nvarchar(80)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)")
+                        .HasDefaultValue("AwaitingFinanceDisbursement");
+
+                    b.Property<decimal>("TotalAmount")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("decimal(19,4)");
+
+                    b.Property<string>("TotalInWords")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedBy");
+
+                    b.HasIndex("IdCounterparty");
+
+                    b.HasIndex("IdCurrency");
+
+                    b.HasIndex("IdDisbursement")
+                        .IsUnique()
+                        .HasFilter("[IdDisbursement] IS NOT NULL");
+
+                    b.HasIndex("Reference")
+                        .IsUnique();
+
+                    b.ToTable("OUTGOING_CLOSING", (string)null);
+                });
+
+            modelBuilder.Entity("IRISBackend.Models.OutgoingClosingLine", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("ClosingId")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<decimal>("PayableAmount")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("decimal(19,4)");
+
+                    b.Property<int>("RemittanceId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RemittanceId")
+                        .IsUnique()
+                        .HasFilter("[IsActive] = 1");
+
+                    b.HasIndex("ClosingId", "RemittanceId")
+                        .IsUnique();
+
+                    b.ToTable("OUTGOING_CLOSING_LINE", (string)null);
                 });
 
             modelBuilder.Entity("IRISBackend.Models.PremiumRef", b =>
@@ -2797,6 +3065,12 @@ namespace IRISBackend.Migrations
                         .HasColumnType("nvarchar(450)")
                         .HasColumnName("Id_user");
 
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true)
+                        .HasColumnName("is_active");
+
                     b.Property<DateTime?>("PairedAt")
                         .HasColumnType("datetime2")
                         .HasColumnName("Paired_at");
@@ -2832,7 +3106,7 @@ namespace IRISBackend.Migrations
 
                     b.HasIndex(new[] { "IdBankReceipt", "IdInvoice" }, "UX_RECEIPT_ALLOCATION_receipt_invoice")
                         .IsUnique()
-                        .HasFilter("[id_invoice] IS NOT NULL");
+                        .HasFilter("[id_invoice] IS NOT NULL AND [is_active] = 1");
 
                     b.ToTable("RECEIPT_ALLOCATION", (string)null);
                 });
@@ -2894,6 +3168,10 @@ namespace IRISBackend.Migrations
                         .HasColumnType("int")
                         .HasColumnName("Id_disbursement");
 
+                    b.Property<int?>("IdInvoiceAllocation")
+                        .HasColumnType("int")
+                        .HasColumnName("id_invoice_allocation");
+
                     b.Property<int?>("IdPanel")
                         .HasColumnType("int")
                         .HasColumnName("Id_panel");
@@ -2901,6 +3179,12 @@ namespace IRISBackend.Migrations
                     b.Property<int?>("IdReceiptAllocation")
                         .HasColumnType("int")
                         .HasColumnName("Id_receipt_allocation");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true)
+                        .HasColumnName("is_active");
 
                     b.Property<decimal?>("NetPayableAmount")
                         .HasColumnType("decimal(19, 4)")
@@ -2958,6 +3242,8 @@ namespace IRISBackend.Migrations
                     b.HasIndex("IdCurrency");
 
                     b.HasIndex("IdDisbursement");
+
+                    b.HasIndex("IdInvoiceAllocation");
 
                     b.HasIndex("IdPanel");
 
@@ -3608,6 +3894,12 @@ namespace IRISBackend.Migrations
                         .IsRequired()
                         .HasConstraintName("FK_DOCUMENT_ATTACHMENT_created_by_USER");
 
+                    b.HasOne("IRISBackend.Models.BankReceipt", "IdBankReceiptNavigation")
+                        .WithMany("DocumentAttachments")
+                        .HasForeignKey("IdBankReceipt")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .HasConstraintName("FK_DOCUMENT_ATTACHMENT_id_bank_receipt");
+
                     b.HasOne("IRISBackend.Models.Contract", "IdContractNavigation")
                         .WithMany("DocumentAttachments")
                         .HasForeignKey("IdContract")
@@ -3634,6 +3926,8 @@ namespace IRISBackend.Migrations
                         .HasConstraintName("FK_DOCUMENT_ATTACHMENT_updated_by_USER");
 
                     b.Navigation("CreatedByNavigation");
+
+                    b.Navigation("IdBankReceiptNavigation");
 
                     b.Navigation("IdContractNavigation");
 
@@ -3762,6 +4056,40 @@ namespace IRISBackend.Migrations
                     b.Navigation("UpdatedByNavigation");
                 });
 
+            modelBuilder.Entity("IRISBackend.Models.InvoicePairingOperation", b =>
+                {
+                    b.HasOne("IRISBackend.Models.AspNetUser", null)
+                        .WithMany()
+                        .HasForeignKey("CreatedBy")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("IRISBackend.Models.BankReceipt", null)
+                        .WithMany()
+                        .HasForeignKey("ReceiptId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("IRISBackend.Models.InvoicePairingOperationLine", b =>
+                {
+                    b.HasOne("IRISBackend.Models.InvoicePairingOperation", "Operation")
+                        .WithMany("Lines")
+                        .HasForeignKey("OperationId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("IRISBackend.Models.ReceiptAllocation", "Allocation")
+                        .WithMany()
+                        .HasForeignKey("ReceiptAllocationId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.Navigation("Allocation");
+
+                    b.Navigation("Operation");
+                });
+
             modelBuilder.Entity("IRISBackend.Models.InvoicePanelAllocation", b =>
                 {
                     b.HasOne("IRISBackend.Models.Counterparty", "IdCounterpartyNavigation")
@@ -3787,6 +4115,71 @@ namespace IRISBackend.Migrations
                     b.Navigation("IdInvoiceNavigation");
 
                     b.Navigation("IdPanelNavigation");
+                });
+
+            modelBuilder.Entity("IRISBackend.Models.IrisBankAccount", b =>
+                {
+                    b.HasOne("IRISBackend.Models.Currency", "IdCurrencyNavigation")
+                        .WithMany()
+                        .HasForeignKey("IdCurrency")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_IRIS_BANK_ACCOUNT_CURRENCY");
+
+                    b.Navigation("IdCurrencyNavigation");
+                });
+
+            modelBuilder.Entity("IRISBackend.Models.Notification", b =>
+                {
+                    b.HasOne("IRISBackend.Models.OutgoingClosing", null)
+                        .WithMany()
+                        .HasForeignKey("ClosingId")
+                        .OnDelete(DeleteBehavior.NoAction);
+                });
+
+            modelBuilder.Entity("IRISBackend.Models.OutgoingClosing", b =>
+                {
+                    b.HasOne("IRISBackend.Models.AspNetUser", null)
+                        .WithMany()
+                        .HasForeignKey("CreatedBy")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("IRISBackend.Models.Counterparty", null)
+                        .WithMany()
+                        .HasForeignKey("IdCounterparty")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("IRISBackend.Models.Currency", null)
+                        .WithMany()
+                        .HasForeignKey("IdCurrency")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("IRISBackend.Models.Disbursement", null)
+                        .WithMany()
+                        .HasForeignKey("IdDisbursement")
+                        .OnDelete(DeleteBehavior.NoAction);
+                });
+
+            modelBuilder.Entity("IRISBackend.Models.OutgoingClosingLine", b =>
+                {
+                    b.HasOne("IRISBackend.Models.OutgoingClosing", "Closing")
+                        .WithMany("Lines")
+                        .HasForeignKey("ClosingId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("IRISBackend.Models.RemittanceRef", "Remittance")
+                        .WithMany("ClosingLines")
+                        .HasForeignKey("RemittanceId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.Navigation("Closing");
+
+                    b.Navigation("Remittance");
                 });
 
             modelBuilder.Entity("IRISBackend.Models.PremiumRef", b =>
@@ -3933,6 +4326,11 @@ namespace IRISBackend.Migrations
                         .HasForeignKey("IdDisbursement")
                         .HasConstraintName("FK_REMITTANCE_REF_id_disbursement");
 
+                    b.HasOne("IRISBackend.Models.InvoicePanelAllocation", "IdInvoiceAllocationNavigation")
+                        .WithMany()
+                        .HasForeignKey("IdInvoiceAllocation")
+                        .OnDelete(DeleteBehavior.NoAction);
+
                     b.HasOne("IRISBackend.Models.ContractPanel", "IdPanelNavigation")
                         .WithMany("RemittanceRefs")
                         .HasForeignKey("IdPanel")
@@ -3962,6 +4360,8 @@ namespace IRISBackend.Migrations
                     b.Navigation("IdCurrencyNavigation");
 
                     b.Navigation("IdDisbursementNavigation");
+
+                    b.Navigation("IdInvoiceAllocationNavigation");
 
                     b.Navigation("IdPanelNavigation");
 
@@ -4088,6 +4488,8 @@ namespace IRISBackend.Migrations
 
             modelBuilder.Entity("IRISBackend.Models.BankReceipt", b =>
                 {
+                    b.Navigation("DocumentAttachments");
+
                     b.Navigation("ReceiptAllocations");
                 });
 
@@ -4222,11 +4624,26 @@ namespace IRISBackend.Migrations
                     b.Navigation("ReceiptAllocations");
                 });
 
+            modelBuilder.Entity("IRISBackend.Models.InvoicePairingOperation", b =>
+                {
+                    b.Navigation("Lines");
+                });
+
+            modelBuilder.Entity("IRISBackend.Models.OutgoingClosing", b =>
+                {
+                    b.Navigation("Lines");
+                });
+
             modelBuilder.Entity("IRISBackend.Models.PremiumRef", b =>
                 {
                     b.Navigation("ReceiptAllocations");
 
                     b.Navigation("RemittanceRefs");
+                });
+
+            modelBuilder.Entity("IRISBackend.Models.RemittanceRef", b =>
+                {
+                    b.Navigation("ClosingLines");
                 });
 
             modelBuilder.Entity("IRISBackend.Models.SlipTemplate", b =>

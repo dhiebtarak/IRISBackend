@@ -24,6 +24,25 @@ public interface IDocumentAttachmentService
         DocumentUploadRequestDto request,
         CancellationToken cancellationToken = default);
 
+    Task<ServiceResult<IReadOnlyList<DocumentAttachmentResponseDto>>> ListBankReceiptDocumentsAsync(
+        int receiptId,
+        CancellationToken cancellationToken = default);
+
+    Task<ServiceResult<DocumentAttachmentResponseDto>> UploadBankReceiptDocumentAsync(
+        int receiptId,
+        DocumentUploadRequestDto request,
+        CancellationToken cancellationToken = default);
+
+    Task<ServiceResult<DocumentDownload>> DownloadBankReceiptDocumentAsync(
+        int receiptId,
+        int documentId,
+        CancellationToken cancellationToken = default);
+
+    Task<ServiceResult<bool>> ArchiveBankReceiptDocumentAsync(
+        int receiptId,
+        int documentId,
+        CancellationToken cancellationToken = default);
+
     Task<ServiceResult<DocumentDownload>> DownloadAsync(
         int documentId,
         CancellationToken cancellationToken = default);

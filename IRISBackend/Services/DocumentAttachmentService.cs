@@ -10,14 +10,17 @@ public sealed class DocumentAttachmentService : IDocumentAttachmentService
 {
     private const string ContractDocumentType = "ContractAttachment";
     private const string PanelDocumentType = "PlacementAttachment";
+    private const string BankReceiptDocumentType = "BankReceiptAttachment";
     private const string ContractCategory = "Contract";
     private const string PlacementCategory = "Placement";
+    private const string BankReceiptCategory = "BankReceipt";
     private const string ActiveStatus = "Active";
     private const string LocalStorageProvider = "LocalFileSystem";
 
     private readonly IDocumentAttachmentRepository _documentRepository;
     private readonly IContractRepository _contractRepository;
     private readonly IContractPlacementRepository _placementRepository;
+    private readonly IRISBackendContext _db;
     private readonly IDocumentStorageService _storageService;
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly ILogger<DocumentAttachmentService> _logger;
@@ -26,6 +29,7 @@ public sealed class DocumentAttachmentService : IDocumentAttachmentService
         IDocumentAttachmentRepository documentRepository,
         IContractRepository contractRepository,
         IContractPlacementRepository placementRepository,
+        IRISBackendContext db,
         IDocumentStorageService storageService,
         IHttpContextAccessor httpContextAccessor,
         ILogger<DocumentAttachmentService> logger)
@@ -33,6 +37,7 @@ public sealed class DocumentAttachmentService : IDocumentAttachmentService
         _documentRepository = documentRepository;
         _contractRepository = contractRepository;
         _placementRepository = placementRepository;
+        _db = db;
         _storageService = storageService;
         _httpContextAccessor = httpContextAccessor;
         _logger = logger;
@@ -97,6 +102,76 @@ public sealed class DocumentAttachmentService : IDocumentAttachmentService
         return await UploadAsync(contractId, panelId, request, cancellationToken);
     }
 
+    public async Task<ServiceResult<IReadOnlyList<DocumentAttachmentResponseDto>>> ListBankReceiptDocumentsAsync(
+        int receiptId,
+        CancellationToken cancellationToken = default)
+    {
+        var access = await EnsureBankReceiptAccessAsync(receiptId, requireFinanceWrite: false, cancellationToken);
+        if (!access.Succeeded) return Failure<IReadOnlyList<DocumentAttachmentResponseDto>>(access);
+
+        var documents = await _documentRepository.Query()
+            .AsNoTracking()
+            .Include(document => document.CreatedByNavigation)
+            .Where(document => document.IdBankReceipt == receiptId && document.IsActive && document.Status != "Archived")
+            .OrderByDescending(document => document.CreatedAt)
+            .ToListAsync(cancellationToken);
+
+        return ServiceResult<IReadOnlyList<DocumentAttachmentResponseDto>>.Success(MapDocuments(documents, receiptId));
+    }
+
+    public async Task<ServiceResult<DocumentAttachmentResponseDto>> UploadBankReceiptDocumentAsync(
+        int receiptId,
+        DocumentUploadRequestDto request,
+        CancellationToken cancellationToken = default)
+    {
+        var access = await EnsureBankReceiptAccessAsync(receiptId, requireFinanceWrite: true, cancellationToken);
+        if (!access.Succeeded) return Failure<DocumentAttachmentResponseDto>(access);
+
+        return await UploadBankReceiptAsync(receiptId, request, cancellationToken);
+    }
+
+    public async Task<ServiceResult<DocumentDownload>> DownloadBankReceiptDocumentAsync(
+        int receiptId,
+        int documentId,
+        CancellationToken cancellationToken = default)
+    {
+        var access = await EnsureBankReceiptAccessAsync(receiptId, requireFinanceWrite: false, cancellationToken);
+        if (!access.Succeeded) return Failure<DocumentDownload>(access);
+
+        var document = await _documentRepository.GetByIdAsync(documentId, cancellationToken);
+        if (document is null || document.IdBankReceipt != receiptId || !IsListed(document))
+        {
+            return NotFound<DocumentDownload>();
+        }
+
+        var stream = await _storageService.OpenReadAsync(document.FilePath, cancellationToken);
+        if (stream is null) return NotFound<DocumentDownload>();
+
+        return ServiceResult<DocumentDownload>.Success(new DocumentDownload
+        {
+            Content = stream,
+            FileName = document.OriginalFileName,
+            MimeType = document.MimeType
+        });
+    }
+
+    public async Task<ServiceResult<bool>> ArchiveBankReceiptDocumentAsync(
+        int receiptId,
+        int documentId,
+        CancellationToken cancellationToken = default)
+    {
+        var access = await EnsureBankReceiptAccessAsync(receiptId, requireFinanceWrite: true, cancellationToken);
+        if (!access.Succeeded) return Failure<bool>(access);
+
+        var document = await _documentRepository.GetByIdAsync(documentId, cancellationToken);
+        if (document is null || document.IdBankReceipt != receiptId)
+        {
+            return NotFound<bool>();
+        }
+
+        return await ArchiveDocumentAsync(document, cancellationToken);
+    }
+
     public async Task<ServiceResult<DocumentDownload>> DownloadAsync(
         int documentId,
         CancellationToken cancellationToken = default)
@@ -146,37 +221,7 @@ public sealed class DocumentAttachmentService : IDocumentAttachmentService
             if (panel is null) return NotFound<bool>();
         }
 
-        var userId = GetCurrentUserId();
-        if (string.IsNullOrWhiteSpace(userId))
-        {
-            return ServiceResult<bool>.Failure(
-                "Authenticated user could not be resolved.",
-                statusCode: StatusCodes.Status401Unauthorized);
-        }
-
-        if (!document.IsActive || IsArchived(document.Status))
-        {
-            return ServiceResult<bool>.Success(true, StatusCodes.Status204NoContent);
-        }
-
-        document.Status = "Archived";
-        document.IsActive = false;
-        document.UpdatedAt = DateTime.UtcNow;
-        document.UpdatedBy = userId;
-
-        try
-        {
-            _documentRepository.Update(document);
-            await _documentRepository.SaveChangesAsync(cancellationToken);
-            return ServiceResult<bool>.Success(true, StatusCodes.Status204NoContent);
-        }
-        catch (Exception exception)
-        {
-            _logger.LogError(exception, "Failed to archive document {DocumentId}.", documentId);
-            return ServiceResult<bool>.Failure(
-                "The document could not be archived.",
-                statusCode: StatusCodes.Status500InternalServerError);
-        }
+        return await ArchiveDocumentAsync(document, cancellationToken);
     }
 
     private async Task<ServiceResult<DocumentAttachmentResponseDto>> UploadAsync(
@@ -243,6 +288,99 @@ public sealed class DocumentAttachmentService : IDocumentAttachmentService
         }
     }
 
+    private async Task<ServiceResult<DocumentAttachmentResponseDto>> UploadBankReceiptAsync(
+        int receiptId,
+        DocumentUploadRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        StoredDocument? stored = null;
+        try
+        {
+            stored = await _storageService.SaveAsync("bank-receipts", receiptId, request, cancellationToken);
+
+            var userId = GetCurrentUserId();
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                await _storageService.DeleteAsync(stored.RelativePath, cancellationToken);
+                return ServiceResult<DocumentAttachmentResponseDto>.Failure("Authenticated user could not be resolved.", statusCode: StatusCodes.Status401Unauthorized);
+            }
+
+            await using var transaction = await _documentRepository.BeginTransactionAsync(cancellationToken);
+            var document = new DocumentAttachment
+            {
+                IdBankReceipt = receiptId,
+                DocumentType = BankReceiptDocumentType,
+                DocumentCategory = BankReceiptCategory,
+                Title = stored.OriginalFileName,
+                Description = null,
+                FileName = stored.StoredFileName,
+                OriginalFileName = stored.OriginalFileName,
+                FileExtension = stored.FileExtension,
+                MimeType = stored.MimeType,
+                StorageProvider = LocalStorageProvider,
+                FilePath = stored.RelativePath,
+                ConfidentialityLevel = "Internal",
+                Status = ActiveStatus,
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow,
+                CreatedBy = userId,
+                FileSize = stored.FileSize
+            };
+
+            await _documentRepository.AddAsync(document, cancellationToken);
+            await _documentRepository.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+
+            return ServiceResult<DocumentAttachmentResponseDto>.Success(MapDocument(document, receiptId), StatusCodes.Status201Created);
+        }
+        catch (InvalidOperationException exception)
+        {
+            if (stored is not null) await _storageService.DeleteAsync(stored.RelativePath, cancellationToken);
+            return ServiceResult<DocumentAttachmentResponseDto>.Failure(exception.Message);
+        }
+        catch (Exception exception)
+        {
+            if (stored is not null) await _storageService.DeleteAsync(stored.RelativePath, cancellationToken);
+            _logger.LogError(exception, "Failed to save document attachment for bank receipt {ReceiptId}.", receiptId);
+            return ServiceResult<DocumentAttachmentResponseDto>.Failure("The document could not be saved.", statusCode: StatusCodes.Status500InternalServerError);
+        }
+    }
+
+    private async Task<ServiceResult<bool>> ArchiveDocumentAsync(DocumentAttachment document, CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            return ServiceResult<bool>.Failure(
+                "Authenticated user could not be resolved.",
+                statusCode: StatusCodes.Status401Unauthorized);
+        }
+
+        if (!document.IsActive || IsArchived(document.Status))
+        {
+            return ServiceResult<bool>.Success(true, StatusCodes.Status204NoContent);
+        }
+
+        document.Status = "Archived";
+        document.IsActive = false;
+        document.UpdatedAt = DateTime.UtcNow;
+        document.UpdatedBy = userId;
+
+        try
+        {
+            _documentRepository.Update(document);
+            await _documentRepository.SaveChangesAsync(cancellationToken);
+            return ServiceResult<bool>.Success(true, StatusCodes.Status204NoContent);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Failed to archive document {DocumentId}.", document.IdDocument);
+            return ServiceResult<bool>.Failure(
+                "The document could not be archived.",
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+    }
+
     private async Task<ServiceResult<object>> EnsureContractAccessAsync(int contractId, CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
@@ -261,6 +399,27 @@ public sealed class DocumentAttachmentService : IDocumentAttachmentService
             : ServiceResult<object>.Success(new object());
     }
 
+    private async Task<ServiceResult<object>> EnsureBankReceiptAccessAsync(int receiptId, bool requireFinanceWrite, CancellationToken cancellationToken)
+    {
+        var user = _httpContextAccessor.HttpContext?.User ?? new ClaimsPrincipal();
+        if (user.Identity?.IsAuthenticated != true)
+        {
+            return ServiceResult<object>.Failure("Authentication is required.", statusCode: StatusCodes.Status401Unauthorized);
+        }
+
+        var isFinance = FinancialAccessRules.IsFinanceOfficer(user);
+        var isBack = FinancialAccessRules.IsBackOfficer(user);
+        if (requireFinanceWrite ? !isFinance : !isFinance && !isBack)
+        {
+            return ServiceResult<object>.Failure("You are not authorized for this encaissement attachment operation.", statusCode: StatusCodes.Status403Forbidden);
+        }
+
+        var exists = await _db.BankReceipts.AsNoTracking().AnyAsync(receipt => receipt.IdBankReceipt == receiptId, cancellationToken);
+        return exists
+            ? ServiceResult<object>.Success(new object())
+            : ServiceResult<object>.Failure("Bank receipt was not found.", statusCode: StatusCodes.Status404NotFound);
+    }
+
     private async Task<ContractPanel?> GetAccessiblePanelAsync(int contractId, int panelId, CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
@@ -276,7 +435,12 @@ public sealed class DocumentAttachmentService : IDocumentAttachmentService
 
     private static IReadOnlyList<DocumentAttachmentResponseDto> MapDocuments(IEnumerable<DocumentAttachment> documents)
     {
-        return documents.Select(MapDocument).ToList();
+        return documents.Select(document => MapDocument(document)).ToList();
+    }
+
+    private static IReadOnlyList<DocumentAttachmentResponseDto> MapDocuments(IEnumerable<DocumentAttachment> documents, int receiptId)
+    {
+        return documents.Select(document => MapDocument(document, receiptId)).ToList();
     }
 
     private static DocumentAttachmentResponseDto MapDocument(DocumentAttachment document)
@@ -292,6 +456,13 @@ public sealed class DocumentAttachmentService : IDocumentAttachmentService
             CreatedByName = document.CreatedByNavigation?.UserName ?? document.CreatedBy,
             DownloadUrl = $"/api/documents/{document.IdDocument}/download"
         };
+    }
+
+    private static DocumentAttachmentResponseDto MapDocument(DocumentAttachment document, int receiptId)
+    {
+        var response = MapDocument(document);
+        response.DownloadUrl = $"/api/bank-receipts/{receiptId}/attachments/{document.IdDocument}/download";
+        return response;
     }
 
     private static bool IsListed(DocumentAttachment document)

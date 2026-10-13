@@ -72,6 +72,7 @@ public partial class BankReceipt
     public string? BusinessReference { get; set; }
     public string? DeclaredInvoiceNumber { get; set; }
     public DateOnly? DeclaredInvoiceMonth { get; set; }
+    public virtual ICollection<DocumentAttachment> DocumentAttachments { get; set; } = new List<DocumentAttachment>();
 }
 
 public partial class ReceiptAllocation
@@ -112,6 +113,12 @@ public partial class Invoice
     public virtual RemittanceRef? RemittanceRefNavigation { get; set; }
     public virtual Disbursement? IdDisbursementNavigation { get; set; }
     public virtual ICollection<ReceiptAllocation> ReceiptAllocations { get; set; } = new List<ReceiptAllocation>();
+}
+
+public partial class DocumentAttachment
+{
+    public int? IdBankReceipt { get; set; }
+    public virtual BankReceipt? IdBankReceiptNavigation { get; set; }
 }
 
 public partial class Disbursement
