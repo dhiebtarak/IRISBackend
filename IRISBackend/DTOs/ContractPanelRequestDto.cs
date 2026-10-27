@@ -49,8 +49,11 @@ namespace IRISBackend.DTOs
 
         public decimal? OtherDeductions { get; set; }
 
+        public decimal? OtherDeductionsPercentage { get; set; }
+
         public string? PremiumReference { get; set; }
 
         public string? Status { get; set; }
+
     }
 }

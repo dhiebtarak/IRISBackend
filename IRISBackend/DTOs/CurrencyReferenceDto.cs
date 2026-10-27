@@ -2,7 +2,7 @@ namespace IRISBackend.DTOs
 {
     public sealed class CurrencyReferenceDto
     {
-        public int Id { get; set; }
+        public int? Id { get; set; }
 
         public string Code { get; set; } = string.Empty;
 

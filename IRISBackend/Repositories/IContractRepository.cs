@@ -35,11 +35,6 @@ namespace IRISBackend.Repositories
             bool includeAllContracts = false,
             CancellationToken cancellationToken = default);
 
-        Task MarkDraftReadyForPlacementAsync(
-            int contractId,
-            string userId,
-            CancellationToken cancellationToken = default);
-
         Task<IReadOnlyList<SlipTemplate>> ListActiveCurrentSlipTemplatesForContractAsync(
             int contractId,
             string userId,

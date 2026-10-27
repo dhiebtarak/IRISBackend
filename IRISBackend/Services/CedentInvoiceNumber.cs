@@ -9,4 +9,12 @@ public static class CedentInvoiceNumber
 
         return $"INV-{year}-{sequence:000000}";
     }
+
+    public static string FormatAvoir(int year, int sequence)
+    {
+        if (sequence is < 1 or > 999999)
+            throw new ArgumentOutOfRangeException(nameof(sequence), "The annual Avoir sequence must be between 1 and 999999.");
+
+        return $"AV-{year}-{sequence:000000}";
+    }
 }

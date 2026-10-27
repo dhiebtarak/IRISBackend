@@ -104,6 +104,32 @@ namespace IRISBackend.Tests
             Assert.Equal(2, result.Value.SlipAvailability.SelectedCoverageItemCount);
             Assert.Equal(1, result.Value.SlipAvailability.AvailableSlipCount);
             Assert.Equal(1, result.Value.SlipAvailability.MissingSlipCount);
+            Assert.False(result.Value.HasAvoir);
+            Assert.Equal("DEBIT_NOTE", result.Value.ContractDocumentType);
+            Assert.Empty(result.Value.ContractDocumentDownloadUrl);
+        }
+
+        [Fact]
+        public async Task GetOverviewAsync_SelectsCreditNoteWhenContractHasActiveAvoir()
+        {
+            var contract = CreateOverviewContract();
+            contract.Invoices.Add(new Invoice
+            {
+                IdContract = contract.IdContract,
+                InvoiceType = "AVOIR",
+                InvoiceNumber = "AV-2026-000001",
+                GrossPremium = 25m,
+                NetPremium = 25m,
+                Status = "Issued"
+            });
+            var service = CreateService(new FakeContractRepository { OverviewContract = contract });
+
+            var result = await service.GetOverviewAsync(contract.IdContract);
+
+            Assert.True(result.Succeeded);
+            Assert.True(result.Value!.HasAvoir);
+            Assert.Equal("CREDIT_NOTE", result.Value.ContractDocumentType);
+            Assert.Empty(result.Value.ContractDocumentDownloadUrl);
         }
 
         [Fact]
@@ -189,19 +215,40 @@ namespace IRISBackend.Tests
         }
 
         [Fact]
-        public async Task CompleteDraftAsync_MovesDraftToReadyForPlacementThenReadsOverview()
+        public async Task GetOverviewAsync_WhenDraftHasNoBusinessFields_ReturnsOpenableOverview()
         {
-            var repository = new FakeContractRepository
-            {
-                OverviewContract = CreateOverviewContract()
-            };
-            var service = CreateService(repository);
+            var contract = CreateOverviewContract();
+            contract.Name = null;
+            contract.Umr = null;
+            contract.IdCounterparty = null;
+            contract.IdCounterpartyNavigation = null;
+            contract.IdCurrency = null;
+            contract.IdCurrencyNavigation = null;
+            contract.InceptionDate = null;
+            contract.ExpiryDate = null;
+            contract.ContractFac = null;
+            contract.GrossPremium = null;
+            contract.CedentCommission = null;
+            contract.NetPremiumCedent = null;
+            contract.IsFronting = null;
+            contract.Flag = null;
+            contract.ContractCoverageSelections.Clear();
+            contract.ContractPanels.Clear();
+            var service = CreateService(new FakeContractRepository { OverviewContract = contract });
 
-            var result = await service.CompleteDraftAsync(10);
+            var result = await service.GetOverviewAsync(contract.IdContract);
 
             Assert.True(result.Succeeded);
-            Assert.Equal(10, repository.ReadyForPlacementContractId);
-            Assert.Equal(ContractConstants.ReadyForPlacementStatus, repository.OverviewContract.Status);
+            Assert.Equal(contract.IdContract, result.Value!.IdContract);
+            Assert.Equal(ContractConstants.DraftStatus, result.Value.Status);
+            Assert.Null(result.Value.Name);
+            Assert.Null(result.Value.Umr);
+            Assert.Null(result.Value.Cedent);
+            Assert.Null(result.Value.Currency);
+            Assert.Null(result.Value.InceptionDate);
+            Assert.Null(result.Value.ExpiryDate);
+            Assert.Null(result.Value.GrossPremium);
+            Assert.Empty(result.Value.Panels);
         }
 
         private static ContractReadService CreateService(FakeContractRepository repository, bool authenticated = true)

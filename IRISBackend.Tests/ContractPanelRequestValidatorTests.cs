@@ -94,5 +94,37 @@ namespace IRISBackend.Tests
 
             Assert.True(result.IsValid);
         }
+
+        [Fact]
+        public void Validate_AcceptsFractionalOtherDeductionsPercentage()
+        {
+            var result = _validator.Validate(new ContractPanelRequestDto
+            {
+                IdCounterparty = 1,
+                WrittenSharePct = 25m,
+                SignedSharePct = 20m,
+                OtherDeductionsPercentage = 2.75m,
+                Status = "Draft"
+            });
+
+            Assert.DoesNotContain(result.Errors, error => error.PropertyName == nameof(ContractPanelRequestDto.OtherDeductionsPercentage));
+        }
+
+        [Fact]
+        public void Validate_RejectsOtherDeductionsPercentageAboveOneHundred()
+        {
+            var result = _validator.Validate(new ContractPanelRequestDto
+            {
+                IdCounterparty = 1,
+                WrittenSharePct = 25m,
+                SignedSharePct = 20m,
+                OtherDeductionsPercentage = 100.01m,
+                Status = "Draft"
+            });
+
+            Assert.Contains(result.Errors, error =>
+                error.PropertyName == nameof(ContractPanelRequestDto.OtherDeductionsPercentage) &&
+                error.ErrorMessage == "otherDeductionsPercentage must be between 0 and 100.");
+        }
     }
 }

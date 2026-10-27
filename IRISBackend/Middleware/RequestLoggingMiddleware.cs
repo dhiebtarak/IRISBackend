@@ -20,11 +20,12 @@ namespace IRISBackend.Middleware
             stopwatch.Stop();
 
             _logger.LogInformation(
-                "{Method} {Path} responded {StatusCode} in {ElapsedMilliseconds}ms",
+                "{Method} {Path} responded {StatusCode} in {ElapsedMilliseconds}ms. TraceId={TraceId}",
                 context.Request.Method,
                 context.Request.Path,
                 context.Response.StatusCode,
-                stopwatch.ElapsedMilliseconds);
+                stopwatch.ElapsedMilliseconds,
+                context.TraceIdentifier);
         }
     }
 }

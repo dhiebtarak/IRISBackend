@@ -35,6 +35,8 @@ namespace IRISBackend.Repositories
         {
             return _dbContext.Contracts
                 .Include(contract => contract.ContractPanels)
+                    .ThenInclude(panel => panel.IdCounterpartyNavigation)
+                .Include(contract => contract.IdCurrencyNavigation)
                 .FirstOrDefaultAsync(contract =>
                     contract.IdContract == contractId &&
                     contract.IsCurrent &&
@@ -50,6 +52,7 @@ namespace IRISBackend.Repositories
         {
             return _dbContext.ContractPanels
                 .Include(panel => panel.IdContractNavigation)
+                    .ThenInclude(contract => contract.IdCurrencyNavigation)
                 .Include(panel => panel.IdCounterpartyNavigation)
                 .FirstOrDefaultAsync(panel =>
                     panel.IdPanel == panelId &&
@@ -76,6 +79,11 @@ namespace IRISBackend.Repositories
                 {
                     IdPanel = panel.IdPanel,
                     IdContract = panel.IdContract,
+                    ContractGrossPremium = panel.IdContractNavigation.GrossPremium,
+                    ContractSignedSharePercentage = panel.IdContractNavigation.SignedSharePctCedent,
+                    ContractNetPremium = panel.IdContractNavigation.NetPremiumCedent,
+                    ContractCedentCommissionPercentage = panel.IdContractNavigation.CedentCommission,
+                    CurrencyDecimalPlaces = panel.IdContractNavigation.IdCurrencyNavigation.DecimalPlaces,
                     IdCounterparty = panel.IdCounterparty,
                     ReinsurerName = panel.IdCounterpartyNavigation.Name,
                     Role = panel.Role ?? string.Empty,
@@ -98,6 +106,8 @@ namespace IRISBackend.Repositories
                     CedentCommissionAmount = panel.CedentCommissionAmount,
                     BrokerageIrisAmount = panel.BrokerageIrisAmount,
                     OtherDeductions = panel.OtherDeductions,
+                    OtherDeductionsPercentage = panel.OtherDeductionsPercentage,
+                    OtherDeductionsAmount = panel.OtherDeductions,
                     NetPremium = panel.NetPremium,
                     PremiumReference = panel.PremiumReference,
                     Status = string.IsNullOrWhiteSpace(panel.Status)
@@ -108,6 +118,18 @@ namespace IRISBackend.Repositories
 
             foreach (var panel in panels)
             {
+                panel.ContractCedentCommissionAmount = panel.ContractGrossPremium.HasValue
+                    ? PremiumDebitNoteFinancials.CalculateCedentCommissionAmount(
+                        panel.ContractGrossPremium.Value,
+                        panel.ContractCedentCommissionPercentage,
+                        panel.CurrencyDecimalPlaces)
+                    : null;
+                panel.ContractNetPremium = panel.ContractGrossPremium.HasValue
+                    ? PremiumCalculationService.CalculateContractNetPremium(
+                        panel.ContractGrossPremium.Value,
+                        panel.ContractCedentCommissionPercentage,
+                        panel.CurrencyDecimalPlaces)
+                    : null;
                 Console.WriteLine(
                     $"Panel {panel.IdPanel}: Tsi={panel.Tsi}, PremiumRatePct={panel.PremiumRatePct}, BrokeragePct={panel.BrokeragePct}, PremiumReference={panel.PremiumReference}");
             }

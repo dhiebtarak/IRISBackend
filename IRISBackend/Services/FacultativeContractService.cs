@@ -16,6 +16,7 @@ namespace IRISBackend.Services
         private readonly IUserService _userService;
         private readonly IMapper _mapper;
         private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly PremiumCalculationService _premiumCalculationService;
 
         public FacultativeContractService(
             IContractRepository contractRepository,
@@ -24,7 +25,8 @@ namespace IRISBackend.Services
             IContractUmrGenerator umrGenerator,
             IUserService userService,
             IMapper mapper,
-            IHttpContextAccessor httpContextAccessor)
+            IHttpContextAccessor httpContextAccessor,
+            PremiumCalculationService? premiumCalculationService = null)
         {
             _contractRepository = contractRepository;
             _referenceDataRepository = referenceDataRepository;
@@ -33,6 +35,7 @@ namespace IRISBackend.Services
             _userService = userService;
             _mapper = mapper;
             _httpContextAccessor = httpContextAccessor;
+            _premiumCalculationService = premiumCalculationService ?? new PremiumCalculationService();
         }
 
         public async Task<ServiceResult<FacultativeContractResponseDto>> CreateDraftAsync(
@@ -59,51 +62,41 @@ namespace IRISBackend.Services
             var validationResult = await ValidateBusinessReferencesAsync(request, cancellationToken);
             if (!validationResult.Succeeded)
             {
-                return validationResult;
+                return MapBusinessReferenceFailure(validationResult);
             }
+            var currencyPrecision = validationResult.Value?.DecimalPlaces;
 
-            var coverageValidationResult = await _coverageSelectionService.ValidateAsync(request.CoverageSelection, cancellationToken);
-            if (!coverageValidationResult.Succeeded)
+            CoverageSelectionPlan? coveragePlan = null;
+            var coverageRequest = NormalizeCompleteCoverageSelection(request.CoverageSelection);
+            if (coverageRequest is not null)
             {
-                return MapCoverageFailure(coverageValidationResult);
+                var coverageValidationResult = await _coverageSelectionService.ValidateAsync(coverageRequest, cancellationToken);
+                if (!coverageValidationResult.Succeeded) return MapCoverageFailure(coverageValidationResult);
+                coveragePlan = coverageValidationResult.Value;
             }
 
             var now = DateTime.UtcNow;
-            var contractFac = BuildContractFacEntity(request);
+            var contractFac = HasFacultativeDetails(request) ? BuildContractFacEntity(request) : null;
 
             await using IDbContextTransaction transaction = await _contractRepository.BeginTransactionAsync(cancellationToken);
             Contract? contract = null;
 
             try
             {
-                var umrResult = await _umrGenerator.GenerateAsync(
-                    ContractConstants.FacultativeType,
-                    request.InceptionDate,
-                    coverageValidationResult.Value!,
-                    cancellationToken);
-                if (!umrResult.Succeeded)
-                {
-                    await transaction.RollbackAsync(cancellationToken);
-                    return ServiceResult<FacultativeContractResponseDto>.Failure(
-                        umrResult.Error?.Message ?? "Unable to generate the contract UMR.",
-                        umrResult.Error?.Errors,
-                        umrResult.StatusCode);
-                }
-
-                contract = BuildContractEntity(request, currentUserResult.Value!, umrResult.Value!, now);
+                contract = BuildContractEntity(request, currentUserResult.Value!, now, currencyPrecision);
                 await _contractRepository.AddAsync(contract, cancellationToken);
                 await _contractRepository.SaveChangesAsync(cancellationToken);
 
-                contractFac.IdContract = contract.IdContract;
-                await _contractRepository.AddFacultativeDetailsAsync(contractFac, cancellationToken);
-                await _contractRepository.SaveChangesAsync(cancellationToken);
+                if (contractFac is not null)
+                {
+                    contractFac.IdContract = contract.IdContract;
+                    await _contractRepository.AddFacultativeDetailsAsync(contractFac, cancellationToken);
+                    await _contractRepository.SaveChangesAsync(cancellationToken);
+                }
 
-                await _coverageSelectionService.CreateSelectionsAsync(
-                    contract.IdContract,
-                    coverageValidationResult.Value!,
-                    currentUserResult.Value!.Id,
-                    now,
-                    cancellationToken);
+                if (coveragePlan is not null)
+                    await _coverageSelectionService.CreateSelectionsAsync(contract.IdContract, coveragePlan,
+                        currentUserResult.Value!.Id, now, cancellationToken);
 
                 await transaction.CommitAsync(cancellationToken);
             }
@@ -135,6 +128,97 @@ namespace IRISBackend.Services
             }
 
             return ServiceResult<FacultativeContractResponseDto>.Success(_mapper.Map<FacultativeContractResponseDto>(contract));
+        }
+
+        public async Task<ServiceResult<FacultativeContractResponseDto>> CompleteDraftAsync(
+            int contractId,
+            CancellationToken cancellationToken = default)
+        {
+            var currentUserResult = await GetCurrentUserAsync(cancellationToken);
+            if (!currentUserResult.Succeeded) return MapFailure(currentUserResult);
+            var currentUser = currentUserResult.Value!;
+            if (!FrontOfficerAccessRules.IsFrontOfficer(currentUser))
+                return Forbidden("Only Front Officers can complete a contract draft.");
+
+            await using var transaction = await _contractRepository.BeginTransactionAsync(cancellationToken);
+            try
+            {
+                var contract = await _contractRepository.GetFacultativeContractByIdAsync(contractId,
+                    cancellationToken: cancellationToken);
+                if (contract is null) return NotFound();
+                if (!string.Equals(contract.IdUser, currentUser.Id, StringComparison.Ordinal))
+                    return Forbidden("You do not have access to complete another user's draft.");
+                if (!string.Equals(ContractConstants.NormalizeStatus(contract.Status), ContractConstants.DraftStatus,
+                        StringComparison.OrdinalIgnoreCase))
+                    return Conflict($"Only a Draft contract can move to Ready for Placement. Current status: '{contract.Status}'.");
+
+                var errors = ValidateForReadyForPlacement(contract);
+                if (errors.Count > 0)
+                    return ServiceResult<FacultativeContractResponseDto>.Failure(
+                        "Contract validation failed.", errors, StatusCodes.Status400BadRequest);
+
+                var referenceValidation = await ValidateBusinessReferencesAsync(new UpsertFacultativeContractRequest
+                {
+                    CounterpartyId = contract.IdCounterparty,
+                    CurrencyId = contract.IdCurrency
+                }, cancellationToken);
+                if (!referenceValidation.Succeeded)
+                    return MapBusinessReferenceFailure(referenceValidation);
+
+                var coverageRequest = BuildCoverageSelectionRequest(contract);
+                var coverageValidation = await _coverageSelectionService.ValidateAsync(coverageRequest, cancellationToken);
+                if (!coverageValidation.Succeeded) return MapCoverageFailure(coverageValidation);
+
+                var completedRequest = MergeRequest(contract, new UpsertFacultativeContractRequest());
+                var financialValidation = ValidateFinancialInputs(completedRequest);
+                if (!financialValidation.Succeeded) return financialValidation;
+                var currencyPrecision = referenceValidation.Value?.DecimalPlaces;
+                var financials = CalculateFinancials(completedRequest, currencyPrecision);
+                if (financials is null)
+                    return ServiceResult<FacultativeContractResponseDto>.Failure(
+                        "Contract validation failed.", ["premiumRate: Sum insured and premium rate are required before placement."], StatusCodes.Status400BadRequest);
+
+                if (contract.Umr is null)
+                {
+                    var umrResult = await _umrGenerator.GenerateAsync(
+                        ContractConstants.FacultativeType,
+                        contract.InceptionDate!.Value,
+                        coverageValidation.Value!,
+                        cancellationToken);
+                    if (!umrResult.Succeeded)
+                        return ServiceResult<FacultativeContractResponseDto>.Failure(
+                            umrResult.Error?.Message ?? "Unable to generate the contract UMR.",
+                            umrResult.Error?.Errors,
+                            umrResult.StatusCode);
+                    contract.Umr = umrResult.Value;
+                }
+
+                contract.GrossPremium = financials.GrossPremium;
+                contract.CedentCommission = contract.CedentCommission ?? 0m;
+                contract.NetPremiumCedent = PremiumCalculationService.CalculateContractNetPremium(
+                    financials.GrossPremium, contract.CedentCommission.Value, currencyPrecision);
+                contract.Status = ContractConstants.ReadyForPlacementStatus;
+                contract.UpdatedAt = DateTime.UtcNow;
+                contract.UpdatedBy = currentUser.Id;
+                _contractRepository.Update(contract);
+                await _contractRepository.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+
+                var saved = await _contractRepository.GetFacultativeContractByIdAsync(contractId,
+                    asNoTracking: true, cancellationToken);
+                return ServiceResult<FacultativeContractResponseDto>.Success(
+                    _mapper.Map<FacultativeContractResponseDto>(saved!));
+            }
+            catch (DbUpdateException exception) when (IsUmrConflict(exception))
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+                return Conflict("A contract with the generated UMR already exists.");
+            }
+            catch
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+                throw;
+            }
         }
 
         public async Task<ServiceResult<FacultativeContractResponseDto>> UpdateDraftAsync(
@@ -178,18 +262,23 @@ namespace IRISBackend.Services
             var validationResult = await ValidateBusinessReferencesAsync(request, cancellationToken);
             if (!validationResult.Succeeded)
             {
-                return validationResult;
+                return MapBusinessReferenceFailure(validationResult);
             }
+            var currencyPrecision = validationResult.Value?.DecimalPlaces ?? contract.IdCurrencyNavigation?.DecimalPlaces;
 
-            var coverageValidationResult = await _coverageSelectionService.ValidateAsync(request.CoverageSelection, cancellationToken);
-            if (!coverageValidationResult.Succeeded)
+            CoverageSelectionPlan? coveragePlan = null;
+            var coverageRequest = NormalizeCompleteCoverageSelection(request.CoverageSelection);
+            if (coverageRequest is not null)
             {
-                return MapCoverageFailure(coverageValidationResult);
+                var coverageValidationResult = await _coverageSelectionService.ValidateAsync(coverageRequest, cancellationToken);
+                if (!coverageValidationResult.Succeeded) return MapCoverageFailure(coverageValidationResult);
+                coveragePlan = coverageValidationResult.Value;
             }
 
-            ApplyRequest(contract, request, currentUserResult.Value!.Id, DateTime.UtcNow);
+            var effectiveRequest = MergeRequest(contract, request);
+            ApplyRequest(contract, effectiveRequest, currentUserResult.Value!.Id, DateTime.UtcNow, currencyPrecision);
 
-            if (contract.ContractFac is null)
+            if (contract.ContractFac is null && HasFacultativeDetails(request))
             {
                 contract.ContractFac = new ContractFac
                 {
@@ -197,10 +286,13 @@ namespace IRISBackend.Services
                 };
             }
 
-            contract.ContractFac.SumInsured = request.SumInsured;
-            contract.ContractFac.LimitOfLiability = request.LimitOfLiability;
-            contract.ContractFac.Deductible = request.Deductible;
-            contract.ContractFac.PremiumRate = request.PremiumRate;
+            if (contract.ContractFac is not null)
+            {
+                if (request.SumInsured.HasValue) contract.ContractFac.SumInsured = request.SumInsured;
+                if (request.LimitOfLiability.HasValue) contract.ContractFac.LimitOfLiability = request.LimitOfLiability;
+                if (request.Deductible.HasValue) contract.ContractFac.Deductible = request.Deductible;
+                if (request.PremiumRate.HasValue) contract.ContractFac.PremiumRate = request.PremiumRate;
+            }
 
             await using IDbContextTransaction transaction = await _contractRepository.BeginTransactionAsync(cancellationToken);
             try
@@ -208,12 +300,22 @@ namespace IRISBackend.Services
                 _contractRepository.Update(contract);
                 await _contractRepository.SaveChangesAsync(cancellationToken);
 
-                await _coverageSelectionService.ReplaceSelectionsAsync(
-                    contract.IdContract,
-                    coverageValidationResult.Value!,
-                    currentUserResult.Value!.Id,
-                    contract.UpdatedAt ?? DateTime.UtcNow,
-                    cancellationToken);
+                if (coveragePlan is not null)
+                    await _coverageSelectionService.ReplaceSelectionsAsync(contract.IdContract, coveragePlan,
+                        currentUserResult.Value!.Id, contract.UpdatedAt ?? DateTime.UtcNow, cancellationToken);
+
+                if (contract.ContractPanels.Count > 0 && HasCompletePremiumInputs(contract))
+                {
+                    var premiumErrors = _premiumCalculationService.RecalculatePanels(contract, currencyPrecision);
+                    if (premiumErrors.Count > 0)
+                    {
+                        await transaction.RollbackAsync(cancellationToken);
+                        return ServiceResult<FacultativeContractResponseDto>.Failure(
+                            "Premium validation failed.", premiumErrors, StatusCodes.Status400BadRequest);
+                    }
+                }
+
+                await _contractRepository.SaveChangesAsync(cancellationToken);
 
                 await transaction.CommitAsync(cancellationToken);
             }
@@ -235,14 +337,14 @@ namespace IRISBackend.Services
         private Contract BuildContractEntity(
             UpsertFacultativeContractRequest request,
             UserProfileResponseDto currentUser,
-            string umr,
-            DateTime now)
+            DateTime now,
+            int? currencyPrecision)
         {
-            var financials = CalculateFinancials(request);
+            var financials = CalculateFinancials(request, currencyPrecision);
             var contract = new Contract
             {
-                Umr = umr,
-                Name = request.Name.Trim(),
+                Umr = null,
+                Name = NormalizeOptionalValue(request.Name),
                 IdCounterparty = request.CounterpartyId,
                 IdCurrency = request.CurrencyId,
                 ReceptionDate = request.ReceptionDate,
@@ -254,10 +356,11 @@ namespace IRISBackend.Services
                 SignedSharePctCedent = request.SignedSharePct,
                 GrossPremium = financials?.GrossPremium,
                 CedentCommission = request.CedentCommissionPct,
-                NetPremiumCedent = financials?.NetPremium,
+                NetPremiumCedent = financials is null ? null : PremiumCalculationService.CalculateContractNetPremium(
+                    financials.GrossPremium, request.CedentCommissionPct ?? 0m, currencyPrecision),
                 CedentPremiumReference = NormalizeOptionalValue(request.CedentPremiumReference),
                 IsFronting = request.IsFronting,
-                FrontingReference = request.IsFronting ? NormalizeOptionalValue(request.FrontingReference) : null,
+                FrontingReference = request.IsFronting == true ? NormalizeOptionalValue(request.FrontingReference) : null,
                 MemoText = NormalizeOptionalValue(request.MemoText),
                 TypeOfBusiness = ContractConstants.FacultativeType,
                 Status = ContractConstants.DraftStatus,
@@ -286,9 +389,10 @@ namespace IRISBackend.Services
             Contract contract,
             UpsertFacultativeContractRequest request,
             string updatedBy,
-            DateTime updatedAt)
+            DateTime updatedAt,
+            int? currencyPrecision)
         {
-            contract.Name = request.Name.Trim();
+            contract.Name = NormalizeOptionalValue(request.Name);
             contract.IdCounterparty = request.CounterpartyId;
             contract.IdCurrency = request.CurrencyId;
             contract.ReceptionDate = request.ReceptionDate;
@@ -298,40 +402,49 @@ namespace IRISBackend.Services
             contract.Flag = request.IsHighPriority;
             contract.WrittenSharePctCedent = request.WrittenSharePct;
             contract.SignedSharePctCedent = request.SignedSharePct;
-            var financials = CalculateFinancials(request);
+            var financials = CalculateFinancials(request, currencyPrecision);
             contract.GrossPremium = financials?.GrossPremium;
             contract.CedentCommission = request.CedentCommissionPct;
-            contract.NetPremiumCedent = financials?.NetPremium;
+            contract.NetPremiumCedent = financials is null ? null : PremiumCalculationService.CalculateContractNetPremium(
+                financials.GrossPremium, request.CedentCommissionPct ?? 0m, currencyPrecision);
             contract.CedentPremiumReference = NormalizeOptionalValue(request.CedentPremiumReference);
             contract.IsFronting = request.IsFronting;
-            contract.FrontingReference = request.IsFronting ? NormalizeOptionalValue(request.FrontingReference) : null;
+            contract.FrontingReference = request.IsFronting == true ? NormalizeOptionalValue(request.FrontingReference) : null;
             contract.MemoText = NormalizeOptionalValue(request.MemoText);
             contract.UpdatedAt = updatedAt;
             contract.UpdatedBy = updatedBy;
         }
 
-        private async Task<ServiceResult<FacultativeContractResponseDto>> ValidateBusinessReferencesAsync(
+        private async Task<ServiceResult<Currency?>> ValidateBusinessReferencesAsync(
             UpsertFacultativeContractRequest request,
             CancellationToken cancellationToken)
         {
             var errors = new List<string>();
 
-            var counterparty = await _referenceDataRepository.GetActiveCedentByIdAsync(request.CounterpartyId, cancellationToken);
-            if (counterparty is null)
+            if (request.CounterpartyId.HasValue &&
+                await _referenceDataRepository.GetActiveCedentByIdAsync(request.CounterpartyId.Value, cancellationToken) is null)
             {
-                errors.Add("The selected counterparty does not exist, is inactive, or is not eligible as a cedent.");
+                errors.Add("counterpartyId: The selected counterparty does not exist, is inactive, or is not eligible as a cedent.");
             }
 
-            var currency = await _referenceDataRepository.GetActiveCurrencyByIdAsync(request.CurrencyId, cancellationToken);
-            if (currency is null)
+            var currency = request.CurrencyId.HasValue
+                ? await _referenceDataRepository.GetActiveCurrencyByIdAsync(request.CurrencyId.Value, cancellationToken)
+                : null;
+            if (request.CurrencyId.HasValue && currency is null)
             {
-                errors.Add("The selected currency does not exist or is inactive.");
+                errors.Add("currencyId: The selected currency does not exist or is inactive.");
             }
 
             return errors.Count > 0
-                ? ServiceResult<FacultativeContractResponseDto>.Failure("Validation failed.", errors, StatusCodes.Status400BadRequest)
-                : ServiceResult<FacultativeContractResponseDto>.Success(new FacultativeContractResponseDto());
+                ? ServiceResult<Currency?>.Failure("Validation failed.", errors, StatusCodes.Status400BadRequest)
+                : ServiceResult<Currency?>.Success(currency);
         }
+
+        private static ServiceResult<FacultativeContractResponseDto> MapBusinessReferenceFailure(ServiceResult<Currency?> result) =>
+            ServiceResult<FacultativeContractResponseDto>.Failure(
+                result.Error?.Message ?? "Business reference validation failed.",
+                result.Error?.Errors,
+                result.StatusCode);
 
         private async Task<ServiceResult<UserProfileResponseDto>> GetCurrentUserAsync(CancellationToken cancellationToken)
         {
@@ -364,13 +477,16 @@ namespace IRISBackend.Services
                 coverageResult.StatusCode);
         }
 
-        private static FacultativeFinancialCalculation? CalculateFinancials(UpsertFacultativeContractRequest request)
+        private static FacultativeFinancialCalculation? CalculateFinancials(
+            UpsertFacultativeContractRequest request,
+            int? currencyDecimalPlaces = null)
         {
             return FacultativeFinancialCalculator.Calculate(
                 request.SumInsured,
                 request.PremiumRate,
                 request.Fees,
-                request.CedentCommissionPct);
+                request.CedentCommissionPct,
+                currencyDecimalPlaces);
         }
 
         private static ServiceResult<FacultativeContractResponseDto> ValidateFinancialInputs(UpsertFacultativeContractRequest request)
@@ -381,9 +497,9 @@ namespace IRISBackend.Services
                 errors.Add("sumInsured (TSI) must be greater than or equal to 0.");
             }
 
-            if (request.PremiumRate is < 0m or > 1m)
+            if (request.PremiumRate is < 0m or > 100m)
             {
-                errors.Add("premiumRate must be between 0 and 1 because it is stored as a fraction.");
+                errors.Add("premiumRate must be between 0 and 100 because it is a percentage.");
             }
 
             if (request.Fees is < 0m)
@@ -391,17 +507,23 @@ namespace IRISBackend.Services
                 errors.Add("fees (IRIS commission) must be greater than or equal to 0.");
             }
 
+            if (request.CedentCommissionPct is < 0m or > 100m)
+            {
+                errors.Add("cedentCommissionPct must be between 0 and 100 because it is a percentage.");
+            }
+
             var calculation = CalculateFinancials(request);
             if (calculation is not null)
             {
-                if (calculation.IrisCommission + calculation.CedentCommission > calculation.GrossPremium)
+                var cedentCommissionAmount = calculation.GrossPremium * (request.CedentCommissionPct ?? 0m) / 100m;
+                if (cedentCommissionAmount > calculation.GrossPremium)
                 {
-                    errors.Add("IRIS commission and Cedent commission cannot exceed gross premium.");
+                    errors.Add("Cedent commission amount cannot exceed gross premium.");
                 }
 
-                if (calculation.NetPremium < 0m)
+                if (calculation.GrossPremium - cedentCommissionAmount < 0m)
                 {
-                    errors.Add("Calculated net premium cannot be negative.");
+                    errors.Add("Calculated contract net premium cannot be negative.");
                 }
             }
 
@@ -415,12 +537,120 @@ namespace IRISBackend.Services
             return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
         }
 
+        private static bool HasFacultativeDetails(UpsertFacultativeContractRequest request) =>
+            request.SumInsured.HasValue || request.LimitOfLiability.HasValue
+            || request.Deductible.HasValue || request.PremiumRate.HasValue;
+
+        private static CoverageSelectionRequestDto? NormalizeCompleteCoverageSelection(CoverageSelectionRequestDto? request)
+        {
+            if (request is null) return null;
+            var mainIds = request.CoverageIds?.Where(id => id > 0).Distinct().ToArray() ?? [];
+            var primaryId = request.PrimaryMainCoverId > 0
+                ? request.PrimaryMainCoverId
+                : request.MainCoverId > 0 ? request.MainCoverId : mainIds.FirstOrDefault();
+            if (primaryId <= 0) return null;
+            if (mainIds.Length == 0) mainIds = [primaryId];
+            if (!mainIds.Contains(primaryId)) mainIds = [primaryId, .. mainIds];
+            return new CoverageSelectionRequestDto
+            {
+                PrimaryMainCoverId = primaryId,
+                MainCoverId = primaryId,
+                CoverageIds = mainIds,
+                SectionIds = request.SectionIds?.Where(id => id > 0).Distinct().ToArray() ?? [],
+                ExtensionIds = request.ExtensionIds?.Where(id => id > 0).Distinct().ToArray() ?? []
+            };
+        }
+
+        private static bool HasCompletePremiumInputs(Contract contract) =>
+            contract.ContractFac?.SumInsured.HasValue == true
+            && contract.ContractFac.PremiumRate.HasValue;
+
+        private static List<string> ValidateForReadyForPlacement(Contract contract)
+        {
+            var errors = new List<string>();
+            if (string.IsNullOrWhiteSpace(contract.Name)) errors.Add("name: Contract name is required before placement.");
+            if (!contract.IdCounterparty.HasValue) errors.Add("counterpartyId: Cedent is required before placement.");
+            if (!contract.IdCurrency.HasValue) errors.Add("currencyId: Currency is required before placement.");
+            if (!contract.InceptionDate.HasValue) errors.Add("inceptionDate: Inception date is required before placement.");
+            if (!contract.ExpiryDate.HasValue) errors.Add("expiryDate: Expiry date is required before placement.");
+            if (contract.InceptionDate.HasValue && contract.ExpiryDate.HasValue && contract.ExpiryDate < contract.InceptionDate)
+                errors.Add("expiryDate: Expiry date must be on or after inception date.");
+            if (contract.ContractFac?.SumInsured is null) errors.Add("sumInsured: Sum insured is required before placement.");
+            if (contract.ContractFac?.PremiumRate is null) errors.Add("premiumRate: Premium rate is required before placement.");
+            if (!contract.CedentCommission.HasValue) errors.Add("cedentCommissionPct: Cedent commission is required before placement.");
+            if (!contract.WrittenSharePctCedent.HasValue) errors.Add("writtenSharePct: Written share is required before placement.");
+            if (!contract.SignedSharePctCedent.HasValue) errors.Add("signedSharePct: Signed share is required before placement.");
+            if (contract.IsFronting == true && string.IsNullOrWhiteSpace(contract.FrontingReference))
+                errors.Add("frontingReference: Fronting reference is required for a fronting contract.");
+
+            if (contract.ContractCoverageSelections.Count == 0)
+                errors.Add("coverageSelection: At least one main coverage is required before placement.");
+
+            if (contract.ContractFac?.SumInsured is < 0m) errors.Add("sumInsured: Sum insured cannot be negative.");
+            if (contract.ContractFac?.PremiumRate is < 0m or > 100m) errors.Add("premiumRate: Premium rate must be between 0 and 100.");
+            if (contract.CedentCommission is < 0m or > 100m) errors.Add("cedentCommissionPct: Cedent commission must be between 0 and 100.");
+            if (contract.WrittenSharePctCedent is < 0m or > 100m) errors.Add("writtenSharePct: Written share must be between 0 and 100.");
+            if (contract.SignedSharePctCedent is < 0m or > 100m or 0m) errors.Add("signedSharePct: Signed share must be greater than zero and no greater than 100.");
+            if (contract.WrittenSharePctCedent.HasValue && contract.SignedSharePctCedent > contract.WrittenSharePctCedent)
+                errors.Add("signedSharePct: Signed share cannot exceed written share.");
+
+            return errors;
+        }
+
+        private static CoverageSelectionRequestDto BuildCoverageSelectionRequest(Contract contract)
+        {
+            var selections = contract.ContractCoverageSelections
+                .Where(selection => selection.IdCoverageItemNavigation is not null)
+                .ToList();
+            var mains = selections.Where(selection => CoverageConstants.IsMainCoverLevel(selection.IdCoverageItemNavigation.CoverageLevel)).ToList();
+            var primary = mains.FirstOrDefault(selection => selection.IsPrimary) ?? mains.FirstOrDefault();
+            return new CoverageSelectionRequestDto
+            {
+                PrimaryMainCoverId = primary?.IdCoverageItem ?? 0,
+                MainCoverId = primary?.IdCoverageItem ?? 0,
+                CoverageIds = mains.Select(selection => selection.IdCoverageItem).Distinct().ToArray(),
+                SectionIds = selections.Where(selection => IsCoverageLevel(selection.IdCoverageItemNavigation.CoverageLevel, CoverageConstants.SectionLevel))
+                    .Select(selection => selection.IdCoverageItem).Distinct().ToArray(),
+                ExtensionIds = selections.Where(selection => IsCoverageLevel(selection.IdCoverageItemNavigation.CoverageLevel, CoverageConstants.ExtensionLevel))
+                    .Select(selection => selection.IdCoverageItem).Distinct().ToArray()
+            };
+        }
+
+        private static bool IsCoverageLevel(string? actual, string expected) =>
+            string.Equals(actual?.Trim(), expected, StringComparison.OrdinalIgnoreCase);
+
+        private static UpsertFacultativeContractRequest MergeRequest(
+            Contract contract,
+            UpsertFacultativeContractRequest request)
+        {
+            return new UpsertFacultativeContractRequest
+            {
+                Name = request.Name ?? contract.Name,
+                CounterpartyId = request.CounterpartyId ?? contract.IdCounterparty,
+                CurrencyId = request.CurrencyId ?? contract.IdCurrency,
+                ReceptionDate = request.ReceptionDate ?? contract.ReceptionDate,
+                InceptionDate = request.InceptionDate ?? contract.InceptionDate,
+                ExpiryDate = request.ExpiryDate ?? contract.ExpiryDate,
+                WrittenSharePct = request.WrittenSharePct ?? contract.WrittenSharePctCedent,
+                SignedSharePct = request.SignedSharePct ?? contract.SignedSharePctCedent,
+                Fees = request.Fees ?? contract.Fees,
+                IsHighPriority = request.IsHighPriority ?? contract.Flag,
+                SumInsured = request.SumInsured ?? contract.ContractFac?.SumInsured,
+                LimitOfLiability = request.LimitOfLiability ?? contract.ContractFac?.LimitOfLiability,
+                Deductible = request.Deductible ?? contract.ContractFac?.Deductible,
+                PremiumRate = request.PremiumRate ?? contract.ContractFac?.PremiumRate,
+                CedentCommissionPct = request.CedentCommissionPct ?? contract.CedentCommission,
+                CedentPremiumReference = request.CedentPremiumReference ?? contract.CedentPremiumReference,
+                IsFronting = request.IsFronting ?? contract.IsFronting,
+                FrontingReference = request.FrontingReference ?? contract.FrontingReference,
+                MemoText = request.MemoText ?? contract.MemoText
+            };
+        }
+
         private static bool CanUpdateContract(string? status)
         {
             var effectiveStatus = ContractConstants.NormalizeStatus(status);
-            return effectiveStatus is ContractConstants.DraftStatus or
-                ContractConstants.ReadyForPlacementStatus or
-                ContractConstants.PlacementInProgressStatus;
+            return effectiveStatus == ContractConstants.DraftStatus;
         }
 
         private static bool IsUmrConflict(DbUpdateException exception)

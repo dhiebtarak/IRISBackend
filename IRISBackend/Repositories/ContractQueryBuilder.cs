@@ -12,9 +12,9 @@ namespace IRISBackend.Repositories
             {
                 var search = query.Search.Trim();
                 contracts = contracts.Where(contract =>
-                    contract.Name.Contains(search) ||
+                    (contract.Name != null && contract.Name.Contains(search)) ||
                     (contract.Umr != null && contract.Umr.Contains(search)) ||
-                    contract.IdCounterpartyNavigation.Name.Contains(search));
+                    (contract.IdCounterpartyNavigation != null && contract.IdCounterpartyNavigation.Name.Contains(search)));
             }
 
             var contractType = ContractTypeNames.NormalizeFilter(query.ContractType);
@@ -101,7 +101,7 @@ namespace IRISBackend.Repositories
                 Umr = contract.Umr,
                 Name = contract.Name,
                 CedentId = contract.IdCounterparty,
-                CedentName = contract.IdCounterpartyNavigation.Name,
+                CedentName = contract.IdCounterpartyNavigation == null ? null : contract.IdCounterpartyNavigation.Name,
                 ContractType = contract.ContractFac != null
                     ? ContractTypeNames.Facultative
                     : contract.ContractTreatyProp != null && contract.ContractTreatyProp.ContractTreatyPropQuotaShare != null
@@ -113,7 +113,7 @@ namespace IRISBackend.Repositories
                                 : null,
                 TypeOfBusiness = contract.TypeOfBusiness,
                 CurrencyId = contract.IdCurrency,
-                CurrencyCode = contract.IdCurrencyNavigation.CurrencyCode,
+                CurrencyCode = contract.IdCurrencyNavigation == null ? null : contract.IdCurrencyNavigation.CurrencyCode,
                 Status = contract.Status,
                 ReceptionDate = contract.ReceptionDate,
                 InceptionDate = contract.InceptionDate,
@@ -133,7 +133,7 @@ namespace IRISBackend.Repositories
                 Umr = contract.Umr,
                 Name = contract.Name,
                 CedentId = contract.IdCounterparty,
-                CedentName = contract.IdCounterpartyNavigation.Name,
+                CedentName = contract.IdCounterpartyNavigation == null ? null : contract.IdCounterpartyNavigation.Name,
                 ContractType = contract.ContractFac != null
                     ? ContractTypeNames.Facultative
                     : contract.ContractTreatyProp != null && contract.ContractTreatyProp.ContractTreatyPropQuotaShare != null
@@ -144,7 +144,7 @@ namespace IRISBackend.Repositories
                                 ? ContractTypeNames.TreatyNonProportional
                                 : null,
                 Status = contract.Status,
-                CurrencyCode = contract.IdCurrencyNavigation.CurrencyCode,
+                CurrencyCode = contract.IdCurrencyNavigation == null ? null : contract.IdCurrencyNavigation.CurrencyCode,
                 InceptionDate = contract.InceptionDate,
                 ExpiryDate = contract.ExpiryDate,
                 UpdatedAt = contract.UpdatedAt ?? contract.CreatedAt

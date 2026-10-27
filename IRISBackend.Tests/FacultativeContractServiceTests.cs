@@ -42,9 +42,34 @@ namespace IRISBackend.Tests
             Assert.NotEqual(default, contract.CreatedAt);
             Assert.Equal(DateOnly.FromDateTime(contract.CreatedAt), contract.CreationDate);
             Assert.Equal(contract.IdContract, contractFac.IdContract);
-            Assert.Equal(450000m, result.Value!.NetPremiumCedent);
-            Assert.Equal("AXA Cedant", result.Value.Cedent.Name);
-            Assert.Equal("USD", result.Value.Currency.Code);
+            Assert.Equal(5625m, contract.GrossPremium);
+            Assert.Equal(4500m, result.Value!.NetPremiumCedent);
+            Assert.Equal("AXA Cedant", result.Value.Cedent!.Name);
+            Assert.Equal("USD", result.Value.Currency!.Code);
+        }
+
+        [Fact]
+        public async Task CreateDraftAsync_WhenPayloadIsEmpty_CreatesOpenableDraftWithoutBusinessDefaults()
+        {
+            var referenceDataRepository = new FakeReferenceDataRepository();
+            var contractRepository = new FakeContractRepository(referenceDataRepository);
+            var service = CreateService(contractRepository, referenceDataRepository);
+
+            var result = await service.CreateDraftAsync(new UpsertFacultativeContractRequest());
+
+            Assert.True(result.Succeeded, result.Error?.Message);
+            Assert.Equal(StatusCodes.Status201Created, result.StatusCode);
+            Assert.Equal(1, result.Value!.Id);
+            var contract = Assert.Single(contractRepository.Contracts);
+            Assert.Equal(ContractConstants.DraftStatus, contract.Status);
+            Assert.Null(contract.Umr);
+            Assert.Null(contract.Name);
+            Assert.Null(contract.IdCounterparty);
+            Assert.Null(contract.IdCurrency);
+            Assert.Null(contract.InceptionDate);
+            Assert.Null(contract.ExpiryDate);
+            Assert.Null(contract.GrossPremium);
+            Assert.Empty(contractRepository.ContractFacs);
         }
 
         [Fact]
@@ -55,7 +80,7 @@ namespace IRISBackend.Tests
             var service = CreateService(contractRepository, referenceDataRepository);
             var request = CreateValidRequest();
             request.SumInsured = 100000m;
-            request.PremiumRate = 0.02m;
+            request.PremiumRate = 2m;
             request.Fees = 200m;
             request.CedentCommissionPct = 5m;
             request.GrossPremium = 999999m;
@@ -64,10 +89,31 @@ namespace IRISBackend.Tests
 
             Assert.True(result.Succeeded);
             Assert.Equal(2000m, result.Value!.GrossPremium);
+            Assert.Equal(2000m, contractRepository.Contracts[0].GrossPremium);
             Assert.Equal(200m, result.Value.IrisCommission);
             Assert.Equal(100m, result.Value.CedentCommission);
-            Assert.Equal(1700m, result.Value.NetPremium);
-            Assert.Equal(1700m, contractRepository.Contracts[0].NetPremiumCedent);
+            Assert.Equal(1900m, result.Value.NetPremium);
+            Assert.Equal(1900m, contractRepository.Contracts[0].NetPremiumCedent);
+        }
+
+        [Fact]
+        public async Task CreateDraftAsync_PersistsPointOnePercentRateAsFiveHundredGrossPremium()
+        {
+            var referenceDataRepository = new FakeReferenceDataRepository();
+            var contractRepository = new FakeContractRepository(referenceDataRepository);
+            var service = CreateService(contractRepository, referenceDataRepository);
+            var request = CreateValidRequest();
+            request.SumInsured = 500000m;
+            request.PremiumRate = 0.1m;
+            request.CedentCommissionPct = 10m;
+            request.GrossPremium = 50000m;
+
+            var result = await service.CreateDraftAsync(request);
+
+            Assert.True(result.Succeeded, result.Error?.Message);
+            Assert.Equal(500m, contractRepository.Contracts.Single().GrossPremium);
+            Assert.Equal(50m, result.Value!.CedentCommission);
+            Assert.Equal(450m, contractRepository.Contracts.Single().NetPremiumCedent);
         }
 
         [Fact]
@@ -79,7 +125,7 @@ namespace IRISBackend.Tests
             var service = CreateService(contractRepository, referenceDataRepository);
             var request = CreateValidRequest();
             request.SumInsured = 100000m;
-            request.PremiumRate = 0.02m;
+            request.PremiumRate = 2m;
             request.Fees = 200m;
             request.CedentCommissionPct = 5m;
             request.GrossPremium = 999999m;
@@ -88,8 +134,29 @@ namespace IRISBackend.Tests
 
             Assert.True(result.Succeeded);
             Assert.Equal(2000m, contractRepository.Contracts[0].GrossPremium);
-            Assert.Equal(1700m, contractRepository.Contracts[0].NetPremiumCedent);
-            Assert.Equal(1700m, result.Value!.NetPremium);
+            Assert.Equal(1900m, contractRepository.Contracts[0].NetPremiumCedent);
+            Assert.Equal(1900m, result.Value!.NetPremium);
+        }
+
+        [Fact]
+        public async Task UpdateDraftAsync_PersistsPointOnePercentRateAsFiveHundredGrossPremium()
+        {
+            var referenceDataRepository = new FakeReferenceDataRepository();
+            var contractRepository = new FakeContractRepository(referenceDataRepository);
+            SeedDraft(contractRepository);
+            var service = CreateService(contractRepository, referenceDataRepository);
+            var request = CreateValidRequest();
+            request.SumInsured = 500000m;
+            request.PremiumRate = 0.1m;
+            request.CedentCommissionPct = 10m;
+            request.GrossPremium = 50000m;
+
+            var result = await service.UpdateDraftAsync(1, request);
+
+            Assert.True(result.Succeeded, result.Error?.Message);
+            Assert.Equal(500m, contractRepository.Contracts.Single().GrossPremium);
+            Assert.Equal(50m, result.Value!.CedentCommission);
+            Assert.Equal(450m, contractRepository.Contracts.Single().NetPremiumCedent);
         }
 
         [Fact]
@@ -169,7 +236,7 @@ namespace IRISBackend.Tests
         }
 
         [Fact]
-        public async Task CreateDraftAsync_GeneratesTheNextScopedUmr()
+        public async Task CreateDraftAsync_DefersUmrUntilDraftIsReadyForPlacement()
         {
             var referenceDataRepository = new FakeReferenceDataRepository();
             var contractRepository = new FakeContractRepository(referenceDataRepository);
@@ -179,8 +246,8 @@ namespace IRISBackend.Tests
 
             Assert.True(first.Succeeded);
             Assert.True(second.Succeeded);
-            Assert.Equal("IT26-F-PD-0001", first.Value!.Umr);
-            Assert.Equal("IT26-F-PD-0002", second.Value!.Umr);
+            Assert.Null(first.Value!.Umr);
+            Assert.Null(second.Value!.Umr);
         }
 
         [Fact]
@@ -212,6 +279,27 @@ namespace IRISBackend.Tests
         }
 
         [Fact]
+        public async Task UpdateDraftAsync_WhenOnlyOneFieldIsSupplied_PreservesOtherDraftValues()
+        {
+            var referenceDataRepository = new FakeReferenceDataRepository();
+            var contractRepository = new FakeContractRepository(referenceDataRepository);
+            SeedDraft(contractRepository);
+            var service = CreateService(contractRepository, referenceDataRepository);
+
+            var result = await service.UpdateDraftAsync(1, new UpsertFacultativeContractRequest
+            {
+                MemoText = "Updated note"
+            });
+
+            Assert.True(result.Succeeded, result.Error?.Message);
+            Assert.Equal("Updated note", contractRepository.Contracts[0].MemoText);
+            Assert.Equal("Existing Draft", contractRepository.Contracts[0].Name);
+            Assert.Equal(10, contractRepository.Contracts[0].IdCounterparty);
+            Assert.Equal(2, contractRepository.Contracts[0].IdCurrency);
+            Assert.Equal(new DateOnly(2026, 9, 1), contractRepository.Contracts[0].InceptionDate);
+        }
+
+        [Fact]
         public async Task UpdateDraftAsync_WhenContractIsNotDraft_ReturnsConflict()
         {
             var referenceDataRepository = new FakeReferenceDataRepository();
@@ -228,7 +316,7 @@ namespace IRISBackend.Tests
         [Theory]
         [InlineData("Ready for Placement")]
         [InlineData("Placement In Progress")]
-        public async Task UpdateDraftAsync_WhenContractIsInEditableWorkflowState_ReturnsSuccess(string status)
+        public async Task UpdateDraftAsync_WhenContractIsPastDraft_ReturnsConflict(string status)
         {
             var referenceDataRepository = new FakeReferenceDataRepository();
             var contractRepository = new FakeContractRepository(referenceDataRepository);
@@ -237,9 +325,56 @@ namespace IRISBackend.Tests
 
             var result = await service.UpdateDraftAsync(1, CreateValidRequest());
 
-            Assert.True(result.Succeeded);
-            Assert.Equal(StatusCodes.Status200OK, result.StatusCode);
+            Assert.False(result.Succeeded);
+            Assert.Equal(StatusCodes.Status409Conflict, result.StatusCode);
             Assert.Equal(status, contractRepository.Contracts[0].Status);
+        }
+
+        [Fact]
+        public async Task CompleteDraftAsync_WhenRequiredFieldsAreMissing_ReturnsFieldErrorsAndKeepsDraft()
+        {
+            var referenceDataRepository = new FakeReferenceDataRepository();
+            var contractRepository = new FakeContractRepository(referenceDataRepository);
+            SeedDraft(contractRepository);
+            contractRepository.Contracts[0].Umr = null;
+            var service = CreateService(contractRepository, referenceDataRepository);
+
+            var result = await service.CompleteDraftAsync(1);
+
+            Assert.False(result.Succeeded);
+            Assert.Equal(StatusCodes.Status400BadRequest, result.StatusCode);
+            Assert.Contains(result.Error!.Errors, error => error.StartsWith("writtenSharePct:", StringComparison.Ordinal));
+            Assert.Contains(result.Error.Errors, error => error.StartsWith("signedSharePct:", StringComparison.Ordinal));
+            Assert.Equal("DRAFT", contractRepository.Contracts[0].Status);
+            Assert.Null(contractRepository.Contracts[0].Umr);
+        }
+
+        [Fact]
+        public async Task CompleteDraftAsync_WhenDraftIsComplete_GeneratesUmrAndTransitionsAtomically()
+        {
+            var referenceDataRepository = new FakeReferenceDataRepository();
+            var contractRepository = new FakeContractRepository(referenceDataRepository);
+            SeedDraft(contractRepository);
+            var draft = contractRepository.Contracts[0];
+            draft.Umr = null;
+            draft.WrittenSharePctCedent = 10m;
+            draft.SignedSharePctCedent = 10m;
+            draft.IsFronting = false;
+            draft.ContractCoverageSelections.Add(new ContractCoverageSelection
+            {
+                IdContract = 1,
+                IdCoverageItem = 1,
+                IsPrimary = true,
+                IdCoverageItemNavigation = new CoverageItem { IdCoverageItem = 1, CoverageLevel = "MAIN", CoverageCode = "PD" }
+            });
+            var service = CreateService(contractRepository, referenceDataRepository);
+
+            var result = await service.CompleteDraftAsync(1);
+
+            Assert.True(result.Succeeded, string.Join(";", result.Error?.Errors ?? []));
+            Assert.Equal(ContractConstants.ReadyForPlacementStatus, contractRepository.Contracts[0].Status);
+            Assert.Equal("IT26-F-PD-0001", contractRepository.Contracts[0].Umr);
+            Assert.Equal(contractRepository.Contracts[0].Umr, result.Value!.Umr);
         }
 
         [Fact]
@@ -254,9 +389,9 @@ namespace IRISBackend.Tests
 
             Assert.True(result.Succeeded);
             Assert.Equal(1, result.Value!.Id);
-            Assert.Equal("AXA Cedant", result.Value.Cedent.Name);
+            Assert.Equal("AXA Cedant", result.Value.Cedent!.Name);
             Assert.Equal("London", result.Value.Cedent.City);
-            Assert.Equal("USD", result.Value.Currency.Code);
+            Assert.Equal("USD", result.Value.Currency!.Code);
             Assert.Equal(15000000m, result.Value.SumInsured);
             Assert.Equal(1000000m, result.Value.LimitOfLiability);
             Assert.Equal(0.045m, result.Value.PremiumRate);
@@ -316,7 +451,7 @@ namespace IRISBackend.Tests
                 LimitOfLiability = 1000000m,
                 Deductible = 250000m,
                 PremiumRate = 0.045m,
-                GrossPremium = 562500m,
+                GrossPremium = 5625m,
                 CedentCommissionPct = 20m,
                 CedentPremiumReference = "REF-8892-AXA",
                 IsFronting = false,
@@ -360,9 +495,9 @@ namespace IRISBackend.Tests
                 ReceptionDate = new DateOnly(2026, 8, 19),
                 InceptionDate = new DateOnly(2026, 9, 1),
                 ExpiryDate = new DateOnly(2027, 8, 31),
-                GrossPremium = 500000m,
+                GrossPremium = 6750m,
                 CedentCommission = 10m,
-                NetPremiumCedent = 450000m,
+                NetPremiumCedent = 5400m,
                 CedentPremiumReference = "REF-1",
                 IsFronting = false,
                 MemoText = "Memo",
@@ -670,8 +805,20 @@ namespace IRISBackend.Tests
                 materialized.ContractFac = ContractFacs.SingleOrDefault(contractFac => contractFac.IdContract == contractId) is { } contractFac
                     ? CloneContractFac(contractFac)
                     : null;
-                materialized.IdCounterpartyNavigation = _referenceDataRepository.Counterparties.Single(counterparty => counterparty.Id == contract.IdCounterparty);
-                materialized.IdCurrencyNavigation = _referenceDataRepository.Currencies.Single(currency => currency.IdCurrency == contract.IdCurrency);
+                materialized.IdCounterpartyNavigation = contract.IdCounterparty.HasValue
+                    ? _referenceDataRepository.Counterparties.SingleOrDefault(counterparty => counterparty.Id == contract.IdCounterparty.Value)
+                    : null;
+                materialized.IdCurrencyNavigation = contract.IdCurrency.HasValue
+                    ? _referenceDataRepository.Currencies.SingleOrDefault(currency => currency.IdCurrency == contract.IdCurrency.Value)
+                    : null;
+                materialized.ContractCoverageSelections = contract.ContractCoverageSelections.Select(selection => new ContractCoverageSelection
+                {
+                    IdContractCoverageSelection = selection.IdContractCoverageSelection,
+                    IdContract = selection.IdContract,
+                    IdCoverageItem = selection.IdCoverageItem,
+                    IsPrimary = selection.IsPrimary,
+                    IdCoverageItemNavigation = selection.IdCoverageItemNavigation
+                }).ToList();
 
                 if (!asNoTracking)
                 {
@@ -781,7 +928,15 @@ namespace IRISBackend.Tests
                     CedentPremiumReference = source.CedentPremiumReference,
                     FrontingReference = source.FrontingReference,
                     WrittenSharePctCedent = source.WrittenSharePctCedent,
-                    SignedSharePctCedent = source.SignedSharePctCedent
+                    SignedSharePctCedent = source.SignedSharePctCedent,
+                    ContractCoverageSelections = source.ContractCoverageSelections.Select(selection => new ContractCoverageSelection
+                    {
+                        IdContractCoverageSelection = selection.IdContractCoverageSelection,
+                        IdContract = selection.IdContract,
+                        IdCoverageItem = selection.IdCoverageItem,
+                        IsPrimary = selection.IsPrimary,
+                        IdCoverageItemNavigation = selection.IdCoverageItemNavigation
+                    }).ToList()
                 };
             }
 

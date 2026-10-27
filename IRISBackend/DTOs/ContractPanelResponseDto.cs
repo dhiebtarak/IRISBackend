@@ -1,10 +1,25 @@
 namespace IRISBackend.DTOs
 {
+    using System.Text.Json.Serialization;
+
     public sealed class ContractPanelResponseDto
     {
         public int IdPanel { get; set; }
 
         public int IdContract { get; set; }
+
+        public decimal? ContractGrossPremium { get; set; }
+
+        public decimal? ContractSignedSharePercentage { get; set; }
+
+        public decimal? ContractNetPremium { get; set; }
+
+        public decimal? ContractCedentCommissionPercentage { get; set; }
+
+        public decimal? ContractCedentCommissionAmount { get; set; }
+
+        [JsonIgnore]
+        public int? CurrencyDecimalPlaces { get; set; }
 
         public int IdCounterparty { get; set; }
 
@@ -49,6 +64,10 @@ namespace IRISBackend.DTOs
         public decimal? BrokerageIrisAmount { get; set; }
 
         public decimal? OtherDeductions { get; set; }
+
+        public decimal? OtherDeductionsPercentage { get; set; }
+
+        public decimal? OtherDeductionsAmount { get; set; }
 
         public decimal? NetPremium { get; set; }
 

@@ -438,33 +438,34 @@ public partial class IRISBackendContext : DbContext
                 .HasMaxLength(450)
                 .HasColumnName("Created_by");
             entity.Property(e => e.CreationDate).HasColumnName("Creation_date");
-            entity.Property(e => e.ExpiryDate).HasColumnName("Expiry_date");
+            entity.Property(e => e.ExpiryDate).IsRequired(false).HasColumnName("Expiry_date");
             entity.Property(e => e.Fees).HasColumnType("decimal(19, 4)");
-            entity.Property(e => e.Flag).HasAnnotation("Relational:DefaultConstraintName", "DF_CONTRACT_flag");
+            entity.Property(e => e.Flag).IsRequired(false).HasAnnotation("Relational:DefaultConstraintName", "DF_CONTRACT_flag");
             entity.Property(e => e.FrontingReference)
                 .HasMaxLength(100)
                 .HasColumnName("Fronting_reference");
             entity.Property(e => e.GrossPremium)
                 .HasColumnType("decimal(19, 4)")
                 .HasColumnName("Gross_premium");
-            entity.Property(e => e.IdCounterparty).HasColumnName("Id_counterparty");
-            entity.Property(e => e.IdCurrency).HasColumnName("Id_currency");
+            entity.Property(e => e.IdCounterparty).IsRequired(false).HasColumnName("Id_counterparty");
+            entity.Property(e => e.IdCurrency).IsRequired(false).HasColumnName("Id_currency");
             entity.Property(e => e.IdPreviousContract).HasColumnName("Id_previous_contract");
             entity.Property(e => e.IdUser)
                 .IsRequired()
                 .HasMaxLength(450)
                 .HasColumnName("Id_user");
-            entity.Property(e => e.InceptionDate).HasColumnName("Inception_date");
+            entity.Property(e => e.InceptionDate).IsRequired(false).HasColumnName("Inception_date");
             entity.Property(e => e.IsCurrent)
                 .HasDefaultValue(true)
                 .HasAnnotation("Relational:DefaultConstraintName", "DF_CONTRACT_is_current")
                 .HasColumnName("Is_current");
             entity.Property(e => e.IsFronting)
+                .IsRequired(false)
                 .HasAnnotation("Relational:DefaultConstraintName", "DF_CONTRACT_is_fronting")
                 .HasColumnName("Is_fronting");
             entity.Property(e => e.MemoText).HasColumnName("Memo_text");
             entity.Property(e => e.Name)
-                .IsRequired()
+                .IsRequired(false)
                 .HasMaxLength(255);
             entity.Property(e => e.NetPremiumCedent)
                 .HasColumnType("decimal(19, 4)")
@@ -499,11 +500,13 @@ public partial class IRISBackendContext : DbContext
 
             entity.HasOne(d => d.IdCounterpartyNavigation).WithMany(p => p.Contracts)
                 .HasForeignKey(d => d.IdCounterparty)
+                .IsRequired(false)
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_CONTRACT_id_counterparty");
 
             entity.HasOne(d => d.IdCurrencyNavigation).WithMany(p => p.Contracts)
                 .HasForeignKey(d => d.IdCurrency)
+                .IsRequired(false)
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_CONTRACT_id_currency");
 
@@ -660,6 +663,9 @@ public partial class IRISBackendContext : DbContext
             entity.Property(e => e.OtherDeductions)
                 .HasColumnType("decimal(19, 4)")
                 .HasColumnName("Other_deductions");
+            entity.Property(e => e.OtherDeductionsPercentage)
+                .HasColumnType("decimal(19, 8)")
+                .HasColumnName("Other_deductions_percentage");
             entity.Property(e => e.PremiumReference)
                 .HasMaxLength(100)
                 .HasColumnName("Premium_reference");

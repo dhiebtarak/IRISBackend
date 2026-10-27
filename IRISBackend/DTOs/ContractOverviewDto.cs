@@ -6,7 +6,7 @@ namespace IRISBackend.DTOs
 
         public string? Umr { get; set; }
 
-        public string Name { get; set; } = string.Empty;
+        public string? Name { get; set; }
 
         public string? ContractType { get; set; }
 
@@ -16,21 +16,21 @@ namespace IRISBackend.DTOs
 
         public ContractAllowedActionsDto AllowedActions { get; set; } = new();
 
-        public int CounterpartyId { get; set; }
+        public int? CounterpartyId { get; set; }
 
-        public CedentSummaryDto Cedent { get; set; } = new();
+        public CedentSummaryDto? Cedent { get; set; }
 
-        public int CurrencyId { get; set; }
+        public int? CurrencyId { get; set; }
 
-        public CurrencyReferenceDto Currency { get; set; } = new();
+        public CurrencyReferenceDto? Currency { get; set; }
 
         public DateOnly CreationDate { get; set; }
 
         public DateOnly? ReceptionDate { get; set; }
 
-        public DateOnly InceptionDate { get; set; }
+        public DateOnly? InceptionDate { get; set; }
 
-        public DateOnly ExpiryDate { get; set; }
+        public DateOnly? ExpiryDate { get; set; }
 
         public decimal? WrittenSharePct { get; set; }
 
@@ -64,13 +64,13 @@ namespace IRISBackend.DTOs
 
         public decimal? NetPremium { get; set; }
 
-        public bool IsFronting { get; set; }
+        public bool? IsFronting { get; set; }
 
         public string? FrontingReference { get; set; }
 
-        public bool IsHighPriority { get; set; }
+        public bool? IsHighPriority { get; set; }
 
-        public bool ActionRequired { get; set; }
+        public bool? ActionRequired { get; set; }
 
         public ContractAuditUserDto? CreatedBy { get; set; }
 
@@ -95,6 +95,12 @@ namespace IRISBackend.DTOs
         public decimal AlreadyInvoicedAmount { get; set; }
 
         public decimal AvailableAmount { get; set; }
+
+        public bool HasAvoir { get; set; }
+
+        public string ContractDocumentType { get; set; } = "DEBIT_NOTE";
+
+        public string ContractDocumentDownloadUrl { get; set; } = string.Empty;
     }
 
     public sealed class ContractAuditUserDto

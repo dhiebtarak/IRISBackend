@@ -2,7 +2,7 @@ namespace IRISBackend.DTOs
 {
     public sealed class CedentSummaryDto
     {
-        public int Id { get; set; }
+        public int? Id { get; set; }
 
         public string Name { get; set; } = string.Empty;
 

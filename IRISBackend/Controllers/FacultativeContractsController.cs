@@ -13,20 +13,23 @@ namespace IRISBackend.Controllers
     {
         private readonly IFacultativeContractService _facultativeContractService;
         private readonly IValidator<UpsertFacultativeContractRequest> _validator;
+        private readonly ILogger<FacultativeContractsController> _logger;
 
         public FacultativeContractsController(
             IFacultativeContractService facultativeContractService,
-            IValidator<UpsertFacultativeContractRequest> validator)
+            IValidator<UpsertFacultativeContractRequest> validator,
+            ILogger<FacultativeContractsController> logger)
         {
             _facultativeContractService = facultativeContractService;
             _validator = validator;
+            _logger = logger;
         }
 
         [HttpPost]
         [Authorize(Roles = IdentityRoles.Employee)]
         [Consumes("application/json")]
         [ProducesResponseType(typeof(FacultativeContractResponseDto), StatusCodes.Status201Created)]
-        [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(ContractValidationErrorResponseDto), StatusCodes.Status400BadRequest)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status401Unauthorized)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status403Forbidden)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status409Conflict)]
@@ -35,16 +38,24 @@ namespace IRISBackend.Controllers
             var validationResult = await _validator.ValidateAsync(request, cancellationToken);
             if (!validationResult.IsValid)
             {
-                return BadRequest(new ApiErrorResponseDto
-                {
-                    Message = "Validation failed.",
-                    Errors = validationResult.Errors.Select(error => error.ErrorMessage)
-                });
+                _logger.LogWarning("Facultative contract request rejected by FluentValidation. TraceId={TraceId}, Fields={Fields}",
+                    HttpContext.TraceIdentifier,
+                    string.Join(",", validationResult.Errors.Select(error => ContractValidationErrorResponseDto.NormalizeField(error.PropertyName, error.ErrorMessage)).Distinct()));
+                return BadRequest(ContractValidationErrorResponseDto.From(validationResult.Errors.Select(error =>
+                    new ContractFieldError(error.PropertyName, error.ErrorMessage))));
             }
 
             var result = await _facultativeContractService.CreateDraftAsync(request, cancellationToken);
             if (!result.Succeeded)
             {
+                if (result.StatusCode == StatusCodes.Status400BadRequest)
+                {
+                    _logger.LogWarning("Facultative contract business validation failed. TraceId={TraceId}, Fields={Fields}",
+                        HttpContext.TraceIdentifier,
+                        string.Join(",", (result.Error?.Errors ?? []).Select(ContractValidationErrorResponseDto.InferField).Distinct()));
+                    return BadRequest(ContractValidationErrorResponseDto.From((result.Error?.Errors ?? [])
+                        .Select(message => new ContractFieldError(ContractValidationErrorResponseDto.InferField(message), message))));
+                }
                 return FromServiceResult(result);
             }
 
@@ -65,7 +76,7 @@ namespace IRISBackend.Controllers
         [Authorize(Roles = IdentityRoles.Employee)]
         [Consumes("application/json")]
         [ProducesResponseType(typeof(FacultativeContractResponseDto), StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(ContractValidationErrorResponseDto), StatusCodes.Status400BadRequest)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status401Unauthorized)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status403Forbidden)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status404NotFound)]
@@ -75,14 +86,22 @@ namespace IRISBackend.Controllers
             var validationResult = await _validator.ValidateAsync(request, cancellationToken);
             if (!validationResult.IsValid)
             {
-                return BadRequest(new ApiErrorResponseDto
-                {
-                    Message = "Validation failed.",
-                    Errors = validationResult.Errors.Select(error => error.ErrorMessage)
-                });
+                _logger.LogWarning("Facultative contract update rejected by FluentValidation. TraceId={TraceId}, Fields={Fields}",
+                    HttpContext.TraceIdentifier,
+                    string.Join(",", validationResult.Errors.Select(error => ContractValidationErrorResponseDto.NormalizeField(error.PropertyName, error.ErrorMessage)).Distinct()));
+                return BadRequest(ContractValidationErrorResponseDto.From(validationResult.Errors.Select(error =>
+                    new ContractFieldError(error.PropertyName, error.ErrorMessage))));
             }
 
             var result = await _facultativeContractService.UpdateDraftAsync(contractId, request, cancellationToken);
+            if (!result.Succeeded && result.StatusCode == StatusCodes.Status400BadRequest)
+            {
+                _logger.LogWarning("Facultative contract update business validation failed. TraceId={TraceId}, Fields={Fields}",
+                    HttpContext.TraceIdentifier,
+                    string.Join(",", (result.Error?.Errors ?? []).Select(ContractValidationErrorResponseDto.InferField).Distinct()));
+                return BadRequest(ContractValidationErrorResponseDto.From((result.Error?.Errors ?? [])
+                    .Select(message => new ContractFieldError(ContractValidationErrorResponseDto.InferField(message), message))));
+            }
             return FromServiceResult(result);
         }
     }

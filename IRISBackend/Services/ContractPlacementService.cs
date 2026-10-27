@@ -15,19 +15,22 @@ namespace IRISBackend.Services
         private readonly IUserService _userService;
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly IRISBackendContext? _db;
+        private readonly PremiumCalculationService _premiumCalculationService;
 
         public ContractPlacementService(
             IContractPlacementRepository placementRepository,
             IContractReadService contractReadService,
             IUserService userService,
             IHttpContextAccessor httpContextAccessor,
-            IRISBackendContext? db = null)
+            IRISBackendContext? db = null,
+            PremiumCalculationService? premiumCalculationService = null)
         {
             _placementRepository = placementRepository;
             _contractReadService = contractReadService;
             _userService = userService;
             _httpContextAccessor = httpContextAccessor;
             _db = db;
+            _premiumCalculationService = premiumCalculationService ?? new PremiumCalculationService();
         }
 
         public async Task<ServiceResult<IReadOnlyList<ContractPanelResponseDto>>> GetPanelsAsync(
@@ -115,10 +118,17 @@ namespace IRISBackend.Services
                     PremiumReference = NormalizeOptionalValue(request.PremiumReference)
                 };
 
-                ApplyPanelValues(panel, request);
+                ApplyEditablePanelValues(panel, request);
+                var panelErrors = _premiumCalculationService.ValidatePanel(contract, panel);
+                if (panelErrors.Count > 0)
+                    return ServiceResult<ContractOverviewDto>.Failure("Premium validation failed.", panelErrors, StatusCodes.Status400BadRequest);
 
                 var hadExistingPanels = contract.ContractPanels.Count > 0;
                 await _placementRepository.AddPanelAsync(panel, cancellationToken);
+                var calculationErrors = _premiumCalculationService.RecalculatePanels(
+                    contract, contract.IdCurrencyNavigation?.DecimalPlaces);
+                if (calculationErrors.Count > 0)
+                    return ServiceResult<ContractOverviewDto>.Failure("Premium validation failed.", calculationErrors, StatusCodes.Status400BadRequest);
 
                 if (effectiveStatus == ContractConstants.ReadyForPlacementStatus && !hadExistingPanels)
                 {
@@ -151,35 +161,40 @@ namespace IRISBackend.Services
                 return MapFailure(userResult);
             }
 
-            var panel = await _placementRepository.GetPanelAsync(contractId, panelId, userResult.Value!.Id, cancellationToken);
-            if (panel is null)
+            await using var transaction = await _placementRepository.BeginSerializableTransactionAsync(cancellationToken);
+            try
             {
-                return ServiceResult<ContractOverviewDto>.Failure(
-                    "Contract panel was not found.",
-                    statusCode: StatusCodes.Status404NotFound);
-            }
+                var contract = await _placementRepository.GetContractForPlacementAsync(
+                    contractId, userResult.Value!.Id, false, cancellationToken);
+                var panel = contract?.ContractPanels.SingleOrDefault(item => item.IdPanel == panelId);
+                if (contract is null || panel is null)
+                    return ServiceResult<ContractOverviewDto>.Failure("Contract panel was not found.", statusCode: StatusCodes.Status404NotFound);
 
-            var effectiveStatus = ContractConstants.NormalizeStatus(panel.IdContractNavigation.Status);
-            if (effectiveStatus != ContractConstants.PlacementInProgressStatus)
+                var effectiveStatus = ContractConstants.NormalizeStatus(contract.Status);
+                if (effectiveStatus != ContractConstants.PlacementInProgressStatus)
+                    return ServiceResult<ContractOverviewDto>.Failure($"A reinsurer placement can only be edited while the contract status is '{ContractConstants.PlacementInProgressStatus}'.", statusCode: StatusCodes.Status409Conflict);
+
+                var validation = await ValidatePanelRequestAsync(contract, request, panelId, cancellationToken);
+                if (!validation.Succeeded)
+                    return validation;
+
+                panel.IdCounterparty = request.IdCounterparty;
+                panel.Role = ReinsurerRole;
+                panel.Status = NormalizeStatus(request.Status);
+                panel.PremiumReference = NormalizeOptionalValue(request.PremiumReference);
+                ApplyEditablePanelValues(panel, request);
+                var calculationErrors = _premiumCalculationService.RecalculatePanels(contract, contract.IdCurrencyNavigation?.DecimalPlaces);
+                if (calculationErrors.Count > 0)
+                    return ServiceResult<ContractOverviewDto>.Failure("Premium validation failed.", calculationErrors, StatusCodes.Status400BadRequest);
+
+                await _placementRepository.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+            }
+            catch
             {
-                return ServiceResult<ContractOverviewDto>.Failure(
-                    $"A reinsurer placement can only be edited while the contract status is '{ContractConstants.PlacementInProgressStatus}'.",
-                    statusCode: StatusCodes.Status409Conflict);
+                await transaction.RollbackAsync(cancellationToken);
+                throw;
             }
-
-            var validation = await ValidatePanelRequestAsync(panel.IdContractNavigation, request, panelId, cancellationToken);
-            if (!validation.Succeeded)
-            {
-                return validation;
-            }
-
-            panel.IdCounterparty = request.IdCounterparty;
-            panel.Role = ReinsurerRole;
-            panel.Status = NormalizeStatus(request.Status);
-            panel.PremiumReference = NormalizeOptionalValue(request.PremiumReference);
-            ApplyPanelValues(panel, request);
-
-            await _placementRepository.SaveChangesAsync(cancellationToken);
             return await _contractReadService.GetOverviewAsync(contractId, cancellationToken);
         }
 
@@ -197,35 +212,34 @@ namespace IRISBackend.Services
                     userResult.StatusCode);
             }
 
-            var panel = await _placementRepository.GetPanelAsync(contractId, panelId, userResult.Value!.Id, cancellationToken);
-            if (panel is null)
+            await using var transaction = await _placementRepository.BeginSerializableTransactionAsync(cancellationToken);
+            try
             {
-                return ServiceResult<ContractPanelResponseDto>.Failure(
-                    "Contract panel was not found.",
-                    statusCode: StatusCodes.Status404NotFound);
-            }
+                var contract = await _placementRepository.GetContractForPlacementAsync(contractId, userResult.Value!.Id, false, cancellationToken);
+                var panel = contract?.ContractPanels.SingleOrDefault(item => item.IdPanel == panelId);
+                if (contract is null || panel is null)
+                    return ServiceResult<ContractPanelResponseDto>.Failure("Contract panel was not found.", statusCode: StatusCodes.Status404NotFound);
 
-            var effectiveStatus = ContractConstants.NormalizeStatus(panel.IdContractNavigation.Status);
-            if (effectiveStatus != ContractConstants.PlacementInProgressStatus)
+                if (ContractConstants.NormalizeStatus(contract.Status) != ContractConstants.PlacementInProgressStatus)
+                    return ServiceResult<ContractPanelResponseDto>.Failure($"A reinsurer placement can only be confirmed while the contract status is '{ContractConstants.PlacementInProgressStatus}'.", statusCode: StatusCodes.Status409Conflict);
+
+                if (panel.IdCounterparty <= 0)
+                    return ServiceResult<ContractPanelResponseDto>.Failure("Validation failed.", ["idCounterparty is required before confirming the reinsurer."], StatusCodes.Status400BadRequest);
+
+                panel.Status = ContractConstants.ConfirmedPanelStatus;
+                var calculationErrors = _premiumCalculationService.RecalculatePanels(contract, contract.IdCurrencyNavigation?.DecimalPlaces);
+                if (calculationErrors.Count > 0)
+                    return ServiceResult<ContractPanelResponseDto>.Failure("Premium validation failed.", calculationErrors, StatusCodes.Status400BadRequest);
+
+                await _placementRepository.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                return ServiceResult<ContractPanelResponseDto>.Success(ContractPanelDtoMapper.Map(panel));
+            }
+            catch
             {
-                return ServiceResult<ContractPanelResponseDto>.Failure(
-                    $"A reinsurer placement can only be confirmed while the contract status is '{ContractConstants.PlacementInProgressStatus}'.",
-                    statusCode: StatusCodes.Status409Conflict);
+                await transaction.RollbackAsync(cancellationToken);
+                throw;
             }
-
-            var errors = ValidatePanelCanBeConfirmed(panel);
-            if (errors.Count > 0)
-            {
-                return ServiceResult<ContractPanelResponseDto>.Failure(
-                    "Validation failed.",
-                    errors,
-                    StatusCodes.Status400BadRequest);
-            }
-
-            panel.Status = ContractConstants.ConfirmedPanelStatus;
-
-            await _placementRepository.SaveChangesAsync(cancellationToken);
-            return ServiceResult<ContractPanelResponseDto>.Success(ContractPanelDtoMapper.Map(panel));
         }
 
         public async Task<ServiceResult<ContractOverviewDto>> StartBindingAsync(
@@ -238,6 +252,7 @@ namespace IRISBackend.Services
                 return MapFailure(userResult);
             }
 
+            await using var transaction = await _placementRepository.BeginSerializableTransactionAsync(cancellationToken);
             var contract = await _placementRepository.GetContractForPlacementAsync(
                 contractId,
                 userResult.Value!.Id,
@@ -270,27 +285,32 @@ namespace IRISBackend.Services
                     statusCode: StatusCodes.Status400BadRequest);
             }
 
-            await using var transaction = _db is null
-                ? null
-                : await _db.Database.BeginTransactionAsync(cancellationToken);
-            contract.Status = ContractConstants.BoundStatus;
-            contract.UpdatedAt = DateTime.UtcNow;
-            contract.UpdatedBy = userResult.Value.Id;
-
-            foreach (var panel in contract.ContractPanels)
+            try
             {
-                if (!string.Equals(panel.Status?.Trim(), ContractConstants.ConfirmedPanelStatus, StringComparison.OrdinalIgnoreCase))
+                foreach (var panel in contract.ContractPanels)
                 {
-                    panel.Status = ContractConstants.NotTakenUpPanelStatus;
+                    if (!string.Equals(panel.Status?.Trim(), ContractConstants.ConfirmedPanelStatus, StringComparison.OrdinalIgnoreCase))
+                        panel.Status = ContractConstants.NotTakenUpPanelStatus;
                 }
-            }
+                var calculationErrors = _premiumCalculationService.RecalculatePanels(contract, contract.IdCurrencyNavigation?.DecimalPlaces);
+                if (calculationErrors.Count > 0)
+                    return ServiceResult<ContractOverviewDto>.Failure("Premium validation failed.", calculationErrors, StatusCodes.Status400BadRequest);
 
-            await _placementRepository.SaveChangesAsync(cancellationToken);
-            if (_db is not null)
+                contract.Status = ContractConstants.BoundStatus;
+                contract.UpdatedAt = DateTime.UtcNow;
+                contract.UpdatedBy = userResult.Value.Id;
+                await _placementRepository.SaveChangesAsync(cancellationToken);
+                if (_db is not null)
+                {
+                    await NotifyBackOfficerContractReadyForDebitNoteAsync(contract, userResult.Value.Id, cancellationToken);
+                    await _db.SaveChangesAsync(cancellationToken);
+                }
+                await transaction.CommitAsync(cancellationToken);
+            }
+            catch
             {
-                await NotifyBackOfficerContractReadyForDebitNoteAsync(contract, userResult.Value.Id, cancellationToken);
-                await _db.SaveChangesAsync(cancellationToken);
-                await transaction!.CommitAsync(cancellationToken);
+                await transaction.RollbackAsync(cancellationToken);
+                throw;
             }
             return await _contractReadService.GetOverviewAsync(contractId, cancellationToken);
         }
@@ -372,6 +392,8 @@ namespace IRISBackend.Services
         {
             var errors = new List<string>();
 
+            errors.AddRange(_premiumCalculationService.ValidateContract(contract));
+
             if (!await _placementRepository.IsActiveReinsurerAsync(request.IdCounterparty, cancellationToken))
             {
                 errors.Add("The selected counterparty does not exist, is inactive, or is not a reinsurer.");
@@ -380,6 +402,16 @@ namespace IRISBackend.Services
             if (await _placementRepository.ContractHasReinsurerPanelAsync(contract.IdContract, request.IdCounterparty, excludedPanelId, cancellationToken))
             {
                 errors.Add("This reinsurer is already assigned to the contract panel.");
+            }
+
+            if (!request.SignedSharePct.HasValue || request.SignedSharePct.Value is < 0m or > 100m)
+            {
+                errors.Add("signedSharePct must be provided and between 0 and 100.");
+            }
+
+            if (!request.WrittenSharePct.HasValue || request.WrittenSharePct.Value is < 0m or > 100m)
+            {
+                errors.Add("writtenSharePct must be provided and between 0 and 100.");
             }
 
             if (request.SignedSharePct.HasValue && request.WrittenSharePct.HasValue &&
@@ -394,11 +426,23 @@ namespace IRISBackend.Services
                 errors.Add($"signedSharePct cannot exceed the available contract share of {availableShare}.");
             }
 
-            var calculation = ContractPanelFinancialCalculator.Calculate(request);
-            if (calculation.NetPremium < 0m)
+            var candidate = new ContractPanel
             {
-                errors.Add("Calculated netPremium cannot be negative.");
-            }
+                WrittenSharePct = request.WrittenSharePct,
+                SignedSharePct = request.SignedSharePct,
+                BrokeragePct = request.BrokerageIrisPct ?? request.BrokeragePct,
+                OtherDeductions = request.OtherDeductions,
+                OtherDeductionsPercentage = request.OtherDeductionsPercentage
+            };
+            errors.AddRange(_premiumCalculationService.ValidatePanel(contract, candidate));
+            var totalConfirmed = contract.ContractPanels
+                .Where(panel => !IsExcludedFromAvailableShare(panel.Status) && panel.IdPanel != excludedPanelId &&
+                    string.Equals(panel.Status?.Trim(), ContractConstants.ConfirmedPanelStatus, StringComparison.OrdinalIgnoreCase))
+                .Sum(panel => panel.SignedSharePct ?? 0m);
+            if (string.Equals(NormalizeStatus(request.Status), ContractConstants.ConfirmedPanelStatus, StringComparison.OrdinalIgnoreCase))
+                totalConfirmed += request.SignedSharePct ?? 0m;
+            if (contract.SignedSharePctCedent.HasValue && totalConfirmed > contract.SignedSharePctCedent.Value)
+                errors.Add("Total confirmed panel signed shares cannot exceed the contract signed share.");
 
             return errors.Count == 0
                 ? ServiceResult<ContractOverviewDto>.Success(new ContractOverviewDto())
@@ -451,45 +495,28 @@ namespace IRISBackend.Services
                     statusCode: StatusCodes.Status403Forbidden);
         }
 
-        private static void ApplyPanelValues(ContractPanel panel, ContractPanelRequestDto request)
+        private static void ApplyEditablePanelValues(ContractPanel panel, ContractPanelRequestDto request)
         {
             panel.WrittenSharePct = request.WrittenSharePct;
             panel.SignedSharePct = request.SignedSharePct;
-            ContractPanelFinancialCalculator.Apply(
-                panel,
-                ContractPanelFinancialCalculator.Calculate(request));
-        }
-
-        private static IReadOnlyList<string> ValidatePanelCanBeConfirmed(ContractPanel panel)
-        {
-            var errors = new List<string>();
-
-            if (panel.IdCounterparty <= 0)
-            {
-                errors.Add("idCounterparty is required before confirming the reinsurer.");
-            }
-
-            if (!panel.WrittenSharePct.HasValue)
-            {
-                errors.Add("writtenSharePct is required before confirming the reinsurer.");
-            }
-
-            if (!panel.SignedSharePct.HasValue)
-            {
-                errors.Add("signedSharePct is required before confirming the reinsurer.");
-            }
-
-            if (!panel.GrossPremium.HasValue)
-            {
-                errors.Add("grossPremium is required before confirming the reinsurer.");
-            }
-
-            return errors;
+            panel.Tsi = request.SumInsured ?? request.Tsi;
+            panel.PremiumRatePct = request.PremiumRatePct;
+            panel.LimitOfLiabilityType = NormalizeOptionalValue(request.LimitOfLiabilityType);
+            panel.LimitOfLiabilityValue = request.LimitOfLiabilityValue;
+            panel.DeductibleType = NormalizeOptionalValue(request.DeductibleType);
+            panel.DeductibleValue = request.DeductibleValue ?? request.Deductible;
+            panel.BrokeragePct = request.BrokerageIrisPct ?? request.BrokeragePct;
+            if (request.OtherDeductionsPercentage.HasValue)
+                panel.OtherDeductionsPercentage = request.OtherDeductionsPercentage;
+            if (request.OtherDeductionsPercentage is null && request.OtherDeductions.HasValue)
+                panel.OtherDeductions = request.OtherDeductions.Value;
+            else if (request.OtherDeductionsPercentage.HasValue)
+                panel.OtherDeductions = 0m;
         }
 
         private static decimal CalculateAvailableShare(Contract contract, int? excludedPanelId = null)
         {
-            var signedShare = contract.SignedSharePctCedent ?? 100m;
+            var signedShare = contract.SignedSharePctCedent ?? 0m;
             var usedShare = contract.ContractPanels
                 .Where(panel => (!excludedPanelId.HasValue || panel.IdPanel != excludedPanelId.Value) &&
                     !IsExcludedFromAvailableShare(panel.Status))

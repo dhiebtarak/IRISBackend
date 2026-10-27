@@ -57,14 +57,32 @@ public sealed partial class FinancialWorkflowService
                 .GroupBy(x => x.IdInvoice!.Value)
                 .Select(g => new { Id = g.Key, Amount = g.Sum(x => x.AllocatedAmount ?? 0m) })
                 .ToDictionaryAsync(x => x.Id, x => x.Amount, ct);
-            invoiceRemaining = invoices.ToDictionary(x => x.Key, x => (x.Value.GrossPremium ?? 0m) - pairedByInvoice.GetValueOrDefault(x.Key));
+            var creditApplications = await _db.InvoiceCreditApplications.AsNoTracking().Where(application => application.IsActive
+                    && (ids.Contains(application.TargetInvoiceId) || ids.Contains(application.AvoirInvoiceId)))
+                .ToListAsync(ct);
+            var refundedByAvoir = await _db.AvoirRefundSettlements.AsNoTracking()
+                .Where(refund => refund.IsActive && ids.Contains(refund.AvoirInvoiceId))
+                .GroupBy(refund => refund.AvoirInvoiceId)
+                .Select(group => new { InvoiceId = group.Key, Amount = group.Sum(refund => refund.Amount) })
+                .ToDictionaryAsync(item => item.InvoiceId, item => item.Amount, ct);
+            invoiceRemaining = invoices.ToDictionary(x => x.Key, x => (x.Value.GrossPremium ?? 0m)
+                - pairedByInvoice.GetValueOrDefault(x.Key)
+                - (InvoiceDocumentAccounting.IsAvoir(x.Value.InvoiceType)
+                    ? creditApplications.Where(application => application.AvoirInvoiceId == x.Key).Sum(application => application.Amount)
+                        + refundedByAvoir.GetValueOrDefault(x.Key)
+                    : creditApplications.Where(application => application.TargetInvoiceId == x.Key).Sum(application => application.Amount)));
             var priorOperation = await _db.InvoicePairingOperations.AsNoTracking().Include(x => x.Lines).ThenInclude(x => x.Allocation)
+                .Include(x => x.CreditApplications)
                 .SingleOrDefaultAsync(x => x.ReceiptId == receiptId && x.RequestHash == hash && x.IsActive, ct);
-            if (priorOperation is not null && priorOperation.Lines.All(x => x.Allocation.IsActive))
+            if (priorOperation is not null && priorOperation.Lines.All(x => x.Allocation.IsActive)
+                && priorOperation.CreditApplications.All(x => x.IsActive))
             {
                 foreach (var item in items) LogPairing(item, "IDEMPOTENT_RETRY");
+                var retryResponse = ToPairingResponse(priorOperation);
+                retryResponse.CreatedRemittances = await GetRemittancesForAllocationsAsync(
+                    priorOperation.Lines.Select(line => line.ReceiptAllocationId).Distinct().ToArray(), ct);
                 await tx.CommitAsync(ct);
-                return ServiceResult<ReceiptBatchAllocationResponseDto>.Success(ToPairingResponse(priorOperation));
+                return ServiceResult<ReceiptBatchAllocationResponseDto>.Success(retryResponse);
             }
             if (priorOperation is not null)
                 await _db.InvoicePairingOperations.Where(x => x.Id == priorOperation.Id).ExecuteUpdateAsync(s => s.SetProperty(x => x.IsActive, false), ct);
@@ -73,9 +91,14 @@ public sealed partial class FinancialWorkflowService
                 .Where(x => x.IsActive && x.IdBankReceipt == receiptId && x.IdInvoice.HasValue && ids.Contains(x.IdInvoice.Value))
                 .ToDictionaryAsync(x => x.IdInvoice!.Value, ct);
             // Adopt historical successful requests without inserting their allocations again.
-            var legacyRetry = priorOperation is null && priorRows.Count == items.Count
-                && items.All(x => priorRows[x.InvoiceId].AllocatedAmount == x.AllocatedAmount)
+            var regularItems = items.Where(x => !InvoiceDocumentAccounting.IsAvoir(invoices[x.InvoiceId].InvoiceType)).ToArray();
+            var containsAvoir = regularItems.Length != items.Count;
+            var legacyRetry = priorOperation is null && !containsAvoir && priorRows.Count == regularItems.Length
+                && regularItems.All(x => priorRows.TryGetValue(x.InvoiceId, out var row) && row.AllocatedAmount == x.AllocatedAmount)
                 && !await _db.InvoicePairingOperations.AnyAsync(x => x.ReceiptId == receiptId, ct);
+            if (receiptRemaining <= 0m && !legacyRetry)
+                return Conflict("RECEIPT_ALREADY_FULLY_ALLOCATED", "The encaissement has already been fully allocated.");
+            decimal signedPairingTotal = 0m;
             if (!legacyRetry)
             {
                 foreach (var item in items)
@@ -83,46 +106,84 @@ public sealed partial class FinancialWorkflowService
                     var invoice = invoices[item.InvoiceId];
                     if (invoice.IdCurrency != receipt.IdCurrency)
                         return Conflict("CURRENCY_MISMATCH", "The invoice currency does not match the encaissement currency.", item);
-                    if (!string.Equals(invoice.InvoiceType, CedentPremiumInvoiceType, StringComparison.OrdinalIgnoreCase))
-                        return Conflict("INVOICE_TYPE_NOT_ELIGIBLE", "Only cedent premium invoices can receive incoming allocations.", item, 400);
+                    if (!InvoiceDocumentAccounting.IsContractReceivableType(invoice.InvoiceType))
+                        return Conflict("INVOICE_TYPE_NOT_ELIGIBLE", "Only INVOICE, INVOICE_FEES and AVOIR documents can be paired with incoming encaissements.", item, 400);
+                    if (InvoiceDocumentAccounting.IsAvoir(invoice.InvoiceType)
+                        && string.Equals(invoice.ProcessingMode, InvoiceDocumentAccounting.DirectToRemittances, StringComparison.OrdinalIgnoreCase))
+                        return Conflict("AVOIR_ALREADY_PROCESSED_DIRECTLY", "This Avoir was processed directly to reinsurer remittances and cannot be paired with an encaissement.", item);
                     if (string.Equals(invoice.Status?.Trim(), "Cancelled", StringComparison.OrdinalIgnoreCase))
                         return Conflict("INVOICE_CANCELLED", "Cancelled invoices cannot receive allocations.", item);
                     if (invoice.IdContractNavigation.IdCounterparty != receipt.IdCounterparty)
                         return Conflict("CEDENT_MISMATCH", "The invoice cedent does not match the encaissement counterparty.", item, 400);
-                    if (receiptRemaining <= 0m)
-                        return Conflict("RECEIPT_ALREADY_FULLY_ALLOCATED", "The encaissement has no remaining amount to allocate.", item);
+                    if (!containsAvoir && item.AllocatedAmount > receiptRemaining)
+                        return Conflict("ALLOCATION_EXCEEDS_RECEIPT_REMAINING", "The requested allocation exceeds the encaissement remaining amount.", item);
                     if (invoiceRemaining[item.InvoiceId] <= 0m)
-                        return Conflict("INVOICE_ALREADY_SETTLED", "The invoice has no remaining amount to settle.", item);
-                    if (item.AllocatedAmount > receiptRemaining)
-                        return Conflict("ALLOCATION_EXCEEDS_RECEIPT_REMAINING", $"Requested amount {item.AllocatedAmount} exceeds receipt remaining amount {receiptRemaining}.", item);
+                        return Conflict("INVOICE_ALREADY_SETTLED", "The selected invoice or Avoir has no remaining balance.", item);
                     if (item.AllocatedAmount > invoiceRemaining[item.InvoiceId])
-                        return Conflict("ALLOCATION_EXCEEDS_INVOICE_REMAINING", $"Requested amount {item.AllocatedAmount} exceeds invoice remaining amount {invoiceRemaining[item.InvoiceId]}.", item);
+                        return Conflict(InvoiceDocumentAccounting.IsAvoir(invoice.InvoiceType) ? "AVOIR_EXCEEDS_BALANCE" : "ALLOCATION_EXCEEDS_INVOICE_REMAINING",
+                            InvoiceDocumentAccounting.IsAvoir(invoice.InvoiceType)
+                                ? "The applied Avoir exceeds its unapplied balance."
+                                : $"Requested amount {item.AllocatedAmount} exceeds invoice remaining amount {invoiceRemaining[item.InvoiceId]}.",
+                            item, InvoiceDocumentAccounting.IsAvoir(invoice.InvoiceType) ? 400 : 409);
+                    signedPairingTotal += InvoiceDocumentAccounting.IsAvoir(invoice.InvoiceType) ? -item.AllocatedAmount : item.AllocatedAmount;
                 }
-                if (items.Sum(x => x.AllocatedAmount) > receiptRemaining)
+                if (signedPairingTotal < 0m)
+                    return Conflict("NEGATIVE_PAIRING_TOTAL", "Avoir amounts cannot exceed the selected invoice and invoice-fees amounts.", status: 400);
+                if (signedPairingTotal > receiptRemaining)
                     return Conflict("ALLOCATION_EXCEEDS_RECEIPT_REMAINING", "The total requested allocation exceeds the encaissement remaining amount.");
+                if (containsAvoir && signedPairingTotal > 0m && regularItems.Length == 0)
+                    return Conflict("AVOIR_TARGET_REQUIRED", "Select at least one invoice or invoice-fees document to apply the Avoir.", status: 400);
             }
 
             var now = DateTime.UtcNow;
             var allocations = new Dictionary<int, ReceiptAllocation>();
-            foreach (var item in items)
+            var creditApplicationsToCreate = new List<InvoiceCreditApplication>();
+            var creditByTargetInvoice = new Dictionary<int, decimal>();
+            foreach (var avoirItem in items.Where(item => InvoiceDocumentAccounting.IsAvoir(invoices[item.InvoiceId].InvoiceType)))
+            {
+                var creditLeft = avoirItem.AllocatedAmount;
+                foreach (var targetItem in regularItems.OrderBy(item => item.InvoiceId))
+                {
+                    var remainingForTarget = targetItem.AllocatedAmount - creditByTargetInvoice.GetValueOrDefault(targetItem.InvoiceId);
+                    if (remainingForTarget <= 0m || creditLeft <= 0m) continue;
+                    var creditAmount = Math.Min(remainingForTarget, creditLeft);
+                    creditByTargetInvoice[targetItem.InvoiceId] = creditByTargetInvoice.GetValueOrDefault(targetItem.InvoiceId) + creditAmount;
+                    creditLeft -= creditAmount;
+                    creditApplicationsToCreate.Add(new InvoiceCreditApplication
+                    {
+                        IdBankReceipt = receiptId,
+                        TargetInvoiceId = targetItem.InvoiceId,
+                        AvoirInvoiceId = avoirItem.InvoiceId,
+                        Amount = creditAmount,
+                        CreatedAt = now,
+                        CreatedBy = user,
+                        IsActive = true
+                    });
+                }
+                if (creditLeft > 0m)
+                    return Conflict("AVOIR_TARGET_REQUIRED", "The selected Avoir exceeds the selected invoice balances available to offset.", avoirItem, 400);
+            }
+
+            foreach (var item in regularItems)
             {
                 LogPairing(item, legacyRetry ? "IDEMPOTENT_LEGACY_RETRY" : "ACCEPTED");
+                var cashAmount = item.AllocatedAmount - creditByTargetInvoice.GetValueOrDefault(item.InvoiceId);
                 if (priorRows.TryGetValue(item.InvoiceId, out var existing))
                 {
-                    if (!legacyRetry)
-                    {
-                        var amount = (existing.AllocatedAmount ?? 0m) + item.AllocatedAmount;
-                        await _db.ReceiptAllocations.Where(x => x.IdReceiptAllocation == existing.IdReceiptAllocation)
-                            .ExecuteUpdateAsync(s => s.SetProperty(x => x.AllocatedAmount, amount).SetProperty(x => x.PairedAt, now), ct);
-                    }
                     allocations[item.InvoiceId] = existing;
+                    if (!legacyRetry && cashAmount > 0m)
+                    {
+                        var newAmount = (existing.AllocatedAmount ?? 0m) + cashAmount;
+                        await _db.ReceiptAllocations.Where(x => x.IdReceiptAllocation == existing.IdReceiptAllocation)
+                            .ExecuteUpdateAsync(s => s.SetProperty(x => x.AllocatedAmount, newAmount).SetProperty(x => x.PairedAt, now), ct);
+                    }
                 }
-                else
+                else if (cashAmount > 0m)
                 {
                     var allocation = new ReceiptAllocation
                     {
                         IdBankReceipt = receiptId, IdInvoice = item.InvoiceId, TargetType = "INVOICE",
-                        AllocatedAmount = item.AllocatedAmount, IdCurrency = receipt.IdCurrency,
+                        AllocatedAmount = cashAmount, IdCurrency = receipt.IdCurrency,
                         ExchangeRate = 1m, PairedAt = now, IdUser = user
                     };
                     _db.ReceiptAllocations.Add(allocation);
@@ -135,32 +196,51 @@ public sealed partial class FinancialWorkflowService
             var status = InvoiceRecoveryCalculator.GetReceiptPairingStatus(receipt.AmountReceived, total);
             await _db.BankReceipts.Where(x => x.IdBankReceipt == receiptId).ExecuteUpdateAsync(s => s
                 .SetProperty(x => x.DetailsStatus, status).SetProperty(x => x.UpdatedAt, now).SetProperty(x => x.UpdatedBy, user), ct);
-            foreach (var item in items)
-            {
-                var amount = await _db.ReceiptAllocations.AsNoTracking().Where(x => x.IsActive && x.IdInvoice == item.InvoiceId)
-                    .SumAsync(x => x.AllocatedAmount ?? 0m, ct);
-                var recovery = InvoiceRecoveryCalculator.Calculate(invoices[item.InvoiceId].GrossPremium ?? 0m, amount).Status;
-                await _db.Invoices.Where(x => x.IdInvoice == item.InvoiceId).ExecuteUpdateAsync(s => s
-                    .SetProperty(x => x.RecoveryStatus, recovery).SetProperty(x => x.UpdatedAt, now).SetProperty(x => x.UpdatedBy, user), ct);
-            }
-            await GeneratePanelRemittancesAsync(receipt, user, ct);
             var operation = new InvoicePairingOperation
             {
                 ReceiptId = receiptId, RequestHash = hash, CreatedAt = now, CreatedBy = user,
-                TotalAllocated = total, RemainingAmount = Math.Max(0m, receipt.AmountReceived - total), PairingStatus = status,
-                Lines = items.OrderBy(x => x.InvoiceId).Select(x => new InvoicePairingOperationLine
+                TotalAllocated = total, SignedPairingTotal = signedPairingTotal,
+                RemainingAmount = Math.Max(0m, receipt.AmountReceived - total), PairingStatus = status,
+                Lines = regularItems.Where(x => allocations.ContainsKey(x.InvoiceId)).OrderBy(x => x.InvoiceId).Select(x => new InvoicePairingOperationLine
                 {
-                    ReceiptAllocationId = allocations[x.InvoiceId].IdReceiptAllocation, RequestedAmount = x.AllocatedAmount
+                    ReceiptAllocationId = allocations[x.InvoiceId].IdReceiptAllocation,
+                    RequestedAmount = x.AllocatedAmount - creditByTargetInvoice.GetValueOrDefault(x.InvoiceId)
                 }).ToList()
             };
             _db.InvoicePairingOperations.Add(operation);
+            await _db.SaveChangesAsync(ct);
+            foreach (var creditApplication in creditApplicationsToCreate)
+                creditApplication.OperationId = operation.Id;
+            _db.InvoiceCreditApplications.AddRange(creditApplicationsToCreate);
+            await _db.SaveChangesAsync(ct);
+            var pairedAllocationIds = allocations.Values.Select(x => x.IdReceiptAllocation).Distinct().ToArray();
+            await GeneratePanelRemittancesAsync(receipt, user, ct, pairedAllocationIds);
+
+            foreach (var item in items)
+            {
+                var invoice = invoices[item.InvoiceId];
+                var cashPaid = await _db.ReceiptAllocations.AsNoTracking().Where(x => x.IsActive && x.IdInvoice == item.InvoiceId)
+                    .SumAsync(x => x.AllocatedAmount ?? 0m, ct);
+                var creditsPaid = await _db.InvoiceCreditApplications.AsNoTracking().Where(x => x.IsActive
+                        && (InvoiceDocumentAccounting.IsAvoir(invoice.InvoiceType) ? x.AvoirInvoiceId == item.InvoiceId : x.TargetInvoiceId == item.InvoiceId))
+                    .SumAsync(x => x.Amount, ct);
+                if (InvoiceDocumentAccounting.IsAvoir(invoice.InvoiceType))
+                    creditsPaid += await _db.AvoirRefundSettlements.AsNoTracking()
+                        .Where(x => x.IsActive && x.AvoirInvoiceId == item.InvoiceId).SumAsync(x => x.Amount, ct);
+                var recovery = InvoiceRecoveryCalculator.Calculate(invoice.GrossPremium ?? 0m, cashPaid + creditsPaid).Status;
+                await _db.Invoices.Where(x => x.IdInvoice == item.InvoiceId).ExecuteUpdateAsync(s => s
+                    .SetProperty(x => x.RecoveryStatus, recovery).SetProperty(x => x.UpdatedAt, now).SetProperty(x => x.UpdatedBy, user), ct);
+            }
             await _db.Notifications.Where(x => x.RecipientUserId == user && x.EntityType == "BANK_RECEIPT" && x.EntityId == receiptId && !x.IsRead)
                 .ExecuteUpdateAsync(s => s.SetProperty(x => x.IsRead, true).SetProperty(x => x.ReadAt, now), ct);
             await _db.SaveChangesAsync(ct);
             var persisted = await _db.InvoicePairingOperations.AsNoTracking().Include(x => x.Lines).ThenInclude(x => x.Allocation)
+                .Include(x => x.CreditApplications)
                 .SingleAsync(x => x.Id == operation.Id, ct);
+            var response = ToPairingResponse(persisted);
+            response.CreatedRemittances = await GetRemittancesForAllocationsAsync(pairedAllocationIds, ct);
             await tx.CommitAsync(ct);
-            return ServiceResult<ReceiptBatchAllocationResponseDto>.Success(ToPairingResponse(persisted), legacyRetry ? 200 : 201);
+            return ServiceResult<ReceiptBatchAllocationResponseDto>.Success(response, legacyRetry ? 200 : 201);
         }
         catch (OutgoingRemittanceValidationException exception)
         {
@@ -188,11 +268,29 @@ public sealed partial class FinancialWorkflowService
 
     private static ReceiptBatchAllocationResponseDto ToPairingResponse(InvoicePairingOperation operation) => new()
     {
+        PairingMode = "INVOICE_OFFSET",
         ReceiptId = operation.ReceiptId, TotalAllocated = operation.TotalAllocated,
         RemainingAmount = operation.RemainingAmount, PairingStatus = operation.PairingStatus,
+        SignedPairingTotal = operation.SignedPairingTotal,
+        AppliedAvoirInvoiceIds = operation.CreditApplications.Select(application => application.AvoirInvoiceId).Distinct().Order().ToArray(),
         Allocations = operation.Lines.OrderBy(x => x.Allocation.IdInvoice).Select(x => new ReceiptBatchAllocationItemDto
         {
             IdReceiptAllocation = x.ReceiptAllocationId, InvoiceId = x.Allocation.IdInvoice, AllocatedAmount = x.RequestedAmount
         }).ToList()
     };
+
+    private async Task<IReadOnlyList<RemittanceResponseDto>> GetRemittancesForAllocationsAsync(
+        IReadOnlyCollection<int> allocationIds, CancellationToken cancellationToken)
+    {
+        if (allocationIds.Count == 0) return [];
+        var lines = await _db.RemittanceRefs.AsNoTrackingWithIdentityResolution()
+            .Include(x => x.IdCounterpartyNavigation).Include(x => x.IdCurrencyNavigation)
+            .Include(x => x.IdPanelNavigation).ThenInclude(x => x!.IdContractNavigation)
+            .Include(x => x.IdReceiptAllocationNavigation).ThenInclude(x => x!.IdInvoiceNavigation)
+            .Include(x => x.IdReceiptAllocationNavigation).ThenInclude(x => x!.IdBankReceiptNavigation)
+            .Where(x => x.IsActive && x.IdReceiptAllocation.HasValue
+                && allocationIds.Contains(x.IdReceiptAllocation.Value))
+            .OrderBy(x => x.RemittanceRef1).ToListAsync(cancellationToken);
+        return lines.Select(MapOutgoingRemittance).ToList();
+    }
 }

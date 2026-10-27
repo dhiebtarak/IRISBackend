@@ -6,31 +6,31 @@ namespace IRISBackend.DTOs
 
         public string? Umr { get; set; }
 
-        public string Name { get; set; } = string.Empty;
+        public string? Name { get; set; }
 
-        public int CedentId { get; set; }
+        public int? CedentId { get; set; }
 
-        public string CedentName { get; set; } = string.Empty;
+        public string? CedentName { get; set; }
 
         public string? ContractType { get; set; }
 
         public string TypeOfBusiness { get; set; } = string.Empty;
 
-        public int CurrencyId { get; set; }
+        public int? CurrencyId { get; set; }
 
-        public string CurrencyCode { get; set; } = string.Empty;
+        public string? CurrencyCode { get; set; }
 
         public string Status { get; set; } = string.Empty;
 
         public DateOnly? ReceptionDate { get; set; }
 
-        public DateOnly InceptionDate { get; set; }
+        public DateOnly? InceptionDate { get; set; }
 
-        public DateOnly ExpiryDate { get; set; }
+        public DateOnly? ExpiryDate { get; set; }
 
         public decimal? GrossPremium { get; set; }
 
-        public bool ActionRequired { get; set; }
+        public bool? ActionRequired { get; set; }
 
         public DateTime CreatedAt { get; set; }
 

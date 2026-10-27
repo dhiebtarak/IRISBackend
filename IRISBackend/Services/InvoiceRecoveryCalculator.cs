@@ -21,8 +21,11 @@ public static class InvoiceRecoveryCalculator
         return settledAmount >= invoiceAmount ? Settled : PartiallySettled;
     }
 
-    public static string GetReceiptPairingStatus(decimal receiptAmount, decimal allocatedAmount) =>
-        receiptAmount > 0m && allocatedAmount >= receiptAmount ? "Paired" : "Unpaired";
+    public static string GetReceiptPairingStatus(decimal receiptAmount, decimal allocatedAmount)
+    {
+        if (allocatedAmount <= 0m) return "UNPAIRED";
+        return receiptAmount > 0m && allocatedAmount >= receiptAmount ? "PAIRED" : "PARTIALLY_PAIRED";
+    }
 }
 
 public sealed record InvoiceRecoveryAmounts(decimal PairedAmount, decimal OutstandingAmount, string Status);

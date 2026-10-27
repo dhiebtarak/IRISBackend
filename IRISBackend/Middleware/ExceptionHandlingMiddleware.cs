@@ -38,6 +38,7 @@ namespace IRISBackend.Middleware
             }
             catch (Exception exception)
             {
+                var traceId = Activity.Current?.Id ?? context.TraceIdentifier;
                 var sqlException = FindSqlException(exception);
                 var constraintName = sqlException is null ? null : FindConstraintName(sqlException.Message);
                 var failedEntities = exception is DbUpdateException updateException
@@ -46,7 +47,7 @@ namespace IRISBackend.Middleware
                 _logger.LogError(
                     exception,
                     "Unhandled request failure {TraceId} at {Method} {Path}. Exception type: {ExceptionType}. Inner exception: {InnerException}. SQL error: {SqlErrorNumber}. Constraint/index: {ConstraintName}. Failed entities: {FailedEntities}",
-                    context.TraceIdentifier,
+                    traceId,
                     context.Request.Method,
                     context.Request.Path,
                     exception.GetType().FullName,
@@ -78,7 +79,7 @@ namespace IRISBackend.Middleware
                         : null,
                     Instance = context.Request.Path
                 };
-                problem.Extensions["traceId"] = Activity.Current?.Id ?? context.TraceIdentifier;
+                problem.Extensions["traceId"] = traceId;
                 await context.Response.WriteAsJsonAsync(problem, cancellationToken: context.RequestAborted);
             }
         }

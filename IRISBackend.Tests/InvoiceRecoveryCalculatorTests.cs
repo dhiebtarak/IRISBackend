@@ -36,10 +36,11 @@ public sealed class InvoiceRecoveryCalculatorTests
     }
 
     [Theory]
-    [InlineData(1000, 999.99, "Unpaired")]
-    [InlineData(1000, 1000, "Paired")]
-    [InlineData(1000, 1001, "Paired")]
-    public void Receipt_exposes_only_unpaired_or_paired_status(decimal amount, decimal allocated, string expected)
+    [InlineData(1000, 0, "UNPAIRED")]
+    [InlineData(1000, 999.99, "PARTIALLY_PAIRED")]
+    [InlineData(1000, 1000, "PAIRED")]
+    [InlineData(1000, 1001, "PAIRED")]
+    public void Receipt_pairing_status_distinguishes_partial_allocations(decimal amount, decimal allocated, string expected)
     {
         Assert.Equal(expected, InvoiceRecoveryCalculator.GetReceiptPairingStatus(amount, allocated));
     }

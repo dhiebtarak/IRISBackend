@@ -11,11 +11,11 @@ public partial class Contract
 
     public int? IdPreviousContract { get; set; }
 
-    public bool IsFronting { get; set; }
+    public bool? IsFronting { get; set; }
 
-    public int IdCounterparty { get; set; }
+    public int? IdCounterparty { get; set; }
 
-    public int IdCurrency { get; set; }
+    public int? IdCurrency { get; set; }
 
     public string IdUser { get; set; }
 
@@ -27,9 +27,9 @@ public partial class Contract
 
     public DateOnly? ReceptionDate { get; set; }
 
-    public DateOnly InceptionDate { get; set; }
+    public DateOnly? InceptionDate { get; set; }
 
-    public DateOnly ExpiryDate { get; set; }
+    public DateOnly? ExpiryDate { get; set; }
 
     public string Status { get; set; }
 
@@ -51,7 +51,7 @@ public partial class Contract
 
     public decimal? GrossPremium { get; set; }
 
-    public bool Flag { get; set; }
+    public bool? Flag { get; set; }
 
     public decimal? CedentCommission { get; set; }
 

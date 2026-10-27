@@ -23,8 +23,8 @@ public sealed class IrisBankAccountsController : ControllerBase
         var accounts = await _db.IrisBankAccounts.AsNoTracking()
             .OrderBy(account => account.DisplayOrder).ThenBy(account => account.IdIrisBankAccount)
             .Select(account => new IrisBankAccountResponse(
-                account.IdIrisBankAccount, account.BankName, account.IdCurrency,
-                account.IdCurrencyNavigation.CurrencyCode, account.Iban, account.BicSwift,
+                account.IdIrisBankAccount, account.BankName, account.AccountHolder, account.IdCurrency,
+                account.IdCurrencyNavigation.CurrencyCode, account.Rib, account.Iban, account.BicSwift, account.Domiciliation,
                 account.DisplayOrder, account.IsActive, account.CreatedAt, account.UpdatedAt))
             .ToListAsync(cancellationToken);
         return Ok(accounts);
@@ -41,7 +41,8 @@ public sealed class IrisBankAccountsController : ControllerBase
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         var account = new IrisBankAccount
         {
-            BankName = request.BankName.Trim(), IdCurrency = request.CurrencyId,
+            BankName = request.BankName.Trim(), AccountHolder = Optional(request.AccountHolder), IdCurrency = request.CurrencyId,
+            Rib = Optional(request.Rib), Domiciliation = Optional(request.Domiciliation),
             Iban = NormalizeIban(request.Iban), BicSwift = request.BicSwift.Trim().ToUpperInvariant(),
             DisplayOrder = request.DisplayOrder, IsActive = request.IsActive,
             CreatedAt = DateTime.UtcNow, CreatedBy = userId
@@ -49,8 +50,8 @@ public sealed class IrisBankAccountsController : ControllerBase
         _db.IrisBankAccounts.Add(account);
         await _db.SaveChangesAsync(cancellationToken);
         return CreatedAtAction(nameof(List), new IrisBankAccountResponse(account.IdIrisBankAccount,
-            account.BankName, account.IdCurrency, await _db.Currencies.Where(c => c.IdCurrency == account.IdCurrency).Select(c => c.CurrencyCode).SingleAsync(cancellationToken),
-            account.Iban, account.BicSwift, account.DisplayOrder, account.IsActive, account.CreatedAt, account.UpdatedAt));
+            account.BankName, account.AccountHolder, account.IdCurrency, await _db.Currencies.Where(c => c.IdCurrency == account.IdCurrency).Select(c => c.CurrencyCode).SingleAsync(cancellationToken),
+            account.Rib, account.Iban, account.BicSwift, account.Domiciliation, account.DisplayOrder, account.IsActive, account.CreatedAt, account.UpdatedAt));
     }
 
     [HttpPut("{id:int}")]
@@ -63,9 +64,12 @@ public sealed class IrisBankAccountsController : ControllerBase
         var account = await _db.IrisBankAccounts.SingleOrDefaultAsync(item => item.IdIrisBankAccount == id, cancellationToken);
         if (account is null) return NotFound();
         account.BankName = request.BankName.Trim();
+        account.AccountHolder = Optional(request.AccountHolder);
         account.IdCurrency = request.CurrencyId;
+        account.Rib = Optional(request.Rib);
         account.Iban = NormalizeIban(request.Iban);
         account.BicSwift = request.BicSwift.Trim().ToUpperInvariant();
+        account.Domiciliation = Optional(request.Domiciliation);
         account.DisplayOrder = request.DisplayOrder;
         account.IsActive = request.IsActive;
         account.UpdatedAt = DateTime.UtcNow;
@@ -73,7 +77,7 @@ public sealed class IrisBankAccountsController : ControllerBase
         await _db.SaveChangesAsync(cancellationToken);
         var currencyCode = await _db.Currencies.Where(c => c.IdCurrency == account.IdCurrency).Select(c => c.CurrencyCode).SingleAsync(cancellationToken);
         return Ok(new IrisBankAccountResponse(account.IdIrisBankAccount, account.BankName,
-            account.IdCurrency, currencyCode, account.Iban, account.BicSwift,
+            account.AccountHolder, account.IdCurrency, currencyCode, account.Rib, account.Iban, account.BicSwift, account.Domiciliation,
             account.DisplayOrder, account.IsActive, account.CreatedAt, account.UpdatedAt));
     }
 
@@ -92,6 +96,7 @@ public sealed class IrisBankAccountsController : ControllerBase
 
     private bool CanManage() => User.IsInRole(IdentityRoles.Admin) || FinancialAccessRules.IsFinanceOfficer(User);
     private static string NormalizeIban(string value) => string.Concat(value.Where(character => !char.IsWhiteSpace(character))).ToUpperInvariant();
+    private static string? Optional(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     private static bool TryValidate(IrisBankAccountRequest request, out string error)
     {
         if (string.IsNullOrWhiteSpace(request.BankName)) error = "Bank name is required.";
@@ -103,7 +108,8 @@ public sealed class IrisBankAccountsController : ControllerBase
     }
 }
 
-public sealed record IrisBankAccountRequest(string BankName, int CurrencyId, string Iban, string BicSwift, int DisplayOrder = 0, bool IsActive = true);
+public sealed record IrisBankAccountRequest(string BankName, int CurrencyId, string Iban, string BicSwift, int DisplayOrder = 0, bool IsActive = true,
+    string? AccountHolder = null, string? Rib = null, string? Domiciliation = null);
 public sealed record IrisBankAccountStatusRequest(bool IsActive);
-public sealed record IrisBankAccountResponse(int Id, string BankName, int CurrencyId, string CurrencyCode,
-    string Iban, string BicSwift, int DisplayOrder, bool IsActive, DateTime CreatedAt, DateTime? UpdatedAt);
+public sealed record IrisBankAccountResponse(int Id, string BankName, string? AccountHolder, int CurrencyId, string CurrencyCode,
+    string? Rib, string Iban, string BicSwift, string? Domiciliation, int DisplayOrder, bool IsActive, DateTime CreatedAt, DateTime? UpdatedAt);

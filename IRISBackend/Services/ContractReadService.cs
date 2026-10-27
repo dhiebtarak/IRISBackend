@@ -134,31 +134,6 @@ namespace IRISBackend.Services
             return ServiceResult<ContractOverviewDto>.Success(MapOverview(contract));
         }
 
-        public async Task<ServiceResult<ContractOverviewDto>> CompleteDraftAsync(
-            int contractId,
-            CancellationToken cancellationToken = default)
-        {
-            var userResult = await GetCurrentContractReaderAsync();
-            if (!userResult.Succeeded)
-            {
-                return MapFailure<ContractOverviewDto>(userResult);
-            }
-
-            if (!FrontOfficerAccessRules.IsFrontOfficer(userResult.Value!))
-            {
-                return ServiceResult<ContractOverviewDto>.Failure(
-                    "Only Front Officers can complete a contract draft.",
-                    statusCode: StatusCodes.Status403Forbidden);
-            }
-
-            await _contractRepository.MarkDraftReadyForPlacementAsync(
-                contractId,
-                userResult.Value!.Id,
-                cancellationToken);
-
-            return await GetOverviewAsync(contractId, cancellationToken);
-        }
-
         public async Task<ServiceResult<SlipDownloadResult>> DownloadSlipsAsync(
             int contractId,
             CancellationToken cancellationToken = default)
@@ -216,7 +191,7 @@ namespace IRISBackend.Services
             {
                 Content = BuildSlipZip(slips),
                 ContentType = "application/zip",
-                FileName = $"{SanitizeFileName(contract.Name)}-slips.zip",
+                FileName = $"{SanitizeFileName(contract.Name ?? $"Contract-{contractId}")}-slips.zip",
                 SlipCount = slips.Count
             });
         }
@@ -283,18 +258,18 @@ namespace IRISBackend.Services
         {
             var cedentCommissionPercentage = contract.CedentCommission ?? 0m;
             var cedentCommissionAmount = contract.GrossPremium.HasValue
-                ? FacultativeFinancialCalculator.RoundMoney(
-                    contract.GrossPremium.Value * cedentCommissionPercentage / 100m)
+                ? PremiumCalculationService.CalculateCedentCommissionAmount(
+                    contract.GrossPremium.Value, contract.CedentCommission, contract.IdCurrencyNavigation?.DecimalPlaces)
                 : (decimal?)null;
             var netPremium = contract.GrossPremium.HasValue
-                ? FacultativeFinancialCalculator.RoundMoney(
-                    contract.GrossPremium.Value - (cedentCommissionAmount ?? 0m))
+                ? PremiumCalculationService.CalculateContractNetPremium(
+                    contract.GrossPremium.Value, contract.CedentCommission, contract.IdCurrencyNavigation?.DecimalPlaces)
                 : (decimal?)null;
             var coverageSelection = MapCoverageSelection(contract);
             var selectedCount = contract.ContractCoverageSelections.Count;
             var availableSlipCount = contract.ContractCoverageSelections.Count(selection => selection.IdSlipTemplate.HasValue);
             var availableShare = Math.Max(0m,
-                (contract.SignedSharePctCedent ?? 100m) - contract.ContractPanels
+                (contract.SignedSharePctCedent ?? 0m) - contract.ContractPanels
                     .Where(panel => !string.Equals(panel.Status?.Trim(), ContractConstants.CancelledPanelStatus, StringComparison.OrdinalIgnoreCase) &&
                         !string.Equals(panel.Status?.Trim(), ContractConstants.NotTakenUpPanelStatus, StringComparison.OrdinalIgnoreCase))
                     .Sum(panel => panel.SignedSharePct ?? 0m));
@@ -318,22 +293,22 @@ namespace IRISBackend.Services
                 Status = ContractConstants.NormalizeStatus(contract.Status),
                 AllowedActions = BuildAllowedActions(contract),
                 CounterpartyId = contract.IdCounterparty,
-                Cedent = new CedentSummaryDto
+                Cedent = contract.IdCounterpartyNavigation is null ? null : new CedentSummaryDto
                 {
-                    Id = contract.IdCounterparty,
-                    Name = contract.IdCounterpartyNavigation?.Name ?? string.Empty,
-                    Country = contract.IdCounterpartyNavigation?.Country,
-                    City = contract.IdCounterpartyNavigation?.City
+                    Id = contract.IdCounterpartyNavigation.Id,
+                    Name = contract.IdCounterpartyNavigation.Name,
+                    Country = contract.IdCounterpartyNavigation.Country,
+                    City = contract.IdCounterpartyNavigation.City
                 },
                 CurrencyId = contract.IdCurrency,
-                Currency = new CurrencyReferenceDto
+                Currency = contract.IdCurrencyNavigation is null ? null : new CurrencyReferenceDto
                 {
-                    Id = contract.IdCurrency,
-                    Code = contract.IdCurrencyNavigation?.CurrencyCode ?? string.Empty,
-                    Symbol = contract.IdCurrencyNavigation?.CurrencySymbol,
-                    Name = contract.IdCurrencyNavigation?.Name ?? string.Empty,
-                    DecimalPlaces = contract.IdCurrencyNavigation?.DecimalPlaces,
-                    IsDefault = contract.IdCurrencyNavigation?.IsDefault ?? false
+                    Id = contract.IdCurrencyNavigation.IdCurrency,
+                    Code = contract.IdCurrencyNavigation.CurrencyCode,
+                    Symbol = contract.IdCurrencyNavigation.CurrencySymbol,
+                    Name = contract.IdCurrencyNavigation.Name,
+                    DecimalPlaces = contract.IdCurrencyNavigation.DecimalPlaces,
+                    IsDefault = contract.IdCurrencyNavigation.IsDefault
                 },
                 CreationDate = contract.CreationDate,
                 ReceptionDate = contract.ReceptionDate,
@@ -383,14 +358,15 @@ namespace IRISBackend.Services
                     })
                     .ToArray(),
                 PairedAmount = contract.ReceiptAllocations.Sum(allocation => allocation.AllocatedAmount ?? 0m),
-                AlreadyInvoicedAmount = contract.Invoices
-                    .Where(invoice => invoice.Status != "Cancelled")
-                    .Sum(invoice => invoice.NetPremium ?? 0m),
                 AvailableAmount = Math.Max(0m,
                     contract.ReceiptAllocations.Sum(allocation => allocation.AllocatedAmount ?? 0m) -
-                    contract.Invoices
-                        .Where(invoice => invoice.Status != "Cancelled")
-                        .Sum(invoice => invoice.NetPremium ?? 0m))
+                    Math.Max(0m, InvoiceDocumentAccounting.NetInvoiced(contract.Invoices))),
+                AlreadyInvoicedAmount = InvoiceDocumentAccounting.NetInvoiced(contract.Invoices),
+                HasAvoir = contract.Invoices.Any(invoice => InvoiceDocumentAccounting.IsAvoir(invoice.InvoiceType)
+                    && InvoiceDocumentAccounting.IsActiveDocument(invoice)),
+                ContractDocumentType = contract.Invoices.Any(invoice => InvoiceDocumentAccounting.IsAvoir(invoice.InvoiceType)
+                    && InvoiceDocumentAccounting.IsActiveDocument(invoice)) ? "CREDIT_NOTE" : "DEBIT_NOTE",
+                ContractDocumentDownloadUrl = $"/api/back-office/contracts/{contract.IdContract}/financial-note/pdf"
             };
         }
 

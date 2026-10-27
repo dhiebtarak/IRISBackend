@@ -10,24 +10,27 @@ public sealed class FacultativeFinancialValidatorTests
     private readonly UpsertFacultativeContractRequestValidator _validator = new();
 
     [Fact]
-    public void RejectsPercentageStylePremiumRateWhenCanonicalRateIsFractional()
+    public void AcceptsPercentageStylePremiumRateUpToOneHundred()
     {
         var request = CreateRequest();
         request.PremiumRate = 2m;
         var result = _validator.TestValidate(request);
 
-        result.ShouldHaveValidationErrorFor(request => request.PremiumRate);
+        result.ShouldNotHaveValidationErrorFor(request => request.PremiumRate);
+
+        request.PremiumRate = 100.01m;
+        _validator.TestValidate(request).ShouldHaveValidationErrorFor(request => request.PremiumRate);
     }
 
     [Fact]
-    public void RejectsCommissionsThatExceedGrossPremium()
+    public void DoesNotSubtractIrisFeesFromContractNetPremiumValidation()
     {
         var request = CreateRequest();
         request.Fees = 1900m;
         request.CedentCommissionPct = 10m;
         var result = _validator.TestValidate(request);
 
-        result.ShouldHaveValidationErrorFor<UpsertFacultativeContractRequest>(request => request);
+        result.ShouldNotHaveValidationErrorFor(request => request.CedentCommissionPct);
     }
 
     private static UpsertFacultativeContractRequest CreateRequest() => new()
@@ -38,7 +41,7 @@ public sealed class FacultativeFinancialValidatorTests
         InceptionDate = new DateOnly(2026, 1, 1),
         ExpiryDate = new DateOnly(2026, 12, 31),
         SumInsured = 100000m,
-        PremiumRate = 0.02m,
+        PremiumRate = 2m,
         Fees = 200m,
         CedentCommissionPct = 5m,
         CoverageSelection = new CoverageSelectionRequestDto { MainCoverId = 1 }

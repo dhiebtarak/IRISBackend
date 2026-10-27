@@ -56,12 +56,24 @@ public sealed class BackOfficeController : ApiControllerBase
         return FromServiceResult(result);
     }
 
+    [HttpPost("bank-receipts/{id:int}/invoice-allocations/avoir-refund")]
+    public async Task<IActionResult> RefundAvoir(int id, [FromBody] AvoirRefundRequestDto request, CancellationToken cancellationToken) =>
+        FromServiceResult(await _service.RefundAvoirAsync(id, request, cancellationToken));
+
+    [HttpGet("invoices/{avoirInvoiceId:int}/eligible-refund-receipts")]
+    public async Task<IActionResult> EligibleAvoirRefundReceipts(int avoirInvoiceId, CancellationToken cancellationToken) =>
+        FromServiceResult(await _service.GetEligibleAvoirRefundReceiptsAsync(avoirInvoiceId, cancellationToken));
+
     [HttpGet("remittances")]
     public async Task<IActionResult> Remittances([FromQuery] RemittanceQueryDto query, CancellationToken cancellationToken) => FromServiceResult(await _service.ListRemittancesAsync(query, cancellationToken));
 
     [HttpPost("bank-receipts/{id:int}/remittances/generate")]
     public async Task<IActionResult> GenerateRemittances(int id, CancellationToken cancellationToken) =>
         FromServiceResult(await _service.GenerateReceiptRemittancesAsync(id, cancellationToken));
+
+    [HttpPost("remittances/repair-draft-avoir-aggregates")]
+    public async Task<IActionResult> RepairDraftAvoirAggregates(CancellationToken cancellationToken) =>
+        FromServiceResult(await _service.RepairDraftAvoirRemittancesAsync(cancellationToken));
 
     [HttpPost("remittances/closings")]
     public async Task<IActionResult> PrintClosing([FromBody] OutgoingClosingRequestDto request, CancellationToken cancellationToken)
@@ -86,6 +98,10 @@ public sealed class BackOfficeController : ApiControllerBase
     public async Task<IActionResult> ConfirmRemittanceForDisbursement(int remittanceRef, CancellationToken cancellationToken) =>
         FromServiceResult(await _service.ConfirmRemittanceForDisbursementAsync(remittanceRef, cancellationToken));
 
+    [HttpPost("remittances/confirm-for-disbursement/batch")]
+    public async Task<IActionResult> ConfirmRemittancesForDisbursement([FromBody] RemittanceBatchConfirmationRequestDto request, CancellationToken cancellationToken) =>
+        FromServiceResult(await _service.ConfirmRemittancesForDisbursementAsync(request, cancellationToken));
+
     [HttpGet("invoices")]
     public async Task<IActionResult> Invoices([FromQuery] InvoiceQueryDto query, CancellationToken cancellationToken) => FromServiceResult(await _service.ListInvoicesAsync(query, cancellationToken));
 
@@ -99,11 +115,28 @@ public sealed class BackOfficeController : ApiControllerBase
     public async Task<IActionResult> ContractInvoices(int contractId, CancellationToken cancellationToken) =>
         FromServiceResult(await _service.ListContractInvoicesAsync(contractId, cancellationToken));
 
+    [HttpGet("contracts/{contractId:int}/financial-note/pdf")]
     [HttpGet("contracts/{contractId:int}/debit-note")]
-    public async Task<IActionResult> ContractDebitNote(int contractId, CancellationToken cancellationToken)
+    public async Task<IActionResult> ContractFinancialNote(int contractId, CancellationToken cancellationToken)
     {
-        var result = await _service.GetContractDebitNoteAsync(contractId, cancellationToken);
-        if (!result.Succeeded) return FromServiceResult(result);
+        var result = await _service.GetContractFinancialNoteAsync(contractId, cancellationToken);
+        if (!result.Succeeded)
+        {
+            if (result.Error?.Code == "IRIS_BANK_ACCOUNT_NOT_CONFIGURED")
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    error = "IrisBankAccountConfigurationInvalid",
+                    message = "The IRIS bank accounts required for the financial note are not completely configured.",
+                    missingFields = result.Error.Errors,
+                    traceId = result.Error.TraceId ?? HttpContext.TraceIdentifier
+                });
+            if (result.Error is not null && string.IsNullOrWhiteSpace(result.Error.TraceId))
+                result.Error.TraceId = HttpContext.TraceIdentifier;
+            return FromServiceResult(result);
+        }
+        SetFinancialPdfHeaders("debit-note-v2");
+        Response.Headers["X-Financial-Note-Type"] = result.Value!.DocumentType ?? string.Empty;
+        Response.Headers["X-Financial-Note-Reference"] = result.Value.DocumentReference ?? string.Empty;
         return File(result.Value!.Content, result.Value.ContentType, result.Value.FileName);
     }
 
@@ -116,11 +149,37 @@ public sealed class BackOfficeController : ApiControllerBase
         FromServiceResult(await _service.CreatePremiumInvoiceAsync(contractId, request, cancellationToken));
 
     [HttpGet("invoices/{invoiceId:int}/document")]
-    [HttpGet("invoices/{invoiceId:int}/debit-note")]
+    [HttpGet("invoices/{invoiceId:int}/pdf")]
     public async Task<IActionResult> PremiumInvoiceDocument(int invoiceId, CancellationToken cancellationToken)
     {
         var result = await _service.GetPremiumInvoiceDocumentAsync(invoiceId, cancellationToken);
-        if (!result.Succeeded) return FromServiceResult(result);
+        if (!result.Succeeded)
+        {
+            if (result.Error?.Code == "INVOICE_NOT_FOUND")
+                return NotFound(new { error = "InvoiceNotFound", invoiceId, traceId = HttpContext.TraceIdentifier });
+            if (result.Error?.Code == "INVOICE_FINANCIAL_TOTALS_INCONSISTENT")
+                return Conflict(new { error = result.Error.Code, message = result.Error.Message, traceId = HttpContext.TraceIdentifier });
+            return FromServiceResult(result);
+        }
+        SetFinancialPdfHeaders("iris-accounting-v1");
         return File(result.Value!.Content, result.Value.ContentType, result.Value.FileName);
+    }
+
+    [HttpGet("avoirs/{avoirId:int}/credit-note/pdf")]
+    [HttpGet("avoirs/{avoirId:int}/pdf")]
+    public async Task<IActionResult> AvoirCreditNoteDocument(int avoirId, CancellationToken cancellationToken)
+    {
+        var result = await _service.GetAvoirCreditNoteDocumentAsync(avoirId, cancellationToken);
+        if (!result.Succeeded) return FromServiceResult(result);
+        SetFinancialPdfHeaders("iris-accounting-v1");
+        return File(result.Value!.Content, result.Value.ContentType, result.Value.FileName);
+    }
+
+    private void SetFinancialPdfHeaders(string templateVersion)
+    {
+        Response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
+        Response.Headers.Pragma = "no-cache";
+        Response.Headers.Expires = "0";
+        Response.Headers["X-PDF-Template-Version"] = templateVersion;
     }
 }

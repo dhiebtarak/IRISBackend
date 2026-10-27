@@ -30,21 +30,21 @@ namespace IRISBackend.DTOs
 
         public string? Umr { get; set; }
 
-        public string Name { get; set; } = string.Empty;
+        public string? Name { get; set; }
 
-        public int CedentId { get; set; }
+        public int? CedentId { get; set; }
 
-        public string CedentName { get; set; } = string.Empty;
+        public string? CedentName { get; set; }
 
         public string? ContractType { get; set; }
 
         public string Status { get; set; } = string.Empty;
 
-        public string CurrencyCode { get; set; } = string.Empty;
+        public string? CurrencyCode { get; set; }
 
-        public DateOnly InceptionDate { get; set; }
+        public DateOnly? InceptionDate { get; set; }
 
-        public DateOnly ExpiryDate { get; set; }
+        public DateOnly? ExpiryDate { get; set; }
 
         public DateTime UpdatedAt { get; set; }
     }

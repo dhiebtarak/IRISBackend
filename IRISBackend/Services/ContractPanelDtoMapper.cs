@@ -11,6 +11,21 @@ namespace IRISBackend.Services
             {
                 IdPanel = panel.IdPanel,
                 IdContract = panel.IdContract,
+                ContractGrossPremium = panel.IdContractNavigation?.GrossPremium,
+                ContractSignedSharePercentage = panel.IdContractNavigation?.SignedSharePctCedent,
+                ContractNetPremium = panel.IdContractNavigation?.GrossPremium is decimal contractGross
+                    ? PremiumCalculationService.CalculateContractNetPremium(
+                        contractGross,
+                        panel.IdContractNavigation.CedentCommission,
+                        panel.IdContractNavigation.IdCurrencyNavigation?.DecimalPlaces)
+                    : null,
+                ContractCedentCommissionPercentage = panel.IdContractNavigation?.CedentCommission,
+                ContractCedentCommissionAmount = panel.IdContractNavigation is { } contract && contract.GrossPremium.HasValue
+                    ? PremiumCalculationService.CalculateCedentCommissionAmount(
+                        contract.GrossPremium.Value,
+                        contract.CedentCommission,
+                        contract.IdCurrencyNavigation?.DecimalPlaces)
+                    : null,
                 IdCounterparty = panel.IdCounterparty,
                 ReinsurerName = panel.IdCounterpartyNavigation?.Name ?? string.Empty,
                 Role = panel.Role ?? string.Empty,
@@ -33,6 +48,8 @@ namespace IRISBackend.Services
                 CedentCommissionAmount = panel.CedentCommissionAmount,
                 BrokerageIrisAmount = panel.BrokerageIrisAmount,
                 OtherDeductions = panel.OtherDeductions,
+                OtherDeductionsPercentage = panel.OtherDeductionsPercentage,
+                OtherDeductionsAmount = panel.OtherDeductions,
                 NetPremium = panel.NetPremium,
                 PremiumReference = panel.PremiumReference,
                 Status = string.IsNullOrWhiteSpace(panel.Status) ? ContractConstants.DraftStatus : panel.Status

@@ -26,6 +26,26 @@ builder.Services.AddControllersWithViews()
     {
         options.InvalidModelStateResponseFactory = context =>
         {
+            if (context.HttpContext.Request.Path.StartsWithSegments("/api/contracts/facultative"))
+            {
+                var invalidKeys = context.ModelState
+                    .Where(entry => entry.Value?.Errors.Count > 0)
+                    .Select(entry => NormalizeContractModelStateKey(entry.Key))
+                    .Distinct()
+                    .ToArray();
+                context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>()
+                    .CreateLogger("FacultativeContractModelBinding")
+                    .LogWarning("Facultative contract request rejected during model binding. TraceId={TraceId}, Fields={Fields}",
+                        context.HttpContext.TraceIdentifier, string.Join(",", invalidKeys));
+
+                var fieldErrors = context.ModelState
+                    .Where(entry => entry.Value?.Errors.Count > 0)
+                    .SelectMany(entry => entry.Value!.Errors.Select(error => new ContractFieldError(
+                        NormalizeContractModelStateKey(entry.Key), error.ErrorMessage)));
+
+                return new BadRequestObjectResult(ContractValidationErrorResponseDto.From(fieldErrors));
+            }
+
             var errors = context.ModelState
                 .Where(entry => entry.Value?.Errors.Count > 0)
                 .SelectMany(entry => entry.Value!.Errors.Select(error =>
@@ -151,6 +171,8 @@ builder.Services.AddScoped<IFacultativeContractService, FacultativeContractServi
 builder.Services.AddScoped<IContractUmrGenerator, ContractUmrGenerator>();
 builder.Services.AddScoped<IContractReadService, ContractReadService>();
 builder.Services.AddScoped<IContractPlacementService, ContractPlacementService>();
+builder.Services.AddSingleton<PremiumCalculationService>();
+builder.Services.AddScoped<FacultativePanelFinancialRepairService>();
 builder.Services.AddScoped<ICoverageCatalogService, CoverageCatalogService>();
 builder.Services.AddScoped<ICoverageSelectionService, CoverageSelectionService>();
 builder.Services.AddScoped<IFinancialWorkflowService, FinancialWorkflowService>();
@@ -170,7 +192,12 @@ builder.Services.AddCors(options =>
     {
         policy.WithOrigins("http://localhost:4200")
               .AllowAnyHeader()
-              .AllowAnyMethod();
+              .AllowAnyMethod()
+              .WithExposedHeaders(
+                  "Content-Disposition",
+                  "X-Financial-Note-Type",
+                  "X-Financial-Note-Reference",
+                  "X-PDF-Template-Version");
     });
 });
 
@@ -182,12 +209,18 @@ var irisBankAccountOptions = app.Services
 var configuredIrisBankAccounts = irisBankAccountOptions.Accounts ?? [];
 var activeIrisBankAccounts = configuredIrisBankAccounts.Where(account => account.IsActive).ToList();
 app.Logger.LogInformation(
-    "IRIS bank-account configuration: Environment={Environment}, SectionExists={SectionExists}, ConfiguredAccounts={ConfiguredAccounts}, ActiveAccounts={ActiveAccounts}, Accounts={Accounts}",
+    "IRIS bank-account configuration: Environment={Environment}, Section={Section}, SectionExists={SectionExists}, ConfiguredAccounts={ConfiguredAccounts}, ActiveAccounts={ActiveAccounts}, AccountMetadata={AccountMetadata}",
     app.Environment.EnvironmentName,
+    IrisBankAccountsOptions.SectionName,
     builder.Configuration.GetSection(IrisBankAccountsOptions.SectionName).Exists(),
     configuredIrisBankAccounts.Count,
     activeIrisBankAccounts.Count,
-    string.Join(", ", activeIrisBankAccounts.Select(account => $"{account.BankName}/{account.Currency}")));
+    string.Join("; ", activeIrisBankAccounts.Select((account, index) =>
+        $"Currency={account.Currency},DisplayOrder={account.DisplayOrder ?? index}," +
+        $"AccountHolderPresent={!string.IsNullOrWhiteSpace(account.AccountHolder)}," +
+        $"BankNamePresent={!string.IsNullOrWhiteSpace(account.BankName)}," +
+        $"RoutingPresent={!string.IsNullOrWhiteSpace(account.Rib) || !string.IsNullOrWhiteSpace(account.Iban)}," +
+        $"SwiftBicPresent={!string.IsNullOrWhiteSpace(account.SwiftBic)}")));
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseMiddleware<RequestLoggingMiddleware>();
@@ -228,4 +261,14 @@ static string NormalizeModelStateKey(string key)
     return lastSegment.Length == 0
         ? string.Empty
         : char.ToLowerInvariant(lastSegment[0]) + lastSegment[1..];
+}
+
+static string NormalizeContractModelStateKey(string key)
+{
+    if (string.IsNullOrWhiteSpace(key)) return "request";
+    var path = key.Replace("$.", string.Empty, StringComparison.Ordinal).TrimStart('.');
+    if (path.StartsWith("request.", StringComparison.OrdinalIgnoreCase)) path = path[8..];
+    var normalized = string.Join('.', path.Split('.', StringSplitOptions.RemoveEmptyEntries).Select(segment =>
+        segment.Length == 0 ? segment : char.ToLowerInvariant(segment[0]) + segment[1..]));
+    return string.IsNullOrWhiteSpace(normalized) ? "request" : normalized;
 }

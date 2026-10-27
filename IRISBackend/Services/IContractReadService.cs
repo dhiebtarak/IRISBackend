@@ -15,10 +15,6 @@ namespace IRISBackend.Services
             int contractId,
             CancellationToken cancellationToken = default);
 
-        Task<ServiceResult<ContractOverviewDto>> CompleteDraftAsync(
-            int contractId,
-            CancellationToken cancellationToken = default);
-
         Task<ServiceResult<SlipDownloadResult>> DownloadSlipsAsync(
             int contractId,
             CancellationToken cancellationToken = default);

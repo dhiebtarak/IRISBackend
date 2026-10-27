@@ -4,9 +4,12 @@ public sealed class IrisBankAccount
 {
     public int IdIrisBankAccount { get; set; }
     public string BankName { get; set; } = string.Empty;
+    public string? AccountHolder { get; set; }
     public int IdCurrency { get; set; }
+    public string? Rib { get; set; }
     public string Iban { get; set; } = string.Empty;
     public string BicSwift { get; set; } = string.Empty;
+    public string? Domiciliation { get; set; }
     public int DisplayOrder { get; set; }
     public bool IsActive { get; set; }
     public DateTime CreatedAt { get; set; }

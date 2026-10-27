@@ -58,8 +58,8 @@ namespace IRISBackend.Validators
 
             RuleFor(panel => panel.DeductibleType)
                 .Must(value => string.IsNullOrWhiteSpace(value) ||
-                    value.Trim().Equals(ContractPanelFinancialCalculator.AmountType, StringComparison.OrdinalIgnoreCase) ||
-                    value.Trim().Equals(ContractPanelFinancialCalculator.PercentageType, StringComparison.OrdinalIgnoreCase))
+                    value.Trim().Equals("Amount", StringComparison.OrdinalIgnoreCase) ||
+                    value.Trim().Equals("Percentage", StringComparison.OrdinalIgnoreCase))
                 .WithMessage("deductibleType must be Amount or Percentage.");
 
             RuleFor(panel => panel.PremiumRatePct)
@@ -95,12 +95,12 @@ namespace IRISBackend.Validators
 
             RuleFor(panel => panel.LimitOfLiabilityType)
                 .Must(value => string.IsNullOrWhiteSpace(value) ||
-                    value.Trim().Equals(ContractPanelFinancialCalculator.AmountType, StringComparison.OrdinalIgnoreCase) ||
-                    value.Trim().Equals(ContractPanelFinancialCalculator.PercentageType, StringComparison.OrdinalIgnoreCase))
+                    value.Trim().Equals("Amount", StringComparison.OrdinalIgnoreCase) ||
+                    value.Trim().Equals("Percentage", StringComparison.OrdinalIgnoreCase))
                 .WithMessage("limitOfLiabilityType must be Amount or Percentage.");
 
             RuleFor(panel => panel)
-                .Must(panel => !string.Equals(panel.LimitOfLiabilityType?.Trim(), ContractPanelFinancialCalculator.PercentageType, StringComparison.OrdinalIgnoreCase) ||
+                .Must(panel => !string.Equals(panel.LimitOfLiabilityType?.Trim(), "Percentage", StringComparison.OrdinalIgnoreCase) ||
                     !panel.LimitOfLiabilityValue.HasValue || panel.LimitOfLiabilityValue.Value <= 100m)
                 .WithMessage("limitOfLiabilityValue must be between 0 and 100 for Percentage mode.");
 
@@ -115,7 +115,7 @@ namespace IRISBackend.Validators
                 .WithMessage("deductibleValue is required when deductibleType is provided.");
 
             RuleFor(panel => panel)
-                .Must(panel => !string.Equals(panel.DeductibleType?.Trim(), ContractPanelFinancialCalculator.PercentageType, StringComparison.OrdinalIgnoreCase) ||
+                .Must(panel => !string.Equals(panel.DeductibleType?.Trim(), "Percentage", StringComparison.OrdinalIgnoreCase) ||
                     !panel.DeductibleValue.HasValue || panel.DeductibleValue.Value <= 100m)
                 .WithMessage("deductibleValue must be between 0 and 100 for Percentage mode.");
 
@@ -124,6 +124,11 @@ namespace IRISBackend.Validators
                 .When(panel => panel.OtherDeductions.HasValue)
                 .WithMessage("otherDeductions must be greater than or equal to 0.");
 
+            RuleFor(panel => panel.OtherDeductionsPercentage)
+                .InclusiveBetween(0m, 100m)
+                .When(panel => panel.OtherDeductionsPercentage.HasValue)
+                .WithMessage("otherDeductionsPercentage must be between 0 and 100.");
+
             RuleFor(panel => panel.PremiumReference)
                 .MaximumLength(100);
 
@@ -131,6 +136,7 @@ namespace IRISBackend.Validators
                 .Must(value => string.IsNullOrWhiteSpace(value) ||
                     ContractConstants.PanelStatuses.Contains(value.Trim(), StringComparer.OrdinalIgnoreCase))
                 .WithMessage("status is invalid.");
+
         }
     }
 }

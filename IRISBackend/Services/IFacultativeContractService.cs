@@ -12,6 +12,10 @@ namespace IRISBackend.Services
             int contractId,
             CancellationToken cancellationToken = default);
 
+        Task<ServiceResult<FacultativeContractResponseDto>> CompleteDraftAsync(
+            int contractId,
+            CancellationToken cancellationToken = default);
+
         Task<ServiceResult<FacultativeContractResponseDto>> UpdateDraftAsync(
             int contractId,
             UpsertFacultativeContractRequest request,

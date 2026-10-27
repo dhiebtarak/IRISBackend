@@ -6,5 +6,7 @@ namespace IRISBackend.DTOs
         public string Message { get; set; } = "An error occurred.";
 
         public IEnumerable<string> Errors { get; set; } = [];
+
+        public string? TraceId { get; set; }
     }
 }

@@ -14,9 +14,12 @@ public partial class IRISBackendContext
             entity.HasKey(account => account.IdIrisBankAccount);
             entity.Property(account => account.IdIrisBankAccount).HasColumnName("id_iris_bank_account");
             entity.Property(account => account.BankName).HasMaxLength(255).IsRequired().HasColumnName("bank_name");
+            entity.Property(account => account.AccountHolder).HasMaxLength(255).HasColumnName("account_holder");
             entity.Property(account => account.IdCurrency).IsRequired().HasColumnName("id_currency");
+            entity.Property(account => account.Rib).HasMaxLength(64).HasColumnName("rib");
             entity.Property(account => account.Iban).HasMaxLength(34).IsRequired().HasColumnName("iban");
             entity.Property(account => account.BicSwift).HasMaxLength(11).IsRequired().HasColumnName("bic_swift");
+            entity.Property(account => account.Domiciliation).HasMaxLength(255).HasColumnName("domiciliation");
             entity.Property(account => account.DisplayOrder).HasDefaultValue(0).HasColumnName("display_order");
             entity.Property(account => account.IsActive).HasDefaultValue(true).HasColumnName("is_active");
             entity.Property(account => account.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()").HasColumnName("created_at");
@@ -37,11 +40,74 @@ public partial class IRISBackendContext
 
         modelBuilder.Entity<InvoiceNumberSequence>(entity =>
         {
-            entity.HasKey(item => item.InvoiceYear);
+            entity.HasKey(item => new { item.InvoiceYear, item.DocumentType });
             entity.ToTable("INVOICE_NUMBER_SEQUENCE");
             entity.Property(item => item.InvoiceYear).ValueGeneratedNever().HasColumnName("invoice_year");
+            entity.Property(item => item.DocumentType).HasMaxLength(10).HasDefaultValue("INV").HasColumnName("document_type");
             entity.Property(item => item.LastSequence).HasColumnName("last_sequence");
         });
+
+        modelBuilder.Entity<InvoiceCreditApplication>(entity =>
+        {
+            entity.ToTable("INVOICE_CREDIT_APPLICATION", table =>
+                table.HasCheckConstraint("CK_INVOICE_CREDIT_APPLICATION_amount_positive", "[amount] > (0)"));
+            entity.HasKey(item => item.IdInvoiceCreditApplication);
+            entity.Property(item => item.IdInvoiceCreditApplication).HasColumnName("id_invoice_credit_application");
+            entity.Property(item => item.IdBankReceipt).HasColumnName("id_bank_receipt");
+            entity.Property(item => item.TargetInvoiceId).HasColumnName("target_invoice_id");
+            entity.Property(item => item.AvoirInvoiceId).HasColumnName("avoir_invoice_id");
+            entity.Property(item => item.Amount).HasColumnType("decimal(19,4)").HasColumnName("amount");
+            entity.Property(item => item.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()").HasColumnName("created_at");
+            entity.Property(item => item.CreatedBy).HasMaxLength(450).HasColumnName("created_by");
+            entity.Property(item => item.IsActive).HasDefaultValue(true).HasColumnName("is_active");
+            entity.Property(item => item.OperationId).HasColumnName("operation_id");
+            entity.HasIndex(item => new { item.OperationId, item.TargetInvoiceId, item.AvoirInvoiceId })
+                .IsUnique().HasDatabaseName("UX_INVOICE_CREDIT_APPLICATION_operation_target_avoir");
+            entity.HasOne(item => item.IdBankReceiptNavigation).WithMany()
+                .HasForeignKey(item => item.IdBankReceipt).OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_INVOICE_CREDIT_APPLICATION_bank_receipt");
+            entity.HasOne(item => item.TargetInvoiceNavigation).WithMany(invoice => invoice.CreditApplicationsAsTarget)
+                .HasForeignKey(item => item.TargetInvoiceId).OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_INVOICE_CREDIT_APPLICATION_target_invoice");
+            entity.HasOne(item => item.AvoirInvoiceNavigation).WithMany(invoice => invoice.CreditApplicationsAsAvoir)
+                .HasForeignKey(item => item.AvoirInvoiceId).OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_INVOICE_CREDIT_APPLICATION_avoir_invoice");
+            entity.HasOne(item => item.OperationNavigation).WithMany(operation => operation.CreditApplications)
+                .HasForeignKey(item => item.OperationId).OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_INVOICE_CREDIT_APPLICATION_operation");
+        });
+
+        modelBuilder.Entity<AvoirRefundSettlement>(entity =>
+        {
+            entity.ToTable("AVOIR_REFUND_SETTLEMENT", table =>
+                table.HasCheckConstraint("CK_AVOIR_REFUND_SETTLEMENT_amount_positive", "[amount] > (0)"));
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.Id).HasColumnName("id_avoir_refund_settlement");
+            entity.Property(item => item.AvoirInvoiceId).HasColumnName("avoir_invoice_id");
+            entity.Property(item => item.BankReceiptId).HasColumnName("id_bank_receipt");
+            entity.Property(item => item.RemittanceId).HasColumnName("id_remittance_ref");
+            entity.Property(item => item.Amount).HasColumnType("decimal(19,4)").HasColumnName("amount");
+            entity.Property(item => item.IdempotencyKey).HasMaxLength(100).IsRequired().HasColumnName("idempotency_key");
+            entity.Property(item => item.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()").HasColumnName("created_at");
+            entity.Property(item => item.CreatedBy).HasMaxLength(450).IsRequired().HasColumnName("created_by");
+            entity.Property(item => item.IsActive).HasDefaultValue(true).HasColumnName("is_active");
+            entity.HasIndex(item => item.IdempotencyKey).IsUnique().HasDatabaseName("UX_AVOIR_REFUND_SETTLEMENT_idempotency_key");
+            entity.HasIndex(item => new { item.AvoirInvoiceId, item.IsActive }).HasDatabaseName("IX_AVOIR_REFUND_SETTLEMENT_avoir_active");
+            entity.HasOne(item => item.AvoirInvoice).WithMany().HasForeignKey(item => item.AvoirInvoiceId)
+                .OnDelete(DeleteBehavior.Restrict).HasConstraintName("FK_AVOIR_REFUND_SETTLEMENT_avoir_invoice");
+            entity.HasOne(item => item.BankReceipt).WithMany().HasForeignKey(item => item.BankReceiptId)
+                .OnDelete(DeleteBehavior.Restrict).HasConstraintName("FK_AVOIR_REFUND_SETTLEMENT_bank_receipt");
+            entity.HasOne(item => item.Remittance).WithMany(item => item.AvoirRefundSettlements).HasForeignKey(item => item.RemittanceId)
+                .OnDelete(DeleteBehavior.Restrict).HasConstraintName("FK_AVOIR_REFUND_SETTLEMENT_remittance");
+            entity.HasOne<AspNetUser>().WithMany().HasForeignKey(item => item.CreatedBy)
+                .OnDelete(DeleteBehavior.Restrict).HasConstraintName("FK_AVOIR_REFUND_SETTLEMENT_created_by");
+        });
+
+        modelBuilder.Entity<InvoicePairingOperation>()
+            .Property(item => item.SignedPairingTotal)
+            .HasColumnType("decimal(19,4)")
+            .HasDefaultValue(0m)
+            .HasColumnName("signed_pairing_total");
 
         modelBuilder.Entity<Contract>(entity =>
         {
@@ -145,12 +211,16 @@ public partial class IRISBackendContext
             entity.Property(e => e.IdReceiptAllocation).HasColumnName("Id_receipt_allocation");
             entity.Property(e => e.ConfirmedAt).HasColumnName("Confirmed_at");
             entity.Property(e => e.ConfirmedBy).HasMaxLength(450).HasColumnName("Confirmed_by");
+            entity.Property(e => e.SourceInvoiceId).HasColumnName("source_invoice_id");
+            entity.Property(e => e.BeneficiaryType).HasMaxLength(24).HasColumnName("beneficiary_type");
+            entity.HasOne(e => e.SourceInvoice).WithMany().HasForeignKey(e => e.SourceInvoiceId)
+                .OnDelete(DeleteBehavior.Restrict).HasConstraintName("FK_REMITTANCE_REF_source_invoice");
             entity.HasOne(e => e.IdReceiptAllocationNavigation).WithMany()
                 .HasForeignKey(e => e.IdReceiptAllocation)
                 .HasConstraintName("FK_REMITTANCE_REF_id_receipt_allocation");
-            entity.HasIndex(e => new { e.IdReceiptAllocation, e.IdPanel }, "UX_REMITTANCE_REF_allocation_panel")
+            entity.HasIndex(e => new { e.IdReceiptAllocation, e.SourceInvoiceId, e.IdInvoiceAllocation, e.IdPanel }, "UX_REMITTANCE_REF_source_allocation_panel")
                 .IsUnique()
-                .HasFilter("[Id_receipt_allocation] IS NOT NULL AND [Id_panel] IS NOT NULL");
+                .HasFilter("[source_invoice_id] IS NOT NULL AND [id_invoice_allocation] IS NOT NULL AND [Id_panel] IS NOT NULL");
         });
 
         modelBuilder.Entity<Invoice>(entity =>
@@ -158,6 +228,7 @@ public partial class IRISBackendContext
             entity.Property(e => e.GrossPremium).HasColumnType("decimal(19,4)").HasColumnName("Gross_premium");
             entity.Property(e => e.SequenceNumber).HasColumnName("Sequence_number");
             entity.Property(e => e.IdempotencyKey).HasMaxLength(100).HasColumnName("Idempotency_key");
+            entity.Property(e => e.ProcessingMode).HasMaxLength(40).HasColumnName("processing_mode");
             entity.Property(e => e.IdReceiptAllocation).HasColumnName("Id_receipt_allocation");
             entity.Property(e => e.IdCurrency).HasColumnName("Id_currency");
             entity.HasOne(e => e.IdReceiptAllocationNavigation).WithMany()
@@ -207,6 +278,7 @@ public partial class IRISBackendContext
             entity.Property(e => e.BrokeragePct).HasColumnType("decimal(19,8)").HasColumnName("brokerage_pct");
             entity.Property(e => e.BrokerageAmount).HasColumnType("decimal(19,4)").HasColumnName("brokerage_amount");
             entity.Property(e => e.OtherDeductions).HasColumnType("decimal(19,4)").HasColumnName("other_deductions");
+            entity.Property(e => e.OtherDeductionsPercentage).HasColumnType("decimal(19,8)").HasColumnName("other_deductions_percentage");
             entity.Property(e => e.NetAmount).HasColumnType("decimal(19,4)").HasColumnName("net_amount");
             entity.Property(e => e.CurrencyCodeSnapshot).HasMaxLength(20).IsRequired().HasColumnName("currency_code_snapshot");
             entity.Property(e => e.CreatedAt).HasColumnName("created_at");

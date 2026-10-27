@@ -144,7 +144,7 @@ namespace IRISBackend.Tests
             Assert.True(result.Succeeded);
             Assert.Single(repository.Contract.ContractPanels);
             Assert.Equal(ContractConstants.PlacementInProgressStatus, repository.Contract.Status);
-            Assert.Equal(10300m, repository.Contract.ContractPanels.Single().NetPremium);
+            Assert.Equal(17500m, repository.Contract.ContractPanels.Single().NetPremium);
             Assert.Equal(ContractConstants.PlacementInProgressStatus, result.Value!.Status);
         }
 
@@ -158,6 +158,10 @@ namespace IRISBackend.Tests
                 IdPanel = 1,
                 IdContract = 10,
                 IdCounterparty = 7,
+                WrittenSharePct = 10m,
+                SignedSharePct = 10m,
+                BrokeragePct = 0m,
+                OtherDeductions = 0m,
                 Status = ContractConstants.DraftStatus
             });
             var repository = new FakeContractPlacementRepository { Contract = contract };
@@ -217,6 +221,9 @@ namespace IRISBackend.Tests
                 IdContract = 10,
                 IdCounterparty = 8,
                 SignedSharePct = 20m,
+                WrittenSharePct = 25m,
+                BrokeragePct = 0m,
+                OtherDeductions = 0m,
                 Status = ContractConstants.DraftStatus
             });
             var repository = new FakeContractPlacementRepository { Contract = contract };
@@ -271,7 +278,7 @@ namespace IRISBackend.Tests
         {
             var contract = CreateContract();
             contract.Status = ContractConstants.PlacementInProgressStatus;
-            contract.ContractPanels.Add(new ContractPanel { IdPanel = 1, IdContract = 10, IdCounterparty = 7, Status = ContractConstants.ConfirmedPanelStatus });
+            contract.ContractPanels.Add(new ContractPanel { IdPanel = 1, IdContract = 10, IdCounterparty = 7, WrittenSharePct = 25m, SignedSharePct = 20m, BrokeragePct = 0m, OtherDeductions = 0m, Status = ContractConstants.ConfirmedPanelStatus });
             var repository = new FakeContractPlacementRepository
             {
                 Contract = contract
@@ -310,6 +317,8 @@ namespace IRISBackend.Tests
                 Status = ContractConstants.ConfirmedPanelStatus,
                 WrittenSharePct = 25m,
                 SignedSharePct = 20m,
+                BrokeragePct = 0m,
+                OtherDeductions = 0m,
                 GrossPremium = 15000m
             });
             contract.ContractPanels.Add(new ContractPanel
@@ -317,6 +326,10 @@ namespace IRISBackend.Tests
                 IdPanel = 2,
                 IdContract = 10,
                 IdCounterparty = 8,
+                WrittenSharePct = 25m,
+                SignedSharePct = 20m,
+                BrokeragePct = 0m,
+                OtherDeductions = 0m,
                 Status = ContractConstants.DraftStatus
             });
             var repository = new FakeContractPlacementRepository { Contract = contract };
@@ -403,9 +416,8 @@ namespace IRISBackend.Tests
 
             Assert.False(result.Succeeded);
             Assert.Equal(StatusCodes.Status400BadRequest, result.StatusCode);
-            Assert.Contains(result.Error!.Errors, error => error.Contains("writtenSharePct is required", StringComparison.Ordinal));
-            Assert.Contains(result.Error.Errors, error => error.Contains("signedSharePct is required", StringComparison.Ordinal));
-            Assert.Contains(result.Error.Errors, error => error.Contains("grossPremium is required", StringComparison.Ordinal));
+            Assert.Contains(result.Error!.Errors, error => error.Contains("writtenSharePct", StringComparison.Ordinal));
+            Assert.Contains(result.Error.Errors, error => error.Contains("signedSharePct", StringComparison.Ordinal));
         }
 
         [Fact]
@@ -473,6 +485,9 @@ namespace IRISBackend.Tests
                 Name = "Property Facultative",
                 TypeOfBusiness = ContractConstants.FacultativeType,
                 Status = ContractConstants.ReadyForPlacementStatus,
+                GrossPremium = 100000m,
+                CedentCommission = 0m,
+                SignedSharePctCedent = 100m,
                 IdUser = "user-1",
                 IsCurrent = true,
                 ContractPanels = []

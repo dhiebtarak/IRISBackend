@@ -120,6 +120,7 @@ namespace IRISBackend.Repositories
                 .Include(contract => contract.ContractTreatyNonprops)
                 .Include(contract => contract.IdCounterpartyNavigation)
                 .Include(contract => contract.IdCurrencyNavigation)
+                .Include(contract => contract.ContractPanels)
                 .Include(contract => contract.CreatedByNavigation)
                 .Include(contract => contract.UpdatedByNavigation)
                 .Include(contract => contract.ContractCoverageSelections)
@@ -174,22 +175,6 @@ namespace IRISBackend.Repositories
             return await query.SingleOrDefaultAsync(cancellationToken);
         }
 
-        public Task MarkDraftReadyForPlacementAsync(
-            int contractId,
-            string userId,
-            CancellationToken cancellationToken = default)
-        {
-            return _dbContext.Contracts
-                .Where(contract =>
-                    contract.IdContract == contractId &&
-                    contract.IdUser == userId &&
-                    contract.Status == ContractConstants.DraftStatus)
-                .ExecuteUpdateAsync(updates => updates
-                    .SetProperty(contract => contract.Status, ContractConstants.ReadyForPlacementStatus)
-                    .SetProperty(contract => contract.UpdatedAt, DateTime.UtcNow)
-                    .SetProperty(contract => contract.UpdatedBy, userId), cancellationToken);
-        }
-
         public async Task<IReadOnlyList<SlipTemplate>> ListActiveCurrentSlipTemplatesForContractAsync(
             int contractId,
             string userId,
@@ -239,7 +224,7 @@ namespace IRISBackend.Repositories
         {
             var contracts = AccessibleContracts(userId, includeAllContracts);
             var totalContracts = await contracts.CountAsync(cancellationToken);
-            var actionRequiredContracts = await contracts.CountAsync(contract => contract.Flag, cancellationToken);
+            var actionRequiredContracts = await contracts.CountAsync(contract => contract.Flag == true, cancellationToken);
             var statusCounts = await contracts
                 .GroupBy(contract => contract.Status)
                 .Select(group => new ContractStatusCount

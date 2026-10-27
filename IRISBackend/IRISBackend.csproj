@@ -28,7 +28,7 @@
   </ItemGroup>
 
   <ItemGroup Condition="Exists('Assets\Branding\iris-logo.png')">
-    <Content Include="Assets\Branding\iris-logo.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\Branding\iris-logo.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

@@ -236,6 +236,76 @@ namespace IRISBackend.Migrations
                     b.ToTable("AspNetUserTokens");
                 });
 
+            modelBuilder.Entity("IRISBackend.Models.AvoirRefundSettlement", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("id_avoir_refund_settlement");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<decimal>("Amount")
+                        .HasColumnType("decimal(19,4)")
+                        .HasColumnName("amount");
+
+                    b.Property<int>("AvoirInvoiceId")
+                        .HasColumnType("int")
+                        .HasColumnName("avoir_invoice_id");
+
+                    b.Property<int>("BankReceiptId")
+                        .HasColumnType("int")
+                        .HasColumnName("id_bank_receipt");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)")
+                        .HasColumnName("created_by");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("idempotency_key");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true)
+                        .HasColumnName("is_active");
+
+                    b.Property<int>("RemittanceId")
+                        .HasColumnType("int")
+                        .HasColumnName("id_remittance_ref");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BankReceiptId");
+
+                    b.HasIndex("CreatedBy");
+
+                    b.HasIndex("IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("UX_AVOIR_REFUND_SETTLEMENT_idempotency_key");
+
+                    b.HasIndex("RemittanceId");
+
+                    b.HasIndex("AvoirInvoiceId", "IsActive")
+                        .HasDatabaseName("IX_AVOIR_REFUND_SETTLEMENT_avoir_active");
+
+                    b.ToTable("AVOIR_REFUND_SETTLEMENT", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_AVOIR_REFUND_SETTLEMENT_amount_positive", "[amount] > (0)");
+                        });
+                });
+
             modelBuilder.Entity("IRISBackend.Models.BankReceipt", b =>
                 {
                     b.Property<int>("IdBankReceipt")
@@ -621,14 +691,14 @@ namespace IRISBackend.Migrations
                         .HasColumnType("date")
                         .HasColumnName("Creation_date");
 
-                    b.Property<DateOnly>("ExpiryDate")
+                    b.Property<DateOnly?>("ExpiryDate")
                         .HasColumnType("date")
                         .HasColumnName("Expiry_date");
 
                     b.Property<decimal?>("Fees")
                         .HasColumnType("decimal(19, 4)");
 
-                    b.Property<bool>("Flag")
+                    b.Property<bool?>("Flag")
                         .HasColumnType("bit")
                         .HasAnnotation("Relational:DefaultConstraintName", "DF_CONTRACT_flag");
 
@@ -641,11 +711,11 @@ namespace IRISBackend.Migrations
                         .HasColumnType("decimal(19, 4)")
                         .HasColumnName("Gross_premium");
 
-                    b.Property<int>("IdCounterparty")
+                    b.Property<int?>("IdCounterparty")
                         .HasColumnType("int")
                         .HasColumnName("Id_counterparty");
 
-                    b.Property<int>("IdCurrency")
+                    b.Property<int?>("IdCurrency")
                         .HasColumnType("int")
                         .HasColumnName("Id_currency");
 
@@ -659,7 +729,7 @@ namespace IRISBackend.Migrations
                         .HasColumnType("nvarchar(450)")
                         .HasColumnName("Id_user");
 
-                    b.Property<DateOnly>("InceptionDate")
+                    b.Property<DateOnly?>("InceptionDate")
                         .HasColumnType("date")
                         .HasColumnName("Inception_date");
 
@@ -670,7 +740,7 @@ namespace IRISBackend.Migrations
                         .HasColumnName("Is_current")
                         .HasAnnotation("Relational:DefaultConstraintName", "DF_CONTRACT_is_current");
 
-                    b.Property<bool>("IsFronting")
+                    b.Property<bool?>("IsFronting")
                         .HasColumnType("bit")
                         .HasColumnName("Is_fronting")
                         .HasAnnotation("Relational:DefaultConstraintName", "DF_CONTRACT_is_fronting");
@@ -680,7 +750,6 @@ namespace IRISBackend.Migrations
                         .HasColumnName("Memo_text");
 
                     b.Property<string>("Name")
-                        .IsRequired()
                         .HasMaxLength(255)
                         .HasColumnType("nvarchar(255)");
 
@@ -938,6 +1007,10 @@ namespace IRISBackend.Migrations
                     b.Property<decimal?>("OtherDeductions")
                         .HasColumnType("decimal(19, 4)")
                         .HasColumnName("Other_deductions");
+
+                    b.Property<decimal?>("OtherDeductionsPercentage")
+                        .HasColumnType("decimal(19, 8)")
+                        .HasColumnName("Other_deductions_percentage");
 
                     b.Property<decimal?>("PremiumRatePct")
                         .HasColumnType("decimal(19, 8)")
@@ -2391,6 +2464,11 @@ namespace IRISBackend.Migrations
                         .HasColumnType("nvarchar(1000)")
                         .HasColumnName("Net_premium_in_words");
 
+                    b.Property<string>("ProcessingMode")
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)")
+                        .HasColumnName("processing_mode");
+
                     b.Property<string>("RecoveryStatus")
                         .ValueGeneratedOnAdd()
                         .HasMaxLength(50)
@@ -2465,17 +2543,90 @@ namespace IRISBackend.Migrations
                     b.ToTable("INVOICE", (string)null);
                 });
 
+            modelBuilder.Entity("IRISBackend.Models.InvoiceCreditApplication", b =>
+                {
+                    b.Property<int>("IdInvoiceCreditApplication")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("id_invoice_credit_application");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("IdInvoiceCreditApplication"));
+
+                    b.Property<decimal>("Amount")
+                        .HasColumnType("decimal(19,4)")
+                        .HasColumnName("amount");
+
+                    b.Property<int>("AvoirInvoiceId")
+                        .HasColumnType("int")
+                        .HasColumnName("avoir_invoice_id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)")
+                        .HasColumnName("created_by");
+
+                    b.Property<int>("IdBankReceipt")
+                        .HasColumnType("int")
+                        .HasColumnName("id_bank_receipt");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true)
+                        .HasColumnName("is_active");
+
+                    b.Property<int?>("OperationId")
+                        .HasColumnType("int")
+                        .HasColumnName("operation_id");
+
+                    b.Property<int>("TargetInvoiceId")
+                        .HasColumnType("int")
+                        .HasColumnName("target_invoice_id");
+
+                    b.HasKey("IdInvoiceCreditApplication");
+
+                    b.HasIndex("AvoirInvoiceId");
+
+                    b.HasIndex("IdBankReceipt");
+
+                    b.HasIndex("TargetInvoiceId");
+
+                    b.HasIndex("OperationId", "TargetInvoiceId", "AvoirInvoiceId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_INVOICE_CREDIT_APPLICATION_operation_target_avoir")
+                        .HasFilter("[operation_id] IS NOT NULL");
+
+                    b.ToTable("INVOICE_CREDIT_APPLICATION", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_INVOICE_CREDIT_APPLICATION_amount_positive", "[amount] > (0)");
+                        });
+                });
+
             modelBuilder.Entity("IRISBackend.Models.InvoiceNumberSequence", b =>
                 {
                     b.Property<int>("InvoiceYear")
                         .HasColumnType("int")
                         .HasColumnName("invoice_year");
 
+                    b.Property<string>("DocumentType")
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)")
+                        .HasDefaultValue("INV")
+                        .HasColumnName("document_type");
+
                     b.Property<int>("LastSequence")
                         .HasColumnType("int")
                         .HasColumnName("last_sequence");
 
-                    b.HasKey("InvoiceYear");
+                    b.HasKey("InvoiceYear", "DocumentType");
 
                     b.ToTable("INVOICE_NUMBER_SEQUENCE", (string)null);
                 });
@@ -2515,6 +2666,12 @@ namespace IRISBackend.Migrations
                         .IsRequired()
                         .HasMaxLength(64)
                         .HasColumnType("nvarchar(64)");
+
+                    b.Property<decimal>("SignedPairingTotal")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("decimal(19,4)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("signed_pairing_total");
 
                     b.Property<decimal>("TotalAllocated")
                         .HasPrecision(19, 4)
@@ -2622,6 +2779,10 @@ namespace IRISBackend.Migrations
                         .HasColumnType("decimal(19,4)")
                         .HasColumnName("other_deductions");
 
+                    b.Property<decimal?>("OtherDeductionsPercentage")
+                        .HasColumnType("decimal(19,8)")
+                        .HasColumnName("other_deductions_percentage");
+
                     b.Property<string>("ReinsurerNameSnapshot")
                         .IsRequired()
                         .HasMaxLength(255)
@@ -2653,6 +2814,11 @@ namespace IRISBackend.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("IdIrisBankAccount"));
 
+                    b.Property<string>("AccountHolder")
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)")
+                        .HasColumnName("account_holder");
+
                     b.Property<string>("BankName")
                         .IsRequired()
                         .HasMaxLength(255)
@@ -2682,6 +2848,11 @@ namespace IRISBackend.Migrations
                         .HasDefaultValue(0)
                         .HasColumnName("display_order");
 
+                    b.Property<string>("Domiciliation")
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)")
+                        .HasColumnName("domiciliation");
+
                     b.Property<string>("Iban")
                         .IsRequired()
                         .HasMaxLength(34)
@@ -2697,6 +2868,11 @@ namespace IRISBackend.Migrations
                         .HasColumnType("bit")
                         .HasDefaultValue(true)
                         .HasColumnName("is_active");
+
+                    b.Property<string>("Rib")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)")
+                        .HasColumnName("rib");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime2")
@@ -3120,6 +3296,11 @@ namespace IRISBackend.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("RemittanceRef1"));
 
+                    b.Property<string>("BeneficiaryType")
+                        .HasMaxLength(24)
+                        .HasColumnType("nvarchar(24)")
+                        .HasColumnName("beneficiary_type");
+
                     b.Property<int?>("ClaimRef")
                         .HasColumnType("int")
                         .HasColumnName("Claim_ref");
@@ -3211,6 +3392,10 @@ namespace IRISBackend.Migrations
                         .HasColumnType("nvarchar(50)")
                         .HasColumnName("Signature_status");
 
+                    b.Property<int?>("SourceInvoiceId")
+                        .HasColumnType("int")
+                        .HasColumnName("source_invoice_id");
+
                     b.Property<string>("SourceType")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -3249,11 +3434,13 @@ namespace IRISBackend.Migrations
 
                     b.HasIndex("PremiumRef");
 
+                    b.HasIndex("SourceInvoiceId");
+
                     b.HasIndex("UpdatedBy");
 
-                    b.HasIndex(new[] { "IdReceiptAllocation", "IdPanel" }, "UX_REMITTANCE_REF_allocation_panel")
+                    b.HasIndex(new[] { "IdReceiptAllocation", "SourceInvoiceId", "IdInvoiceAllocation", "IdPanel" }, "UX_REMITTANCE_REF_source_allocation_panel")
                         .IsUnique()
-                        .HasFilter("[Id_receipt_allocation] IS NOT NULL AND [Id_panel] IS NOT NULL");
+                        .HasFilter("[source_invoice_id] IS NOT NULL AND [id_invoice_allocation] IS NOT NULL AND [Id_panel] IS NOT NULL");
 
                     b.ToTable("REMITTANCE_REF", (string)null);
                 });
@@ -3456,6 +3643,43 @@ namespace IRISBackend.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("IRISBackend.Models.AvoirRefundSettlement", b =>
+                {
+                    b.HasOne("IRISBackend.Models.Invoice", "AvoirInvoice")
+                        .WithMany()
+                        .HasForeignKey("AvoirInvoiceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_AVOIR_REFUND_SETTLEMENT_avoir_invoice");
+
+                    b.HasOne("IRISBackend.Models.BankReceipt", "BankReceipt")
+                        .WithMany()
+                        .HasForeignKey("BankReceiptId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_AVOIR_REFUND_SETTLEMENT_bank_receipt");
+
+                    b.HasOne("IRISBackend.Models.AspNetUser", null)
+                        .WithMany()
+                        .HasForeignKey("CreatedBy")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_AVOIR_REFUND_SETTLEMENT_created_by");
+
+                    b.HasOne("IRISBackend.Models.RemittanceRef", "Remittance")
+                        .WithMany("AvoirRefundSettlements")
+                        .HasForeignKey("RemittanceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_AVOIR_REFUND_SETTLEMENT_remittance");
+
+                    b.Navigation("AvoirInvoice");
+
+                    b.Navigation("BankReceipt");
+
+                    b.Navigation("Remittance");
+                });
+
             modelBuilder.Entity("IRISBackend.Models.BankReceipt", b =>
                 {
                     b.HasOne("IRISBackend.Models.AspNetUser", "CreatedByNavigation")
@@ -3592,13 +3816,11 @@ namespace IRISBackend.Migrations
                     b.HasOne("IRISBackend.Models.Counterparty", "IdCounterpartyNavigation")
                         .WithMany("Contracts")
                         .HasForeignKey("IdCounterparty")
-                        .IsRequired()
                         .HasConstraintName("FK_CONTRACT_id_counterparty");
 
                     b.HasOne("IRISBackend.Models.Currency", "IdCurrencyNavigation")
                         .WithMany("Contracts")
                         .HasForeignKey("IdCurrency")
-                        .IsRequired()
                         .HasConstraintName("FK_CONTRACT_id_currency");
 
                     b.HasOne("IRISBackend.Models.Contract", "IdPreviousContractNavigation")
@@ -4056,6 +4278,44 @@ namespace IRISBackend.Migrations
                     b.Navigation("UpdatedByNavigation");
                 });
 
+            modelBuilder.Entity("IRISBackend.Models.InvoiceCreditApplication", b =>
+                {
+                    b.HasOne("IRISBackend.Models.Invoice", "AvoirInvoiceNavigation")
+                        .WithMany("CreditApplicationsAsAvoir")
+                        .HasForeignKey("AvoirInvoiceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_INVOICE_CREDIT_APPLICATION_avoir_invoice");
+
+                    b.HasOne("IRISBackend.Models.BankReceipt", "IdBankReceiptNavigation")
+                        .WithMany()
+                        .HasForeignKey("IdBankReceipt")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_INVOICE_CREDIT_APPLICATION_bank_receipt");
+
+                    b.HasOne("IRISBackend.Models.InvoicePairingOperation", "OperationNavigation")
+                        .WithMany("CreditApplications")
+                        .HasForeignKey("OperationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_INVOICE_CREDIT_APPLICATION_operation");
+
+                    b.HasOne("IRISBackend.Models.Invoice", "TargetInvoiceNavigation")
+                        .WithMany("CreditApplicationsAsTarget")
+                        .HasForeignKey("TargetInvoiceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_INVOICE_CREDIT_APPLICATION_target_invoice");
+
+                    b.Navigation("AvoirInvoiceNavigation");
+
+                    b.Navigation("IdBankReceiptNavigation");
+
+                    b.Navigation("OperationNavigation");
+
+                    b.Navigation("TargetInvoiceNavigation");
+                });
+
             modelBuilder.Entity("IRISBackend.Models.InvoicePairingOperation", b =>
                 {
                     b.HasOne("IRISBackend.Models.AspNetUser", null)
@@ -4346,6 +4606,12 @@ namespace IRISBackend.Migrations
                         .HasForeignKey("PremiumRef")
                         .HasConstraintName("FK_REMITTANCE_REF_premium_ref");
 
+                    b.HasOne("IRISBackend.Models.Invoice", "SourceInvoice")
+                        .WithMany()
+                        .HasForeignKey("SourceInvoiceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_REMITTANCE_REF_source_invoice");
+
                     b.HasOne("IRISBackend.Models.AspNetUser", "UpdatedByNavigation")
                         .WithMany("RemittanceRefUpdatedByNavigations")
                         .HasForeignKey("UpdatedBy")
@@ -4368,6 +4634,8 @@ namespace IRISBackend.Migrations
                     b.Navigation("IdReceiptAllocationNavigation");
 
                     b.Navigation("PremiumRefNavigation");
+
+                    b.Navigation("SourceInvoice");
 
                     b.Navigation("UpdatedByNavigation");
                 });
@@ -4619,6 +4887,10 @@ namespace IRISBackend.Migrations
 
             modelBuilder.Entity("IRISBackend.Models.Invoice", b =>
                 {
+                    b.Navigation("CreditApplicationsAsAvoir");
+
+                    b.Navigation("CreditApplicationsAsTarget");
+
                     b.Navigation("PanelAllocations");
 
                     b.Navigation("ReceiptAllocations");
@@ -4626,6 +4898,8 @@ namespace IRISBackend.Migrations
 
             modelBuilder.Entity("IRISBackend.Models.InvoicePairingOperation", b =>
                 {
+                    b.Navigation("CreditApplications");
+
                     b.Navigation("Lines");
                 });
 
@@ -4643,6 +4917,8 @@ namespace IRISBackend.Migrations
 
             modelBuilder.Entity("IRISBackend.Models.RemittanceRef", b =>
                 {
+                    b.Navigation("AvoirRefundSettlements");
+
                     b.Navigation("ClosingLines");
                 });
 

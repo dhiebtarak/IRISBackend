@@ -13,17 +13,20 @@ namespace IRISBackend.Controllers
     public sealed class ContractsController : ApiControllerBase
     {
         private readonly IContractReadService _contractReadService;
+        private readonly IFacultativeContractService _facultativeContractService;
         private readonly IValidator<ContractListQueryDto> _queryValidator;
         private readonly IContractPlacementService _contractPlacementService;
         private readonly IValidator<ContractPanelRequestDto> _panelValidator;
 
         public ContractsController(
             IContractReadService contractReadService,
+            IFacultativeContractService facultativeContractService,
             IValidator<ContractListQueryDto> queryValidator,
             IContractPlacementService contractPlacementService,
             IValidator<ContractPanelRequestDto> panelValidator)
         {
             _contractReadService = contractReadService;
+            _facultativeContractService = facultativeContractService;
             _queryValidator = queryValidator;
             _contractPlacementService = contractPlacementService;
             _panelValidator = panelValidator;
@@ -63,7 +66,8 @@ namespace IRISBackend.Controllers
 
         /// <summary>Returns the contract overview used by the Front Officer overview page.</summary>
         [HttpGet("{contractId:int}/overview")]
-        [ProducesResponseType(typeof(ContractOverviewDto), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(FacultativeContractResponseDto), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ContractValidationErrorResponseDto), StatusCodes.Status400BadRequest)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status401Unauthorized)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status403Forbidden)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status404NotFound)]
@@ -89,8 +93,21 @@ namespace IRISBackend.Controllers
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status404NotFound)]
         public async Task<IActionResult> CompleteDraft(int contractId, CancellationToken cancellationToken)
         {
-            var result = await _contractReadService.CompleteDraftAsync(contractId, cancellationToken);
-            return FromServiceResult(result);
+            var result = await _facultativeContractService.CompleteDraftAsync(contractId, cancellationToken);
+            if (!result.Succeeded && result.StatusCode == StatusCodes.Status400BadRequest)
+            {
+                return BadRequest(ContractValidationErrorResponseDto.From((result.Error?.Errors ?? []).Select(message =>
+                {
+                    var separator = message.IndexOf(':');
+                    return separator > 0
+                        ? new ContractFieldError(message[..separator], message[(separator + 1)..].Trim())
+                        : new ContractFieldError(ContractValidationErrorResponseDto.InferField(message), message);
+                })));
+            }
+            if (!result.Succeeded) return FromServiceResult(result);
+
+            var overview = await _contractReadService.GetOverviewAsync(contractId, cancellationToken);
+            return FromServiceResult(overview);
         }
 
         /// <summary>Downloads the active slip template files for the selected contract coverages.</summary>

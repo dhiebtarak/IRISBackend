@@ -15,6 +15,7 @@ public partial class InvoicePanelAllocation
     public decimal? BrokeragePct { get; set; }
     public decimal BrokerageAmount { get; set; }
     public decimal OtherDeductions { get; set; }
+    public decimal? OtherDeductionsPercentage { get; set; }
     public decimal NetAmount { get; set; }
     public string CurrencyCodeSnapshot { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }

@@ -55,7 +55,6 @@ public sealed class BankReceiptRequestDto
     public decimal AmountReceived { get; set; }
     public decimal? AppliedExchangeRate { get; set; }
     public string SettlementMethod { get; set; } = string.Empty;
-    public string CollectionType { get; set; } = string.Empty;
     public string BankReference { get; set; } = string.Empty;
     public string SettlementLabel { get; set; } = string.Empty;
     public string? BusinessReference { get; set; }
@@ -119,7 +118,6 @@ public sealed class BankReceiptResponseDto
     public decimal AllocatedAmount { get; set; }
     public string PairingStatus { get; set; } = string.Empty;
     public string SettlementMethod { get; set; } = string.Empty;
-    public string CollectionType { get; set; } = string.Empty;
     public string BankReference { get; set; } = string.Empty;
     public string SettlementLabel { get; set; } = string.Empty;
     public string? BusinessReference { get; set; }
@@ -155,11 +153,58 @@ public sealed class InvoiceReceiptAllocationItemDto
 
 public sealed class ReceiptBatchAllocationResponseDto
 {
+    public string PairingMode { get; set; } = "INVOICE_OFFSET";
     public int ReceiptId { get; set; }
+    public string? ReceiptReference { get; set; }
     public IReadOnlyList<ReceiptBatchAllocationItemDto> Allocations { get; set; } = [];
     public decimal TotalAllocated { get; set; }
     public decimal RemainingAmount { get; set; }
     public string PairingStatus { get; set; } = string.Empty;
+    public decimal SignedPairingTotal { get; set; }
+    public IReadOnlyList<int> AppliedAvoirInvoiceIds { get; set; } = [];
+    public IReadOnlyList<RemittanceResponseDto> CreatedRemittances { get; set; } = [];
+    public int? AvoirInvoiceId { get; set; }
+    public string? AvoirNumber { get; set; }
+    public decimal? AvoirOriginalAmount { get; set; }
+    public decimal? AvoirAppliedAmount { get; set; }
+    public decimal? AvoirRemainingAmount { get; set; }
+    public int? BeneficiaryId { get; set; }
+    public string? BeneficiaryName { get; set; }
+    public string? BeneficiaryType { get; set; }
+    public int? RemittanceId { get; set; }
+    public string? RemittanceReference { get; set; }
+    public string? RemittanceStatus { get; set; }
+    public string? CurrencyCode { get; set; }
+}
+
+public sealed class AvoirRefundRequestDto
+{
+    public int AvoirInvoiceId { get; set; }
+    public decimal Amount { get; set; }
+    public string IdempotencyKey { get; set; } = string.Empty;
+}
+
+public sealed class EligibleAvoirRefundReceiptDto
+{
+    public int BankReceiptId { get; set; }
+    public string ReceiptReference { get; set; } = string.Empty;
+    public DateOnly ReceptionDate { get; set; }
+    public DateOnly OperationDate { get; set; }
+    public decimal ReceiptAmount { get; set; }
+    public decimal AllocatedAmount { get; set; }
+    public decimal RemainingAmount { get; set; }
+    public string PairingStatus { get; set; } = string.Empty;
+    public string CurrencyCode { get; set; } = string.Empty;
+    public int ContractId { get; set; }
+    public string ContractName { get; set; } = string.Empty;
+    public int? CedentId { get; set; }
+    public string CedentName { get; set; } = string.Empty;
+    public int AvoirInvoiceId { get; set; }
+    public string AvoirNumber { get; set; } = string.Empty;
+    public decimal AvailableAvoirAmount { get; set; }
+    public decimal RefundAmount { get; set; }
+    public bool IsEligible { get; set; }
+    public string? EligibilityFailureReason { get; set; }
 }
 
 public sealed class ReceiptBatchAllocationItemDto
@@ -174,12 +219,15 @@ public sealed class EligibleInvoiceDto
 {
     public int InvoiceId { get; set; }
     public string InvoiceNumber { get; set; } = string.Empty;
+    public string DocumentNumber { get; set; } = string.Empty;
     public string InvoiceType { get; set; } = string.Empty;
+    public decimal SignedAmount { get; set; }
+    public bool IsAvoir { get; set; }
     public string? Label { get; set; }
     public int ContractId { get; set; }
     public string ContractName { get; set; } = string.Empty;
     public string? Umr { get; set; }
-    public int CedentId { get; set; }
+    public int? CedentId { get; set; }
     public string CedentName { get; set; } = string.Empty;
     public decimal InvoiceAmount { get; set; }
     public decimal SettledAmount { get; set; }
@@ -196,7 +244,7 @@ public sealed class EligibleContractDto
     public int ContractId { get; set; }
     public string? Umr { get; set; }
     public string ContractName { get; set; } = string.Empty;
-    public int CedentId { get; set; }
+    public int? CedentId { get; set; }
     public string CedentName { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
     public string CurrencyCode { get; set; } = string.Empty;
@@ -206,11 +254,24 @@ public sealed class EligibleContractDto
 public sealed class RemittanceResponseDto
 {
     public int RemittanceId { get; set; }
+    public int? SourceDocumentId { get; set; }
+    public string? SourceDocumentNumber { get; set; }
+    public decimal? Amount { get; set; }
+    public string Currency { get; set; } = string.Empty;
     public string? ReceiptReference { get; set; }
+    public int? BankReceiptId { get; set; }
     public string? InvoiceNumber { get; set; }
+    public string? SourceInvoiceNumber { get; set; }
+    public int? SourceInvoiceId { get; set; }
+    public string? SourceType { get; set; }
     public string? PanelName { get; set; }
-    public int ReinsurerId { get; set; }
-    public string ReinsurerName { get; set; } = string.Empty;
+    public int? ReinsurerId { get; set; }
+    public string? ReinsurerName { get; set; }
+    public string? DataIntegrityWarning { get; set; }
+    public string BeneficiaryType { get; set; } = "REINSURER";
+    public string? BeneficiaryName { get; set; }
+    public int? BeneficiaryId { get; set; }
+    public int? BeneficiaryCounterpartyId { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateOnly? ClosingIssuedDate { get; set; }
     public int? ClosingId { get; set; }
@@ -222,12 +283,17 @@ public sealed class RemittanceResponseDto
     public int? ReceiptAllocationId { get; set; }
     public int? DisbursementId { get; set; }
     public int? InvoiceId { get; set; }
+    public string? InvoiceLabel { get; set; }
+    public string? InvoiceAvoirNumber { get; set; }
+    public string? Label { get; set; }
     public string? InvoiceDownloadUrl { get; set; }
     public int? PanelId { get; set; }
     public int CounterpartyId { get; set; }
     public string CounterpartyName { get; set; } = string.Empty;
     public decimal? NetPremiumDue { get; set; }
+    public decimal? AllocationPercentage { get; set; }
     public decimal? NetPayableAmount { get; set; }
+    public decimal SignedNetPayableAmount { get; set; }
     public int CurrencyId { get; set; }
     public string CurrencyCode { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
@@ -238,10 +304,20 @@ public sealed class RemittanceResponseDto
     public string? ContractName { get; set; }
     public string? Umr { get; set; }
     public string? CedentName { get; set; }
+    public int? CedentId { get; set; }
     public decimal? GrossPremium { get; set; }
     public decimal? OtherDeductions { get; set; }
     public bool HasActiveBankAccount { get; set; }
     public string? Action { get; set; }
+}
+
+public sealed class AvoirRemittanceRepairResultDto
+{
+    public int DraftAggregatesSuperseded { get; set; }
+    public int PanelRemittancesCreated { get; set; }
+    public IReadOnlyList<int> SupersededRemittanceIds { get; set; } = [];
+    public IReadOnlyList<int> UnrepairableDraftRemittanceIds { get; set; } = [];
+    public IReadOnlyList<int> PaidOrClosedLegacyRemittanceIds { get; set; } = [];
 }
 
 public sealed class RemittanceQueryDto
@@ -270,6 +346,19 @@ public sealed class OutgoingClosingRequestDto
 
 public sealed class DisbursementContextDto
 {
+    public string BeneficiaryType { get; set; } = "REINSURER";
+    public string RemittanceReference { get; set; } = string.Empty;
+    public string? SourceType { get; set; }
+    public int? AvoirId { get; set; }
+    public string? AvoirNumber { get; set; }
+    public string? CreditNoteNumber { get; set; }
+    public string? CreditNoteDownloadUrl { get; set; }
+    public int? EncaissementId { get; set; }
+    public string? EncaissementReference { get; set; }
+    public int? BeneficiaryId { get; set; }
+    public string? BeneficiaryName { get; set; }
+    public decimal? GrossAmount { get; set; }
+    public string? Currency { get; set; }
     public int? ClosingId { get; set; }
     public string? ClosingContextUrl { get; set; }
     public int RemittanceId { get; set; }
@@ -341,6 +430,34 @@ public sealed class RemittanceConfirmationResponseDto
     public DateTime ConfirmationDate { get; set; }
 }
 
+public sealed class RemittanceBatchConfirmationRequestDto
+{
+    public IReadOnlyList<int> RemittanceIds { get; set; } = [];
+}
+
+public sealed class RemittanceBatchConfirmationResponseDto
+{
+    public IReadOnlyList<RemittanceConfirmationResponseDto> Items { get; set; } = [];
+    public int BatchId { get; set; }
+    public string BatchReference { get; set; } = string.Empty;
+    public int ReinsurerId { get; set; }
+    public string ReinsurerName { get; set; } = string.Empty;
+    public string CurrencyCode { get; set; } = string.Empty;
+    public decimal PremiumTotal { get; set; }
+    public decimal AvoirTotal { get; set; }
+    public decimal NetPayableAmount { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public IReadOnlyList<string> RemittanceReferences { get; set; } = [];
+    public bool FinanceNotificationCreated { get; set; }
+    public string TraceId { get; set; } = string.Empty;
+    public decimal SignedPremiumTotal { get; set; }
+    public decimal SignedAvoirTotal { get; set; }
+    public decimal NetBalance { get; set; }
+    public string SettlementMode { get; set; } = string.Empty;
+    public decimal AmountToDisburse { get; set; }
+    public decimal? RemainingAvoirCredit { get; set; }
+}
+
 public sealed class InvoiceRequestDto
 {
     public int ContractId { get; set; }
@@ -354,6 +471,8 @@ public sealed class InvoiceRequestDto
     public decimal? Amount { get; set; }
     public string? Label { get; set; }
     public string? SettlementMethod { get; set; }
+    public string? IdempotencyKey { get; set; }
+    public string? ProcessingMode { get; set; }
 }
 
 public sealed class InvoiceQueryDto
@@ -387,7 +506,7 @@ public sealed class InvoiceResponseDto
     public int ContractId { get; set; }
     public string ContractName { get; set; } = string.Empty;
     public string? Umr { get; set; }
-    public int CedentId { get; set; }
+    public int? CedentId { get; set; }
     public int? CounterpartyId { get; set; }
     public string? CounterpartyName { get; set; }
     public string? CedentName { get; set; }
@@ -397,7 +516,15 @@ public sealed class InvoiceResponseDto
     public int? CurrencyId { get; set; }
     public string? CurrencyCode { get; set; }
     public string InvoiceNumber { get; set; } = string.Empty;
+    public string DocumentNumber { get; set; } = string.Empty;
     public string InvoiceType { get; set; } = string.Empty;
+    public string? ProcessingMode { get; set; }
+    public bool PairingRequired { get; set; }
+    public IReadOnlyList<RemittanceResponseDto> CreatedRemittances { get; set; } = [];
+    public int? Sequence { get; set; }
+    public decimal Amount { get; set; }
+    public decimal SignedAmount { get; set; }
+    public bool IsAvoir { get; set; }
     public DateOnly InvoiceDate { get; set; }
     public decimal InvoiceAmount { get; set; }
     public decimal SettledAmount { get; set; }
@@ -416,8 +543,35 @@ public sealed class InvoiceResponseDto
     public decimal AffectedAmount { get; set; }
     public decimal UnaffectedAmount { get; set; }
     public string? ReinsurerName { get; set; }
+    public IReadOnlyList<InvoicePanelAllocationResponseDto> Allocations { get; set; } = [];
     public string Status { get; set; } = string.Empty;
     public string Label { get; set; } = string.Empty;
+}
+
+public sealed class InvoicePanelAllocationResponseDto
+{
+    public int PanelId { get; set; }
+    public int ReinsurerId { get; set; }
+    public string? ReinsurerCode { get; set; }
+    public string ReinsurerName { get; set; } = string.Empty;
+    public decimal SharePercentage { get; set; }
+    public decimal AllocationRatioPercentage { get; set; }
+    public decimal AllocatedGrossPremium { get; set; }
+    public decimal CedentCommissionRate { get; set; }
+    public decimal CedentCommissionPercentage { get; set; }
+    public decimal CedentCommissionAmount { get; set; }
+    public decimal AllocatedNetPremium { get; set; }
+    public decimal IrisBrokeragePercentage { get; set; }
+    public decimal IrisBrokerageRate { get; set; }
+    public decimal IrisBrokerageAmount { get; set; }
+    public decimal OtherDeductions { get; set; }
+    public decimal OtherDeductionsAmount { get; set; }
+    public decimal? OtherDeductionsPercentage { get; set; }
+    public decimal NetPayableAmount { get; set; }
+    public decimal SignedNetPayableAmount { get; set; }
+    public decimal AllocationAmount { get; set; }
+    public decimal SignedAllocationAmount { get; set; }
+    public string Currency { get; set; } = string.Empty;
 }
 
 public sealed class InvoiceContextDto
@@ -427,9 +581,22 @@ public sealed class InvoiceContextDto
     public string Currency { get; set; } = string.Empty;
     public decimal ContractGrossPremium { get; set; }
     public decimal? CedentCommissionPct { get; set; }
+    public decimal CedentCommissionRate { get; set; }
+    public decimal CedentCommissionPercentage { get; set; }
+    public decimal CedentCommissionAmount { get; set; }
+    public decimal ContractSignedSharePercentage { get; set; }
+    public decimal InvoiceableNetPremium { get; set; }
+    public int? CurrencyDecimalPlaces { get; set; }
+    public string CurrencyCode { get; set; } = string.Empty;
     public decimal RemainingInvoiceableAmount { get; set; }
+    public decimal RemainingInvoiceAmount { get; set; }
+    public decimal TotalInvoicedAmount { get; set; }
+    public decimal TotalAvoirAmount { get; set; }
+    public decimal AvailableCreditBalance { get; set; }
     public bool CanCreateInvoice { get; set; }
     public string? BlockingReason { get; set; }
+    public bool CanCreateAvoir { get; set; }
+    public string? AvoirBlockingReason { get; set; }
     public decimal PairedAmount { get; set; }
     public decimal AlreadyInvoicedAmount { get; set; }
     public decimal AvailableAmount { get; set; }
@@ -461,10 +628,16 @@ public sealed class InvoicePanelOptionDto
 
 public sealed class PremiumDebitNoteRequestDto
 {
+    public string InvoiceType { get; set; } = string.Empty;
+    public string ProcessingMode { get; set; } = string.Empty;
     public decimal GrossAmount { get; set; }
+    public decimal? Amount { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public decimal EffectiveGrossAmount => Amount ?? GrossAmount;
     public DateOnly InvoiceDate { get; set; }
     public string? Label { get; set; }
     public string? IdempotencyKey { get; set; }
+    public IReadOnlyList<PremiumDebitNoteAllocationDto> Allocations { get; set; } = [];
 }
 
 public sealed class PremiumDebitNotePreviewDto
@@ -472,43 +645,89 @@ public sealed class PremiumDebitNotePreviewDto
     public int ContractId { get; set; }
     public decimal ContractGrossPremium { get; set; }
     public decimal InvoiceableGrossPremium { get; set; }
+    public decimal InvoiceableNetPremium { get; set; }
+    public decimal CedentCommissionAmount { get; set; }
+    public decimal RemainingInvoiceableAmount { get; set; }
+    public string CurrencyCode { get; set; } = string.Empty;
     public decimal AlreadyInvoicedAmount { get; set; }
     public decimal GrossAmount { get; set; }
     public decimal RemainingAmount { get; set; }
+    public string InvoiceType { get; set; } = string.Empty;
+    public string? ProcessingMode { get; set; }
+    public decimal SignedAmount { get; set; }
+    public bool IsAvoir { get; set; }
+    public bool IsReconciled { get; set; }
+    public decimal ReconciliationDifference { get; set; }
     public IReadOnlyList<PremiumDebitNoteAllocationDto> Allocations { get; set; } = [];
 }
 
 public sealed class PremiumDebitNoteAllocationDto
 {
     public int PanelId { get; set; }
+    public int ReinsurerId { get; set; }
     public string? ReinsurerCode { get; set; }
     public string ReinsurerName { get; set; } = string.Empty;
     public decimal? SignedSharePct { get; set; }
+    public decimal SharePercentage { get; set; }
+    public decimal SignedSharePercentage { get; set; }
     public decimal AllocationRatio { get; set; }
+    public decimal AllocationRatioPercentage { get; set; }
     public decimal GrossPremium { get; set; }
+    public decimal AllocatedGrossPremium { get; set; }
+    public decimal AllocationAmount { get; set; }
+    public decimal SignedAllocationAmount { get; set; }
     public decimal? CedentCommissionPct { get; set; }
+    public decimal CedentCommissionRate { get; set; }
+    public decimal CedentCommissionPercentage { get; set; }
     public decimal CedentCommissionAmount { get; set; }
+    public decimal AllocatedNetPremium { get; set; }
     public decimal BrokeragePct { get; set; }
+    public decimal IrisBrokerageRate { get; set; }
+    public decimal IrisBrokeragePercentage { get; set; }
     public decimal BrokerageAmount { get; set; }
+    public decimal IrisBrokerageAmount { get; set; }
     public decimal OtherDeductions { get; set; }
+    public decimal OtherDeductionsAmount { get; set; }
+    public decimal? OtherDeductionsPercentage { get; set; }
     public decimal NetAmount { get; set; }
+    public decimal NetPayableAmount { get; set; }
+    public decimal SignedNetPayableAmount { get; set; }
     public string CurrencyCode { get; set; } = string.Empty;
+    public string Currency { get; set; } = string.Empty;
 }
 
 public sealed class PremiumDebitNoteResponseDto
 {
+    public int IdInvoice { get; set; }
     public int InvoiceId { get; set; }
+    public int IdContract { get; set; }
     public int ContractId { get; set; }
     public string InvoiceNumber { get; set; } = string.Empty;
+    public string DocumentNumber { get; set; } = string.Empty;
     public int? Sequence { get; set; }
     public string InvoiceType { get; set; } = string.Empty;
+    public string? ProcessingMode { get; set; }
+    public bool PairingRequired { get; set; }
+    public IReadOnlyList<RemittanceResponseDto> CreatedRemittances { get; set; } = [];
+    public decimal Amount { get; set; }
+    public decimal SignedAmount { get; set; }
+    public bool IsAvoir { get; set; }
+    public bool IsReconciled { get; set; }
+    public decimal ReconciliationDifference { get; set; }
     public DateOnly InvoiceDate { get; set; }
     public decimal ContractGrossPremium { get; set; }
     public decimal InvoiceableGrossPremium { get; set; }
+    public decimal InvoiceableNetPremium { get; set; }
+    public decimal CedentCommissionAmount { get; set; }
     public decimal GrossAmount { get; set; }
     public decimal AlreadyInvoicedAmount { get; set; }
     public decimal RemainingAmount { get; set; }
+    public decimal RemainingInvoiceAmount { get; set; }
+    public decimal TotalInvoicedAmount { get; set; }
+    public decimal TotalAvoirAmount { get; set; }
+    public decimal AvailableCreditBalance { get; set; }
     public decimal TotalNetAmount { get; set; }
+    public string Currency { get; set; } = string.Empty;
     public string CurrencyCode { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
     public string PaymentStatus { get; set; } = string.Empty;
@@ -577,6 +796,8 @@ public sealed class PrintablePaymentDocumentDto
     public string FileName { get; set; } = string.Empty;
     public byte[] Content { get; set; } = [];
     public string ContentType { get; set; } = "application/pdf";
+      public string? DocumentType { get; set; }
+      public string? DocumentReference { get; set; }
 }
 
 public sealed class CedentClosingRequestDto

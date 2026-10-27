@@ -38,6 +38,13 @@ public sealed class FinanceController : ApiControllerBase
     public async Task<IActionResult> DisbursementContext(int id, CancellationToken cancellationToken) =>
         FromServiceResult(await _service.GetDisbursementContextAsync(id, cancellationToken));
 
+    [HttpGet("remittances/{id:int}/credit-note")]
+    public async Task<IActionResult> AvoirRefundCreditNote(int id, CancellationToken cancellationToken)
+    {
+        var result = await _service.GetAvoirRefundCreditNoteAsync(id, cancellationToken);
+        return result.Succeeded ? File(result.Value!.Content, result.Value.ContentType, result.Value.FileName) : FromServiceResult(result);
+    }
+
     [HttpGet("closings/{closingId:int}/disbursement-context")]
     public async Task<IActionResult> ClosingDisbursementContext(int closingId, CancellationToken cancellationToken) =>
         FromServiceResult(await _service.GetClosingDisbursementContextAsync(closingId, cancellationToken));
