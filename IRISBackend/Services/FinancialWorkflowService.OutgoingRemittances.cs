@@ -1,5 +1,6 @@
 using System.Data;
 using System.Globalization;
+using System.Text;
 using IRISBackend.DTOs;
 using IRISBackend.Models;
 using Microsoft.EntityFrameworkCore;
@@ -461,7 +462,11 @@ public sealed partial class FinancialWorkflowService
     private IQueryable<RemittanceRef> RemittanceDetails() => _db.RemittanceRefs.AsNoTrackingWithIdentityResolution()
         .Include(x => x.IdCounterpartyNavigation).Include(x => x.IdCurrencyNavigation)
         .Include(x => x.IdPanelNavigation).ThenInclude(x => x.IdContractNavigation).ThenInclude(contract => contract.IdCounterpartyNavigation)
+        .Include(x => x.IdPanelNavigation).ThenInclude(panel => panel.IdContractNavigation)
+            .ThenInclude(contract => contract.ContractCoverageSelections).ThenInclude(selection => selection.IdCoverageItemNavigation)
         .Include(x => x.SourceInvoice).ThenInclude(x => x!.IdContractNavigation).ThenInclude(contract => contract.IdCounterpartyNavigation)
+        .Include(x => x.SourceInvoice).ThenInclude(x => x!.IdContractNavigation)
+            .ThenInclude(contract => contract.ContractCoverageSelections).ThenInclude(selection => selection.IdCoverageItemNavigation)
         .Include(x => x.AvoirRefundSettlements).ThenInclude(x => x.BankReceipt).ThenInclude(receipt => receipt.ReceiptAllocations)
         .Include(x => x.IdReceiptAllocationNavigation).ThenInclude(x => x!.IdInvoiceNavigation)
         .Include(x => x.IdReceiptAllocationNavigation).ThenInclude(x => x!.IdBankReceiptNavigation)
@@ -656,14 +661,141 @@ public sealed partial class FinancialWorkflowService
         return dto;
     }
 
+    public async Task<ServiceResult<PrintablePaymentDocumentDto>> GetRemittanceClosingPdfAsync(int remittanceRef, CancellationToken ct)
+    {
+        if (!CanBack()) return Forbidden<PrintablePaymentDocumentDto>();
+
+        var remittance = await RemittanceDetails()
+            .FirstOrDefaultAsync(row => row.RemittanceRef1 == remittanceRef && row.IsActive, ct);
+        if (remittance is null)
+            return NotFound<PrintablePaymentDocumentDto>("Remittance was not found.", "REMITTANCE_NOT_FOUND");
+
+        if (!IsClosingAvoir(remittance.SourceType)
+            && !string.Equals(remittance.SourceType?.Trim(), "PREMIUM", StringComparison.OrdinalIgnoreCase))
+            return Failure<PrintablePaymentDocumentDto>(
+                "A Closing PDF is available only for Premium and Avoir remittances.",
+                status: StatusCodes.Status409Conflict, code: "REMITTANCE_SOURCE_NOT_SUPPORTED");
+
+        var panel = remittance.IdPanelNavigation;
+        var contract = panel?.IdContractNavigation ?? remittance.SourceInvoice?.IdContractNavigation;
+        var reinsurer = remittance.IdCounterpartyNavigation;
+        var cedent = contract?.IdCounterpartyNavigation;
+        var currency = remittance.IdCurrencyNavigation;
+        if (panel is null || contract is null || reinsurer is null || cedent is null || currency is null)
+            return Failure<PrintablePaymentDocumentDto>(
+                "The remittance is missing its panel, contract, cedent, reinsurer or currency information.",
+                status: StatusCodes.Status409Conflict, code: "REMITTANCE_CLOSING_DATA_INCOMPLETE");
+        if (panel.IdContract != contract.IdContract || panel.IdCounterparty != reinsurer.Id)
+            return Failure<PrintablePaymentDocumentDto>(
+                "The remittance panel does not match its contract and reinsurer.",
+                status: StatusCodes.Status409Conflict, code: "REMITTANCE_PANEL_MISMATCH");
+
+        var mainCoverage = contract.ContractCoverageSelections
+            .Where(selection => selection.IdCoverageItemNavigation is not null
+                && CoverageConstants.IsMainCoverLevel(selection.IdCoverageItemNavigation.CoverageLevel))
+            .OrderByDescending(selection => selection.IsPrimary)
+            .ThenBy(selection => selection.IdCoverageItem)
+            .Select(selection => selection.IdCoverageItemNavigation!.CoverageName)
+            .FirstOrDefault();
+        var description = BuildClosingDescription(contract, mainCoverage);
+        var precision = PanelRemittanceCalculator.Precision(currency.DecimalPlaces);
+        var issueDate = remittance.ClosingIssuedDate
+            ?? DateOnly.FromDateTime(remittance.ConfirmedAt ?? remittance.CreatedAt);
+        var content = BuildSingleRemittanceClosingPdf(remittance, panel, contract, cedent, reinsurer,
+            currency, mainCoverage, description, issueDate, precision, remittance.NetPayableAmount ?? remittance.NetPremiumDue ?? 0m);
+        var reference = $"REM-{remittance.RemittanceRef1}";
+
+        return ServiceResult<PrintablePaymentDocumentDto>.Success(new PrintablePaymentDocumentDto
+        {
+            Content = content,
+            ContentType = "application/pdf",
+            FileName = $"Closing_{reference}.pdf",
+            DocumentReference = reference,
+            DocumentType = IsClosingAvoir(remittance.SourceType) ? "AVOIR_CLOSING" : "PREMIUM_CLOSING"
+        });
+    }
+
+    private byte[] BuildSingleRemittanceClosingPdf(RemittanceRef remittance, ContractPanel panel, Contract contract,
+        Counterparty cedent, Counterparty reinsurer, Currency currency, string? coverage, string description,
+        DateOnly issueDate, int precision, decimal payableAmount)
+    {
+        var logoBytes = LoadIrisInvoiceLogo();
+        var logo = logoBytes is null ? null : DecodePngForPdf(logoBytes);
+        var drawing = new StringBuilder();
+        if (logo is not null)
+        {
+            const double logoWidth = 155d;
+            var logoHeight = logoWidth * logo.Height / logo.Width;
+            drawing.Append("q ").Append(logoWidth.ToString("0.###", CultureInfo.InvariantCulture))
+                .Append(" 0 0 ").Append(logoHeight.ToString("0.###", CultureInfo.InvariantCulture))
+                .Append(" 48 756 cm /Logo Do Q\n");
+        }
+
+        AddText(drawing, _invoiceBranding.CompanyName, 340, 800, 10, bold: true);
+        AddText(drawing, _invoiceBranding.AddressLine1, 340, 784, 8);
+        AddText(drawing, _invoiceBranding.AddressLine2, 340, 772, 8);
+        AddText(drawing, $"Tel. {_invoiceBranding.Phone}", 340, 760, 8);
+        AddText(drawing, "ATTENTION:", 48, 710, 9, bold: true);
+        AddText(drawing, reinsurer.Name, 112, 710, 9, bold: true);
+        var dateLabel = $"DATE: {issueDate:dd/MM/yyyy}";
+        var dateX = 547 - (int)Math.Ceiling(dateLabel.Length * 8 * 0.52);
+        AddText(drawing, dateLabel, dateX, 710, 8, bold: true);
+        AddCenteredText(drawing, "REINSURANCE PREMIUM CLOSING", 675, 14, bold: true);
+
+        var isAvoir = IsClosingAvoir(remittance.SourceType);
+        var netPayable = payableAmount;
+        var signedLine = remittance.PremiumSignedLine ?? 0m;
+        var deductions = remittance.Deductions ?? 0m;
+        if (isAvoir)
+        {
+            netPayable = Math.Abs(netPayable);
+            signedLine = Math.Abs(signedLine);
+            deductions = Math.Abs(deductions);
+        }
+
+        var share = panel.SignedSharePct ?? remittance.PartPct;
+        var fields = new (string Label, string Value)[]
+        {
+            ("COVERAGE TYPE:", coverage ?? string.Empty),
+            ("ORIGINAL INSURED:", contract.Name ?? string.Empty),
+            ("REINSURED:", cedent.Name ?? string.Empty),
+            ("EFFECTIVE PERIOD:", FormatPeriod(contract)),
+            ("YOUR SHARE:", share.HasValue ? $"{share.Value:0.########}%" : string.Empty),
+            ("CURRENCY:", currency.CurrencyCode ?? string.Empty),
+            ("PREMIUM FOR SIGNED LINE:", $"{FormatAmount(signedLine, precision)} {currency.CurrencyCode}"),
+            ("DEDUCTIONS:", $"{FormatAmount(deductions, precision)} {currency.CurrencyCode}"),
+            (isAvoir ? "NET PREMIUM DUE FROM YOU:" : "NET PREMIUM DUE TO YOU:", $"{FormatAmount(netPayable, precision)} {currency.CurrencyCode}"),
+            ("DESCRIPTION:", description)
+        };
+
+        var y = 620;
+        foreach (var (label, value) in fields)
+        {
+            AddText(drawing, label, 60, y, 8, bold: true);
+            if (label == "DESCRIPTION:")
+                AddWrappedText(drawing, value, 250, y, 8, 56, 12);
+            else
+                AddText(drawing, value, 250, y, 8);
+            y -= label == "DESCRIPTION:" ? 40 : 30;
+        }
+
+        AddPartnershipLine(drawing, 360, 108);
+        AddRule(drawing, 48, 91, 499, 0.6m);
+        AddText(drawing, JoinNonEmpty(_invoiceBranding.CompanyName, _invoiceBranding.AddressLine1,
+            _invoiceBranding.AddressLine2), 48, 74, 7);
+        AddText(drawing, "1", 535, 74, 7);
+
+        return AssembleClosingAdvicePdf([Latin1.GetBytes(drawing.ToString())], logo);
+    }
+
     public async Task<ServiceResult<PrintablePaymentDocumentDto>> CreateOutgoingClosingAsync(OutgoingClosingRequestDto request, CancellationToken ct)
     {
         if (!CanBack()) return Forbidden<PrintablePaymentDocumentDto>();
         var user = CurrentUser();
         if (user is null) return Unauthorized<PrintablePaymentDocumentDto>();
         var ids = request.RemittanceIds;
-        if (ids is null || ids.Count == 0 || ids.Count > 500 || ids.Any(x => x <= 0) || ids.Distinct().Count() != ids.Count)
-            return Failure<PrintablePaymentDocumentDto>("Select between 1 and 500 distinct remittance IDs.");
+        if (ids is null || ids.Count != 1 || ids.Any(x => x <= 0) || ids.Distinct().Count() != ids.Count)
+            return Failure<PrintablePaymentDocumentDto>("A Closing document must be generated for exactly one remittance ID.", status: StatusCodes.Status400BadRequest, code: "CLOSING_REQUIRES_ONE_REMITTANCE");
         await using var tx = await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         await LockOutgoingWorkflowAsync(ct);
         var lines = await RemittanceDetails().AsTracking().Where(x => ids.Contains(x.RemittanceRef1)).OrderBy(x => x.RemittanceRef1).ToListAsync(ct);
@@ -681,10 +813,6 @@ public sealed partial class FinancialWorkflowService
             return Failure<PrintablePaymentDocumentDto>("The selected reinsurer Premium/Avoir lines have no positive net amount payable.", status: StatusCodes.Status409Conflict);
         var now = DateTime.UtcNow;
         var reinsurer = first.IdCounterpartyNavigation;
-        var eligibleAccounts = await _db.CounterpartyBankAccounts.AsNoTracking()
-            .Where(x => x.IdCounterparty == first.IdCounterparty && x.IdCurrency == first.IdCurrency && x.IsActive)
-            .OrderBy(x => x.IdBankAccount).ToListAsync(ct);
-        var account = BankAccountEligibility.Select(eligibleAccounts).Account;
         var closing = new OutgoingClosing
         {
             Reference = $"CL-{now:yyyyMMdd}-{Guid.NewGuid():N}", IssuedAt = now, CreatedBy = user,
@@ -703,8 +831,18 @@ public sealed partial class FinancialWorkflowService
             line.UpdatedAt = now;
             line.UpdatedBy = user;
         }
-        closing.PdfContent = BuildOutgoingClosingPdf(closing, lines,
-            closing.Lines.ToDictionary(x => x.Remittance.RemittanceRef1, x => x.PayableAmount), currency, reinsurer, account);
+        var singleLine = lines[0];
+        var contract = singleLine.IdPanelNavigation?.IdContractNavigation;
+        var cedent = contract?.IdCounterpartyNavigation;
+        if (contract is null || cedent is null)
+            return Failure<PrintablePaymentDocumentDto>("The remittance is missing its contract or cedent information.", status: StatusCodes.Status409Conflict, code: "REMITTANCE_CLOSING_DATA_INCOMPLETE");
+        var coverage = contract.ContractCoverageSelections
+            .Where(selection => selection.IdCoverageItemNavigation is not null && CoverageConstants.IsMainCoverLevel(selection.IdCoverageItemNavigation.CoverageLevel))
+            .OrderByDescending(selection => selection.IsPrimary).ThenBy(selection => selection.IdCoverageItem)
+            .Select(selection => selection.IdCoverageItemNavigation!.CoverageName).FirstOrDefault();
+        var description = BuildClosingDescription(contract, coverage);
+        closing.PdfContent = BuildSingleRemittanceClosingPdf(singleLine, singleLine.IdPanelNavigation!, contract,
+            cedent, reinsurer, currency, coverage, description, DateOnly.FromDateTime(now), precision, signedAmounts[0]);
         _db.OutgoingClosings.Add(closing);
         await _db.SaveChangesAsync(ct);
         await NotifyRoleAsync("Finance Officer", "Closing issued - disbursement required",
@@ -718,68 +856,88 @@ public sealed partial class FinancialWorkflowService
     {
         if (!CanFinanceOrBack()) return Forbidden<PrintablePaymentDocumentDto>();
         var closing = await _db.OutgoingClosings.AsNoTracking().SingleOrDefaultAsync(x => x.Id == closingId && x.IsActive, ct);
-        if (closing is not null && closing.PdfContent.Length == 0)
-            return ServiceResult<PrintablePaymentDocumentDto>.Failure("The closing exists but its PDF is not available.", statusCode: 409, code: "CLOSING_PDF_UNAVAILABLE");
         if (closing is null) return NotFound<PrintablePaymentDocumentDto>("Closing was not found.");
-        if (closing.Status is "Draft" or "AwaitingFinanceDisbursement")
-        {
-            var ids = await _db.OutgoingClosingLines.AsNoTracking().Where(line => line.ClosingId == closing.Id && line.IsActive)
-                .Select(line => line.RemittanceId).ToArrayAsync(ct);
-            var lines = await RemittanceDetails().Where(row => ids.Contains(row.RemittanceRef1)).OrderBy(row => row.RemittanceRef1).ToListAsync(ct);
-            if (lines.Count == ids.Length && lines.Count > 0)
-            {
-                var currency = await _db.Currencies.AsNoTracking().SingleOrDefaultAsync(row => row.IdCurrency == closing.IdCurrency, ct);
-                var reinsurer = await _db.Counterparties.AsNoTracking().SingleOrDefaultAsync(row => row.Id == closing.IdCounterparty, ct);
-                if (currency is not null && reinsurer is not null)
-                {
-                    var eligibleAccounts = await _db.CounterpartyBankAccounts.AsNoTracking()
-                        .Where(row => row.IdCounterparty == closing.IdCounterparty && row.IdCurrency == closing.IdCurrency && row.IsActive)
-                        .OrderBy(row => row.IdBankAccount).ToListAsync(ct);
-                    var document = ClosingDocument(closing);
-                    var signedAmounts = await _db.OutgoingClosingLines.AsNoTracking()
-                        .Where(row => row.ClosingId == closing.Id && row.IsActive)
-                        .ToDictionaryAsync(row => row.RemittanceId, row => row.PayableAmount, ct);
-                    document.Content = BuildOutgoingClosingPdf(closing, lines, signedAmounts, currency, reinsurer,
-                        BankAccountEligibility.Select(eligibleAccounts).Account);
-                    return ServiceResult<PrintablePaymentDocumentDto>.Success(document);
-                }
-            }
-        }
-        return ServiceResult<PrintablePaymentDocumentDto>.Success(ClosingDocument(closing));
+        var remittanceIds = await _db.OutgoingClosingLines.AsNoTracking()
+            .Where(line => line.ClosingId == closingId && line.IsActive)
+            .Select(line => line.RemittanceId).ToArrayAsync(ct);
+        if (remittanceIds.Length != 1)
+            return Failure<PrintablePaymentDocumentDto>("This finance closing has no single-remittance PDF.", status: StatusCodes.Status409Conflict, code: "CLOSING_PDF_NOT_SINGLE_REMITTANCE");
+        var remittanceId = remittanceIds[0];
+        var remittance = await RemittanceDetails().FirstOrDefaultAsync(row => row.RemittanceRef1 == remittanceId && row.IsActive, ct);
+        if (remittance is null || remittance.IdPanelNavigation?.IdContractNavigation is not { } contract
+            || contract.IdCounterpartyNavigation is not { } cedent || remittance.IdCounterpartyNavigation is not { } reinsurer
+            || remittance.IdCurrencyNavigation is not { } currency)
+            return Failure<PrintablePaymentDocumentDto>("The closing remittance is missing its required business relationships.", status: StatusCodes.Status409Conflict, code: "REMITTANCE_CLOSING_DATA_INCOMPLETE");
+        var coverage = contract.ContractCoverageSelections
+            .Where(selection => selection.IdCoverageItemNavigation is not null && CoverageConstants.IsMainCoverLevel(selection.IdCoverageItemNavigation.CoverageLevel))
+            .OrderByDescending(selection => selection.IsPrimary).ThenBy(selection => selection.IdCoverageItem)
+            .Select(selection => selection.IdCoverageItemNavigation!.CoverageName).FirstOrDefault();
+        var description = BuildClosingDescription(contract, coverage);
+        var precision = PanelRemittanceCalculator.Precision(currency.DecimalPlaces);
+        var payableAmount = await _db.OutgoingClosingLines.AsNoTracking()
+            .Where(line => line.ClosingId == closingId && line.RemittanceId == remittanceId && line.IsActive)
+            .Select(line => line.PayableAmount).SingleAsync(ct);
+        var documentDate = remittance.ClosingIssuedDate ?? DateOnly.FromDateTime(closing.IssuedAt);
+        var document = ClosingDocument(closing);
+        document.Content = BuildSingleRemittanceClosingPdf(remittance, remittance.IdPanelNavigation!, contract, cedent,
+            reinsurer, currency, coverage, description, documentDate, precision, payableAmount);
+        document.FileName = $"Closing_REM-{remittanceId}.pdf";
+        return ServiceResult<PrintablePaymentDocumentDto>.Success(document);
     }
 
-    private byte[] BuildOutgoingClosingPdf(OutgoingClosing closing, IReadOnlyList<RemittanceRef> lines,
-        IReadOnlyDictionary<int, decimal> signedAmounts,
-        Currency currency, Counterparty reinsurer, CounterpartyBankAccount? account)
+    private static bool IsClosingAvoir(string? sourceType) =>
+        string.Equals(sourceType?.Trim(), "AVOIR", StringComparison.OrdinalIgnoreCase);
+
+    private static string BuildClosingDescription(Contract contract, string? coverage) =>
+        $"Your share of the reinsurance premium in respect to \"{contract.Name?.Trim() ?? string.Empty}\" {coverage?.Trim() ?? string.Empty} Policy.";
+
+    private static void AddPartnershipLine(StringBuilder drawing, int x, int y)
     {
-        var precision = PanelRemittanceCalculator.Precision(currency.DecimalPlaces);
-        var text = new List<string>
+        drawing.Append("0.0 0.55 0.63 rg BT /F2 9 Tf 1 0 0 1 ").Append(x)
+            .Append(' ').Append(y).Append(" Tm (IRIS) Tj ET\n")
+            .Append("0.07 0.12 0.19 rg BT /F2 9 Tf 1 0 0 1 ").Append(x + 25)
+            .Append(' ').Append(y).Append(" Tm (- Partner of Marsh McLennan) Tj ET\n");
+    }
+
+    private static byte[] AssembleClosingAdvicePdf(IReadOnlyList<byte[]> pageContents, PngPdfImage? logo)
+    {
+        var objects = new List<byte[]>
         {
-            "IRIS - OUTGOING REINSURER CLOSING", $"Closing: {closing.Reference}", $"Issue date: {closing.IssuedAt:yyyy-MM-dd}",
-            $"Reinsurer: {reinsurer.Name}", $"Address: {reinsurer.AddressLine}, {reinsurer.City}, {reinsurer.Country}",
-            $"Bank: {account?.BankName ?? "Not supplied"} / {account?.BankCity} / {account?.BankCountry}",
-            $"Account/RIB: {account?.Rib ?? "Not supplied"}", $"IBAN: {account?.Iban ?? "Not supplied"}",
-            $"SWIFT/BIC: {account?.SwiftBic ?? "Not supplied"}",
-            $"Correspondent bank: {account?.CorrespondentBankName} / {account?.CorrespondentSwiftBic}", ""
+            Ascii("<< /Type /Catalog /Pages 2 0 R >>"),
+            Array.Empty<byte>(),
+            Ascii("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"),
+            Ascii("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>")
         };
-        foreach (var line in lines)
+        int? logoObjectId = null;
+        int? alphaObjectId = null;
+        if (logo is not null)
         {
-            var dto = MapOutgoingRemittance(line);
-            var sourceDocumentNumber = dto.SourceDocumentNumber ?? dto.SourceInvoiceNumber ?? dto.InvoiceNumber;
-            text.Add($"Contract: {dto.ContractName}; UMR: {dto.Umr}");
-            text.Add($"Panel: {dto.PanelName}; Remittance: {dto.RemittanceReference}");
-            text.Add($"Source document: {line.SourceType} {sourceDocumentNumber}; Encaissement: {dto.ReceiptReference ?? "Not provided"}");
-            text.Add($"Signed amount: {signedAmounts.GetValueOrDefault(line.RemittanceRef1).ToString($"F{precision}", CultureInfo.InvariantCulture)} {currency.CurrencyCode}");
-            text.Add("");
+            logoObjectId = objects.Count + 1;
+            alphaObjectId = logo.Alpha is null ? null : logoObjectId + 1;
+            var softMask = alphaObjectId.HasValue ? $" /SMask {alphaObjectId.Value} 0 R" : string.Empty;
+            objects.Add(PdfStream(
+                $"/Type /XObject /Subtype /Image /Width {logo.Width} /Height {logo.Height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 3 /BitsPerComponent 8 /Columns {logo.Width} >>{softMask}",
+                logo.Rgb));
+            if (logo.Alpha is not null)
+                objects.Add(PdfStream(
+                    $"/Type /XObject /Subtype /Image /Width {logo.Width} /Height {logo.Height} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 1 /BitsPerComponent 8 /Columns {logo.Width} >>",
+                    logo.Alpha));
         }
-        var signedTotal = RoundMoney(signedAmounts.Values.Sum(), precision);
-        text.Add($"Total payable: {signedTotal.ToString($"F{precision}", CultureInfo.InvariantCulture)} {currency.CurrencyCode}");
-        text.Add($"In words: {AmountInWords(signedTotal, currency.CurrencyCode, precision)}");
-        text.Add("");
-        text.Add("Prepared by: ____________________  Authorized signature: ____________________");
-        text.Add("Bank processing / transfer reference: _______________________________________");
-        text.Add("Processing date: ____________________  Bank stamp: _________________________");
-        return OutgoingClosingPdf.Build(text);
+
+        var firstPageId = objects.Count + 1;
+        var pageIds = Enumerable.Range(0, pageContents.Count).Select(index => firstPageId + index * 2).ToArray();
+        objects[1] = Ascii($"<< /Type /Pages /Kids [{string.Join(" ", pageIds.Select(id => $"{id} 0 R"))}] /Count {pageIds.Length} >>");
+        var resources = logoObjectId.HasValue
+            ? $"<< /Font << /F1 3 0 R /F2 4 0 R >> /XObject << /Logo {logoObjectId.Value} 0 R >> >>"
+            : "<< /Font << /F1 3 0 R /F2 4 0 R >> >>";
+        for (var index = 0; index < pageContents.Count; index++)
+        {
+            var pageId = pageIds[index];
+            var contentId = pageId + 1;
+            objects.Add(Ascii($"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources {resources} /Contents {contentId} 0 R >>"));
+            objects.Add(PdfStream(string.Empty, pageContents[index]));
+        }
+        return AssemblePdf(objects);
     }
 
     private static PrintablePaymentDocumentDto ClosingDocument(OutgoingClosing closing) => new()

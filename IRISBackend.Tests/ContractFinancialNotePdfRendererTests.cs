@@ -12,7 +12,7 @@ public sealed class ContractFinancialNotePdfRendererTests
     [Fact]
     public void ContractDebitNoteRendersReadableFinancialValuesAndAllConfiguredBankAccounts()
     {
-        var pdf = RenderContractNote("DEBIT NOTE", 0m, 500m, 450m);
+        var pdf = RenderContractDebitNote(500m, 50m, 450m);
         var content = Encoding.Latin1.GetString(pdf);
 
         Assert.StartsWith("%PDF-1.4", content);
@@ -52,25 +52,91 @@ public sealed class ContractFinancialNotePdfRendererTests
     }
 
     [Fact]
-    public void ContractCreditNoteShowsAvoirAdjustmentAsNegativeAndDoesNotIncludeInvoiceData()
+    public void ContractDebitNoteRendererCannotRenderAvoirAdjustments()
     {
-        var pdf = RenderContractNote("CREDIT NOTE", 40m, 500m, 450m);
+        var pdf = RenderContractDebitNote(500m, 50m, 450m);
         var content = Encoding.Latin1.GetString(pdf);
 
-        Assert.Contains("CREDIT NOTE SUMMARY", content);
-        Assert.Contains("Avoir Adjustment", content);
-        Assert.Contains("-40,000", content);
-        Assert.Contains("Amount After Avoir", content);
+        Assert.Contains("DEBIT NOTE SUMMARY", content);
+        Assert.Contains("Amount Due from Cedent", content);
+        Assert.DoesNotContain("CREDIT NOTE", content);
+        Assert.DoesNotContain("Avoir Adjustment", content);
         Assert.DoesNotContain("Invoice Number", content);
         Assert.DoesNotContain("Invoice Business Number", content);
     }
 
-    private static byte[] RenderContractNote(string title, decimal avoirAmount, decimal gross, decimal baseAmount)
+    [Fact]
+    public void AvoirCreditNoteUsesThePreviousLayoutAndOnlyOnePositiveAvoirAmount()
     {
         var renderer = typeof(FinancialWorkflowService).GetMethod(
-            "BuildFrenchContractFinancialNotePdf", BindingFlags.NonPublic | BindingFlags.Static)
-            ?? throw new InvalidOperationException("Active contract financial-note renderer was not found.");
-        var bankAccountType = renderer.GetParameters()[15].ParameterType.GetGenericArguments()[0];
+            "BuildFrenchAvoirCreditNotePdf", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException("Avoir Credit Note renderer was not found.");
+        var contract = new Contract
+        {
+            Name = "Selected insured",
+            Umr = "UMR-SELECTED-1",
+            InceptionDate = new DateOnly(2026, 1, 1),
+            ExpiryDate = new DateOnly(2026, 12, 31),
+            IdCurrencyNavigation = new Currency { CurrencyCode = "TND" }
+        };
+        var cedent = new Counterparty
+        {
+            Name = "Selected cedent",
+            ContactName = "Cedent contact",
+            AddressLine = "1 Example Street",
+            City = "Tunis",
+            Country = "Tunisia"
+        };
+        var branding = new IrisInvoiceBrandingOptions
+        {
+            CompanyName = "IRIS Tunisia",
+            AddressLine1 = "Immeuble Iris",
+            AddressLine2 = "Tunis",
+            Phone = "+216 71 000 000"
+        };
+        var logoPath = Path.Combine(FindWorkspaceRoot(), "IRISBackend", "Assets", "Branding", "iris-logo.png");
+        var pdf = (byte[])renderer.Invoke(null,
+        [
+            contract, cedent, "Facultative", "Property", "Selected Avoir label", "AV-2026-000011",
+            new DateOnly(2026, 10, 27), -10m, "TND", 3, branding, File.ReadAllBytes(logoPath)
+        ])!;
+        var content = Encoding.Latin1.GetString(pdf);
+
+        Assert.StartsWith("%PDF-1.4", content);
+        Assert.Contains("/MediaBox [0 0 595 842]", content);
+        Assert.Contains("CREDIT NOTE", content);
+        Assert.Contains("Selected Avoir label", content);
+        Assert.Contains("AV-2026-000011", content);
+        Assert.Contains("Selected insured", content);
+        Assert.Contains("UMR-SELECTED-1", content);
+        Assert.Contains("Avoir Amount", content);
+        Assert.Contains("10,000", content);
+        Assert.Contains("dix dinars tunisiens", content);
+        Assert.Equal(1, Count(content, "10,000"));
+        Assert.DoesNotContain("Contract Gross Premium", content);
+        Assert.DoesNotContain("Cedent Commission Amount", content);
+        Assert.DoesNotContain("Amount Due from Cedent", content);
+        Assert.DoesNotContain("NOS COMPTES BANCAIRES", content);
+        Assert.DoesNotContain("IBAN", content);
+        Assert.DoesNotContain("SWIFT", content);
+        Assert.DoesNotContain("KINDLY REMIT", content);
+        Assert.DoesNotContain("Le paiement doit", content);
+        Assert.Contains("Page 1 / 1", content);
+
+        var previewPath = Environment.GetEnvironmentVariable("IRIS_CREDIT_NOTE_PREVIEW_PATH");
+        if (!string.IsNullOrWhiteSpace(previewPath))
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(previewPath)!);
+            File.WriteAllBytes(previewPath, pdf);
+        }
+    }
+
+    private static byte[] RenderContractDebitNote(decimal gross, decimal commissionAmount, decimal amountDue)
+    {
+        var renderer = typeof(FinancialWorkflowService).GetMethod(
+            "BuildFrenchContractDebitNotePdf", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException("Active contract debit-note renderer was not found.");
+        var bankAccountType = renderer.GetParameters()[12].ParameterType.GetGenericArguments()[0];
         var bankAccounts = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(bankAccountType))!;
         var constructor = bankAccountType.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
             .Single(item => item.GetParameters().Length == 7);
@@ -108,8 +174,8 @@ public sealed class ContractFinancialNotePdfRendererTests
         var logoPath = Path.Combine(workspaceRoot, "IRISBackend", "Assets", "Branding", "iris-logo.png");
         var parameters = new object?[]
         {
-            contract, cedent, "Facultative", "Property", title, "DN-TEST-UMR-2026", gross,
-            10m, 50m, avoirAmount, baseAmount, baseAmount - avoirAmount, 3,
+            contract, cedent, "Facultative", "Property", "DN-TEST-UMR-2026", gross,
+            10m, commissionAmount, amountDue, 3,
             branding, File.ReadAllBytes(logoPath), bankAccounts
         };
 

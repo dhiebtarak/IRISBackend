@@ -23,6 +23,7 @@ public interface IFinancialWorkflowService
     Task<ServiceResult<PagedResponseDto<RemittanceResponseDto>>> ListRemittancesAsync(RemittanceQueryDto query, CancellationToken cancellationToken);
     Task<ServiceResult<IReadOnlyList<RemittanceResponseDto>>> GenerateReceiptRemittancesAsync(int receiptId, CancellationToken cancellationToken);
     Task<ServiceResult<AvoirRemittanceRepairResultDto>> RepairDraftAvoirRemittancesAsync(CancellationToken cancellationToken);
+    Task<ServiceResult<PrintablePaymentDocumentDto>> GetRemittanceClosingPdfAsync(int remittanceRef, CancellationToken cancellationToken);
     Task<ServiceResult<PrintablePaymentDocumentDto>> CreateOutgoingClosingAsync(OutgoingClosingRequestDto request, CancellationToken cancellationToken);
     Task<ServiceResult<PrintablePaymentDocumentDto>> GetOutgoingClosingDocumentAsync(int closingId, CancellationToken cancellationToken);
     Task<ServiceResult<RemittanceResponseDto>> ConfirmRemittanceAsync(int remittanceRef, CancellationToken cancellationToken);
@@ -52,6 +53,7 @@ public interface IFinancialWorkflowService
     Task<ServiceResult<IReadOnlyList<PremiumDebitNoteResponseDto>>> ListContractInvoicesAsync(int contractId, CancellationToken cancellationToken);
     Task<ServiceResult<PrintablePaymentDocumentDto>> GetPremiumInvoiceDocumentAsync(int invoiceId, CancellationToken cancellationToken);
     Task<ServiceResult<PrintablePaymentDocumentDto>> GetAvoirCreditNoteDocumentAsync(int avoirId, CancellationToken cancellationToken);
+    Task<ServiceResult<PrintablePaymentDocumentDto>> GetAvoirFinancialCreditNoteDocumentAsync(int avoirId, CancellationToken cancellationToken);
     Task<ServiceResult<InvoiceResponseDto>> GetInvoiceAsync(int id, CancellationToken cancellationToken);
     Task<ServiceResult<FinancialHistoryDto>> GetFinancialHistoryAsync(int contractId, CancellationToken cancellationToken);
     Task<ServiceResult<CedentClosingResponseDto>> CreateCedentClosingAsync(int contractId, CedentClosingRequestDto request, CancellationToken cancellationToken);

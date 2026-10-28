@@ -81,7 +81,11 @@ public sealed partial class FinancialWorkflowService
 
         DrawAccountingRect(drawing, 48, 278, 499, 108);
         var firstAmountLabel = document.DocumentType == IrisAccountingDocumentType.Invoice ? "Prime nette" : "Remboursement";
-        var secondAmountLabel = document.DocumentType == IrisAccountingDocumentType.Invoice ? "Prime TTC" : "Total à vous rembourser";
+        var secondAmountLabel = document.DocumentType switch
+        {
+            IrisAccountingDocumentType.Invoice => "Prime TTC",
+            _ => "Total à vous rembourser"
+        };
         var firstAmountY = 356;
         var secondAmountY = 298;
         AddAccountingText(drawing, firstAmountLabel, 62, firstAmountY, 9, bold: true);
@@ -106,45 +110,44 @@ public sealed partial class FinancialWorkflowService
         AddAccountingRightAlignedText(drawing, currencyAndAmount, 529, secondAmountY, 10, 245, bold: true);
 
         AddAccountingText(drawing,
-            "Le paiement doit \u00eatre effectu\u00e9 par virement sur l'un de nos comptes indiqu\u00e9s ci-dessous.",
-            48, 255, 7);
+                "Le paiement doit \u00eatre effectu\u00e9 par virement sur l'un de nos comptes indiqu\u00e9s ci-dessous.",
+                48, 255, 7);
 
-        var accounts = document.BankAccounts
-            .Where(account => !string.IsNullOrWhiteSpace(account.BankName)
-                && !string.IsNullOrWhiteSpace(account.CurrencyCode)
-                && !string.IsNullOrWhiteSpace(account.SwiftBic)
-                && !string.IsNullOrWhiteSpace(SelectBankAccountReference(account)))
-            .ToArray();
-        const int bankTop = 235;
-        const int rowHeight = 19;
-        var tableBottom = bankTop - 41 - rowHeight * accounts.Length;
-        DrawAccountingRect(drawing, 48, tableBottom, 499, bankTop - tableBottom);
-        AddAccountingCenteredText(drawing, "NOS COMPTES BANCAIRES", bankTop - 14, 8, bold: true);
-        DrawAccountingLine(drawing, 48, bankTop - 22, 499);
+            var accounts = document.BankAccounts
+                .Where(account => !string.IsNullOrWhiteSpace(account.BankName)
+                    && !string.IsNullOrWhiteSpace(account.CurrencyCode)
+                    && !string.IsNullOrWhiteSpace(account.SwiftBic)
+                    && !string.IsNullOrWhiteSpace(SelectBankAccountReference(account)))
+                .ToArray();
+            const int bankTop = 235;
+            const int rowHeight = 19;
+            var tableBottom = bankTop - 41 - rowHeight * accounts.Length;
+            DrawAccountingRect(drawing, 48, tableBottom, 499, bankTop - tableBottom);
+            AddAccountingCenteredText(drawing, "NOS COMPTES BANCAIRES", bankTop - 14, 8, bold: true);
+            DrawAccountingLine(drawing, 48, bankTop - 22, 499);
 
-        const int bankColumn = 220;
-        const int currencyColumn = 278;
-        const int accountColumn = 452;
-        AddAccountingText(drawing, "Banque", 55, bankTop - 35, 7, bold: true);
-        AddAccountingText(drawing, "Devise", 229, bankTop - 35, 7, bold: true);
-        AddAccountingText(drawing, "IBAN / RIB", 287, bankTop - 35, 7, bold: true);
-        AddAccountingText(drawing, "BIC / SWIFT", 461, bankTop - 35, 7, bold: true);
-        DrawAccountingLine(drawing, 48, bankTop - 41, 499);
-        DrawAccountingVerticalLine(drawing, bankColumn, bankTop - 22, tableBottom);
-        DrawAccountingVerticalLine(drawing, currencyColumn, bankTop - 22, tableBottom);
-        DrawAccountingVerticalLine(drawing, accountColumn, bankTop - 22, tableBottom);
+            const int bankColumn = 220;
+            const int currencyColumn = 278;
+            const int accountColumn = 452;
+            AddAccountingText(drawing, "Banque", 55, bankTop - 35, 7, bold: true);
+            AddAccountingText(drawing, "Devise", 229, bankTop - 35, 7, bold: true);
+            AddAccountingText(drawing, "IBAN / RIB", 287, bankTop - 35, 7, bold: true);
+            AddAccountingText(drawing, "BIC / SWIFT", 461, bankTop - 35, 7, bold: true);
+            DrawAccountingLine(drawing, 48, bankTop - 41, 499);
+            DrawAccountingVerticalLine(drawing, bankColumn, bankTop - 22, tableBottom);
+            DrawAccountingVerticalLine(drawing, currencyColumn, bankTop - 22, tableBottom);
+            DrawAccountingVerticalLine(drawing, accountColumn, bankTop - 22, tableBottom);
 
-        for (var index = 0; index < accounts.Length; index++)
-        {
-            var y = bankTop - 55 - rowHeight * index;
-            var account = accounts[index];
-            AddAccountingText(drawing, account.BankName, 55, y, 7);
-            AddAccountingText(drawing, account.CurrencyCode, 229, y, 7);
-            AddAccountingText(drawing, SelectBankAccountReference(account), 287, y, 7);
-            AddAccountingText(drawing, account.SwiftBic, 461, y, 7);
-            if (index < accounts.Length - 1) DrawAccountingLine(drawing, 48, y - 6, 499);
-        }
-
+            for (var index = 0; index < accounts.Length; index++)
+            {
+                var y = bankTop - 55 - rowHeight * index;
+                var account = accounts[index];
+                AddAccountingText(drawing, account.BankName, 55, y, 7);
+                AddAccountingText(drawing, account.CurrencyCode, 229, y, 7);
+                AddAccountingText(drawing, SelectBankAccountReference(account), 287, y, 7);
+                AddAccountingText(drawing, account.SwiftBic, 461, y, 7);
+                if (index < accounts.Length - 1) DrawAccountingLine(drawing, 48, y - 6, 499);
+            }
         DrawAccountingLine(drawing, 48, 76, 499);
         var companyAddress = JoinNonEmpty(branding.AddressLine1, branding.AddressLine2);
         AddAccountingCenteredText(drawing, JoinNonEmpty(branding.CompanyName, companyAddress) ?? string.Empty, 60, 7);

@@ -449,7 +449,7 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
         }
         var result = await Service(_db).CreateOutgoingClosingAsync(new() { RemittanceIds = lines.Select(x => x.RemittanceRef1).ToArray() }, default);
         Assert.Equal(400, result.StatusCode);
-        Assert.Contains(mixedCurrency ? "same currency" : "same reinsurer", result.Error!.Message);
+        Assert.Contains("exactly one remittance", result.Error!.Message);
         Assert.Empty(await _db.OutgoingClosings.ToListAsync());
         Assert.All(lines, x => Assert.Null(x.ClosingIssuedDate));
     }
@@ -458,19 +458,29 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
     public async Task ClosingPersistsLinesNotifiesFinanceAndRegeneratesSamePdf()
     {
         _panels[1].IdCounterparty = _panels[0].IdCounterparty;
+        await AddMainCoverageAsync("Bankers Blanket Bond");
         await _db.SaveChangesAsync();
         await Generate();
-        var ids = await _db.RemittanceRefs.Select(x => x.RemittanceRef1).ToArrayAsync();
+        var ids = await _db.RemittanceRefs.OrderBy(x => x.RemittanceRef1).Select(x => x.RemittanceRef1).Take(1).ToArrayAsync();
         var service = Service(_db);
         var printed = await service.CreateOutgoingClosingAsync(new() { RemittanceIds = ids }, default);
         Assert.True(printed.Succeeded, printed.Error?.Message);
         var closing = await _db.OutgoingClosings.Include(x => x.Lines).SingleAsync();
-        Assert.Equal(2, closing.Lines.Count);
-        Assert.Equal(1000m, closing.TotalAmount);
+        Assert.Single(closing.Lines);
+        Assert.Equal(closing.Lines.Single().PayableAmount, closing.TotalAmount);
         Assert.Equal("application/pdf", printed.Value!.ContentType);
         var text = Encoding.Latin1.GetString(printed.Value.Content);
         Assert.StartsWith("%PDF-", text);
-        foreach (var expected in new[] { "Factory protection", "UMR-TEST-2026", "INV-001", "ENC-001", "TN5900000000000000000000", "ABCDEF12", "one thousand TND", "Authorized signature" }) Assert.Contains(expected, text);
+        foreach (var expected in new[] { "REINSURANCE PREMIUM CLOSING", "ATTENTION:", "AMI", "DATE:", "NET PREMIUM DUE TO YOU:", "Your share of the reinsurance premium in respect to \"Factory protection\" Bankers Blanket Bond Policy.", "IRIS", "- Partner of Marsh McLennan", "PREMIUM FOR SIGNED LINE:", "DEDUCTIONS:", "/MediaBox [0 0 595 842]" }) Assert.Contains(expected, text);
+        Assert.DoesNotContain("AMI street", text);
+        Assert.DoesNotContain("Tunisia", text);
+        Assert.DoesNotContain("CLOSING REFERENCE", text);
+        Assert.DoesNotContain("REM-", text);
+        Assert.DoesNotContain("INV-001", text);
+        Assert.DoesNotContain("Multiple contracts", text);
+        Assert.DoesNotContain("Bank details", text);
+        Assert.DoesNotContain("Amount in words", text);
+        Assert.DoesNotContain("Authorized signature", text);
         var notification = Assert.Single(await _db.Notifications.Where(x => x.RecipientUserId == "finance-user").ToListAsync());
         Assert.Equal("CLOSING_DISBURSEMENT_REQUIRED", notification.NotificationType);
         Assert.Equal("OUTGOING_CLOSING", notification.EntityType);
@@ -478,12 +488,77 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
         Assert.Equal(closing.Id, notification.EntityId);
         Assert.EndsWith($"?closingId={closing.Id}", notification.TargetRoute);
         Assert.Equal("AwaitingFinanceDisbursement", closing.Status);
-        Assert.All(await _db.RemittanceRefs.ToListAsync(), x => { Assert.Equal("AwaitingFinanceDisbursement", x.Status); Assert.NotNull(x.ClosingIssuedDate); });
+        Assert.Equal("AwaitingFinanceDisbursement", (await _db.RemittanceRefs.SingleAsync(x => x.RemittanceRef1 == ids[0])).Status);
+        Assert.Equal("Draft", (await _db.RemittanceRefs.SingleAsync(x => x.RemittanceRef1 != ids[0])).Status);
         var duplicate = await service.CreateOutgoingClosingAsync(new() { RemittanceIds = ids }, default);
         Assert.Equal(400, duplicate.StatusCode);
         var download = await Service(_db, "Finance Officer").GetOutgoingClosingDocumentAsync(closing.Id, default);
         Assert.Equal(printed.Value.Content, download.Value!.Content);
         Assert.Equal(printed.Value.FileName, download.Value.FileName);
+    }
+
+    [Fact]
+    public async Task ClosingPdfUsesAvoirDirectionAndDisplaysTheAbsoluteRemittanceAmount()
+    {
+        await AddMainCoverageAsync("Bankers Blanket Bond");
+        await Generate();
+        var line = await _db.RemittanceRefs.OrderBy(item => item.RemittanceRef1).FirstAsync();
+        var avoir = new Invoice
+        {
+            IdContract = _invoice.IdContract, IdCurrency = _invoice.IdCurrency,
+            InvoiceNumber = "AV-2026-000001", InvoiceType = "AVOIR", GrossPremium = 0.889m,
+            NetPremium = 0.889m, Status = "Issued", InvoiceDate = new(2026, 10, 28),
+            CreatedBy = "back-user", IdUser = "back-user", CreatedAt = DateTime.UtcNow
+        };
+        _db.Invoices.Add(avoir);
+        await _db.SaveChangesAsync();
+        line.SourceType = "AVOIR";
+        line.SourceInvoiceId = avoir.IdInvoice;
+        line.PremiumSignedLine = -0.889m;
+        line.Deductions = -0.01m;
+        line.NetPayableAmount = -0.889m;
+        line.NetPremiumDue = -0.889m;
+        await _db.SaveChangesAsync();
+        var service = Service(_db);
+        var pdf = await service.GetRemittanceClosingPdfAsync(line.RemittanceRef1, default);
+
+        Assert.True(pdf.Succeeded, pdf.Error?.Message);
+        Assert.Equal($"Closing_REM-{line.RemittanceRef1}.pdf", pdf.Value!.FileName);
+        var text = Encoding.Latin1.GetString(pdf.Value.Content);
+        Assert.Contains("REINSURANCE PREMIUM CLOSING", text);
+        Assert.Contains("ATTENTION:", text);
+        Assert.Contains("AMI", text);
+        Assert.DoesNotContain("AMI street", text);
+        Assert.DoesNotContain("Tunisia", text);
+        Assert.DoesNotContain("CLOSING REFERENCE", text);
+        Assert.DoesNotContain("REM-", text);
+        Assert.Contains("NET PREMIUM DUE FROM YOU:", text);
+        Assert.Contains("0,889", text);
+        Assert.Contains("Your share of the reinsurance premium in respect to \"Factory protection\" Bankers Blanket Bond Policy.", text);
+        Assert.DoesNotContain("AV-2026-000001", text);
+        Assert.DoesNotContain("-0,889", text);
+        Assert.DoesNotContain("BANK DETAILS", text);
+        Assert.DoesNotContain("Amount in words", text);
+        Assert.DoesNotContain("Multiple contracts", text);
+        Assert.DoesNotContain("Authorized signature", text);
+        Assert.Contains("/MediaBox [0 0 595 842]", text);
+    }
+
+    [Fact]
+    public async Task RemittanceClosingPdfContainsOnlyTheRequestedRemittance()
+    {
+        await Generate();
+        var remittances = await _db.RemittanceRefs.OrderBy(item => item.RemittanceRef1).ToArrayAsync();
+        Assert.Equal(2, remittances.Length);
+
+        var result = await Service(_db).GetRemittanceClosingPdfAsync(remittances[0].RemittanceRef1, default);
+
+        Assert.True(result.Succeeded, result.Error?.Message);
+        var text = Encoding.Latin1.GetString(result.Value!.Content);
+        Assert.DoesNotContain("CLOSING REFERENCE", text);
+        Assert.DoesNotContain("REM-", text);
+        Assert.DoesNotContain("Multiple contracts", text);
+        Assert.Contains("NET PREMIUM DUE TO YOU:", text);
     }
 
     [Fact]
@@ -548,7 +623,7 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
         _panels[1].IdCounterparty = _panels[0].IdCounterparty;
         await _db.SaveChangesAsync();
         await Generate();
-        var request = new OutgoingClosingRequestDto { RemittanceIds = await _db.RemittanceRefs.Select(x => x.RemittanceRef1).ToArrayAsync() };
+        var request = new OutgoingClosingRequestDto { RemittanceIds = await _db.RemittanceRefs.OrderBy(x => x.RemittanceRef1).Select(x => x.RemittanceRef1).Take(1).ToArrayAsync() };
         await using var first = Context();
         await using var second = Context();
         var results = await Task.WhenAll(Service(first).CreateOutgoingClosingAsync(request, default),
@@ -769,7 +844,7 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task LongClosingUsesMultiplePagesAndKeepsFinalSignatures()
+    public async Task BatchClosingPdfIsRejectedAndLeavesRowsUnchanged()
     {
         await Generate();
         var origin = await _db.ReceiptAllocations.SingleAsync();
@@ -783,11 +858,10 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
         }
         await _db.SaveChangesAsync();
         var result = await Service(_db).CreateOutgoingClosingAsync(new() { RemittanceIds = lines.Select(x => x.RemittanceRef1).ToArray() }, default);
-        Assert.True(result.Succeeded, result.Error?.Message);
-        var pdf = Encoding.Latin1.GetString(result.Value!.Content);
-        Assert.Contains("/Count 2", pdf);
-        Assert.Contains("EXTRA-PANEL-11", pdf);
-        Assert.Contains("Bank stamp", pdf);
+        Assert.False(result.Succeeded);
+        Assert.Equal("CLOSING_REQUIRES_ONE_REMITTANCE", result.Error!.Code);
+        Assert.Empty(await _db.OutgoingClosings.ToListAsync());
+        Assert.All(lines, line => Assert.Null(line.ClosingIssuedDate));
     }
 
     [Fact]
@@ -1178,7 +1252,7 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task FinanceClosingContextReturnsEveryPersistedLineAndPdf()
+    public async Task FinanceClosingContextReturnsBatchLinesWithoutGeneratingBatchPdf()
     {
         var closing = await CreateBatchClosing();
         var finance = Service(_db, "Finance Officer");
@@ -1199,12 +1273,9 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
         Assert.Single(context.BankAccounts);
         Assert.NotNull(context.SelectedBankAccount);
         Assert.True(context.CanStartPayment);
-        Assert.True(context.CanDownloadPdf);
-        var controller = new IRISBackend.Controllers.FinanceController(finance);
-        var file = Assert.IsType<Microsoft.AspNetCore.Mvc.FileContentResult>(await controller.ClosingPdf(closing.Id, default));
-        Assert.Equal(closing.PdfContent, file.FileContents);
-        Assert.Equal("application/pdf", file.ContentType);
-        Assert.Equal($"IRIS-{closing.Reference}.pdf", file.FileDownloadName);
+        Assert.False(context.CanDownloadPdf);
+        Assert.Empty(closing.PdfContent);
+        Assert.Equal(409, (await finance.GetFinanceClosingPdfAsync(closing.Id, default)).StatusCode);
         foreach (var line in context.Lines)
         {
             var legacy = await finance.GetDisbursementContextAsync(line.RemittanceRef, default);
@@ -1243,15 +1314,14 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
         _db.RemittanceRefs.AddRange(premium, avoirRemittance);
         await _db.SaveChangesAsync();
 
-        var confirmed = await Service(_db).CreateOutgoingClosingAsync(
+        var confirmed = await Service(_db).ConfirmRemittancesForDisbursementAsync(
             new() { RemittanceIds = [premium.RemittanceRef1, avoirRemittance.RemittanceRef1] }, default);
         Assert.True(confirmed.Succeeded, confirmed.Error?.Message);
         var closing = await _db.OutgoingClosings.Include(x => x.Lines).SingleAsync();
         Assert.Equal(199.55m, closing.TotalAmount);
         Assert.Equal(200m, closing.Lines.Single(x => x.RemittanceId == premium.RemittanceRef1).PayableAmount);
         Assert.Equal(-0.45m, closing.Lines.Single(x => x.RemittanceId == avoirRemittance.RemittanceRef1).PayableAmount);
-        Assert.Contains("Source document: AVOIR AV-TEST-2026-1", System.Text.Encoding.Latin1.GetString(closing.PdfContent));
-        Assert.Contains("Signed amount: -0.450 TND", System.Text.Encoding.Latin1.GetString(closing.PdfContent));
+        Assert.Empty(closing.PdfContent);
 
         var finance = Service(_db, "Finance Officer");
         var context = await finance.GetClosingDisbursementContextAsync(closing.Id, default);
@@ -1367,7 +1437,7 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
         };
         _db.RemittanceRefs.AddRange(premium, avoirRemittance);
         await _db.SaveChangesAsync();
-        var result = await Service(_db).CreateOutgoingClosingAsync(
+        var result = await Service(_db).ConfirmRemittancesForDisbursementAsync(
             new() { RemittanceIds = [premium.RemittanceRef1, avoirRemittance.RemittanceRef1] }, default);
         Assert.True(result.Succeeded, result.Error?.Message);
         var closing = await _db.OutgoingClosings.Include(x => x.Lines).ThenInclude(line => line.Remittance)
@@ -1454,7 +1524,8 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
         Assert.All(await _db.RemittanceRefs.ToListAsync(), x => Assert.Equal("Closed", x.Status));
         Assert.Equal("Closed", (await finance.ConfirmClosingTransferAsync(closing.Id, default)).Value!.Status);
         var document = await finance.GetDisbursementInvoiceAsync(started.Value.DisbursementId!.Value, default);
-        Assert.Equal(closing.PdfContent, document.Value!.Content);
+        Assert.False(document.Succeeded);
+        Assert.Equal(409, document.StatusCode);
         Assert.Equal(closing.Id, (await finance.GetDisbursementContextAsync(started.Value.Lines[0].RemittanceRef, default)).Value!.ClosingId);
     }
 
@@ -1491,7 +1562,7 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
         await _db.SaveChangesAsync();
         await Generate();
         var ids = await _db.RemittanceRefs.Select(x => x.RemittanceRef1).ToArrayAsync();
-        var result = await Service(_db).CreateOutgoingClosingAsync(new() { RemittanceIds = ids }, default);
+        var result = await Service(_db).ConfirmRemittancesForDisbursementAsync(new() { RemittanceIds = ids }, default);
         Assert.True(result.Succeeded, result.Error?.Message);
         return await _db.OutgoingClosings.Include(x => x.Lines).SingleAsync();
     }
@@ -1507,6 +1578,30 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
         await AddAllocation(1000m);
         var result = await Service(_db).GenerateReceiptRemittancesAsync(_receipt.IdBankReceipt, default);
         Assert.True(result.Succeeded, result.Error?.Message);
+    }
+
+    private async Task AddMainCoverageAsync(string coverageName)
+    {
+        var coverage = new CoverageItem
+        {
+            CoverageLevel = CoverageConstants.MainCoverLevel,
+            CoverageCode = $"TEST-{Guid.NewGuid():N}"[..16],
+            CoverageName = coverageName,
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow,
+            CreatedBy = "back-user"
+        };
+        _db.CoverageItems.Add(coverage);
+        await _db.SaveChangesAsync();
+        _db.ContractCoverageSelections.Add(new ContractCoverageSelection
+        {
+            IdContract = _invoice.IdContract,
+            IdCoverageItem = coverage.IdCoverageItem,
+            IsPrimary = true,
+            CreatedAt = DateTime.UtcNow,
+            CreatedBy = "back-user"
+        });
+        await _db.SaveChangesAsync();
     }
 
     [Theory]
@@ -3274,9 +3369,9 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
         var service = Service(_db);
         var mixedBeneficiaries = await service.CreateOutgoingClosingAsync(new() { RemittanceIds = [premium.RemittanceRef1, otherReinsurer.RemittanceRef1] }, default);
         Assert.False(mixedBeneficiaries.Succeeded);
-        Assert.Contains("same reinsurer", mixedBeneficiaries.Error!.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("exactly one remittance", mixedBeneficiaries.Error!.Message, StringComparison.OrdinalIgnoreCase);
 
-        var closingResult = await service.CreateOutgoingClosingAsync(new() { RemittanceIds = [premium.RemittanceRef1, credit.RemittanceRef1] }, default);
+        var closingResult = await service.ConfirmRemittancesForDisbursementAsync(new() { RemittanceIds = [premium.RemittanceRef1, credit.RemittanceRef1] }, default);
         Assert.True(closingResult.Succeeded, closingResult.Error?.Message);
         var closing = await _db.OutgoingClosings.Include(item => item.Lines).SingleAsync();
         Assert.Equal(2.5m, closing.TotalAmount);

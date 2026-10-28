@@ -67,6 +67,14 @@ public sealed class BackOfficeController : ApiControllerBase
     [HttpGet("remittances")]
     public async Task<IActionResult> Remittances([FromQuery] RemittanceQueryDto query, CancellationToken cancellationToken) => FromServiceResult(await _service.ListRemittancesAsync(query, cancellationToken));
 
+    [HttpGet("remittances/{remittanceRef:int}/closing/pdf")]
+    public async Task<IActionResult> RemittanceClosingPdf(int remittanceRef, CancellationToken cancellationToken)
+    {
+        var result = await _service.GetRemittanceClosingPdfAsync(remittanceRef, cancellationToken);
+        if (!result.Succeeded) return FromServiceResult(result);
+        return File(result.Value!.Content, result.Value.ContentType, result.Value.FileName);
+    }
+
     [HttpPost("bank-receipts/{id:int}/remittances/generate")]
     public async Task<IActionResult> GenerateRemittances(int id, CancellationToken cancellationToken) =>
         FromServiceResult(await _service.GenerateReceiptRemittancesAsync(id, cancellationToken));
@@ -165,13 +173,21 @@ public sealed class BackOfficeController : ApiControllerBase
         return File(result.Value!.Content, result.Value.ContentType, result.Value.FileName);
     }
 
-    [HttpGet("avoirs/{avoirId:int}/credit-note/pdf")]
     [HttpGet("avoirs/{avoirId:int}/pdf")]
     public async Task<IActionResult> AvoirCreditNoteDocument(int avoirId, CancellationToken cancellationToken)
     {
         var result = await _service.GetAvoirCreditNoteDocumentAsync(avoirId, cancellationToken);
         if (!result.Succeeded) return FromServiceResult(result);
         SetFinancialPdfHeaders("iris-accounting-v1");
+        return File(result.Value!.Content, result.Value.ContentType, result.Value.FileName);
+    }
+
+    [HttpGet("avoirs/{avoirId:int}/credit-note/pdf")]
+    public async Task<IActionResult> AvoirFinancialCreditNote(int avoirId, CancellationToken cancellationToken)
+    {
+        var result = await _service.GetAvoirFinancialCreditNoteDocumentAsync(avoirId, cancellationToken);
+        if (!result.Succeeded) return FromServiceResult(result);
+        SetFinancialPdfHeaders("avoir-credit-note-v1");
         return File(result.Value!.Content, result.Value.ContentType, result.Value.FileName);
     }
 

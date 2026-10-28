@@ -6,26 +6,22 @@ namespace IRISBackend.Services;
 
 public sealed partial class FinancialWorkflowService
 {
-    private static byte[] BuildFrenchContractFinancialNotePdf(
+    private static byte[] BuildFrenchContractDebitNotePdf(
         Contract contract,
         Counterparty cedent,
         string? contractType,
         string? mainCover,
-        string title,
         string documentReference,
         decimal contractGrossPremium,
         decimal cedentCommissionPercentage,
         decimal cedentCommissionAmount,
-        decimal totalAvoirAmount,
-        decimal baseContractAmount,
-        decimal amountAfterAvoir,
+        decimal amountDue,
         int currencyDecimalPlaces,
         IrisInvoiceBrandingOptions branding,
         byte[]? logoBytes,
         IReadOnlyList<IrisInvoiceBankAccount> bankAccounts)
     {
         var currency = DisplayOrNotProvided(contract.IdCurrencyNavigation?.CurrencyCode);
-        var hasAvoir = totalAvoirAmount > 0m;
         var drawing = new StringBuilder();
         var logo = logoBytes is null ? null : DecodePngForPdf(logoBytes);
         if (logo is not null)
@@ -43,7 +39,7 @@ public sealed partial class FinancialWorkflowService
         AddText(drawing, DisplayOrNotProvided(branding.AddressLine1), 335, 786, 8);
         AddText(drawing, DisplayOrNotProvided(branding.AddressLine2), 335, 774, 8);
         AddText(drawing, $"Tel. {DisplayOrNotProvided(branding.Phone)}", 335, 762, 8);
-        AddCenteredText(drawing, title, 735, 17, bold: true);
+        AddCenteredText(drawing, "DEBIT NOTE", 735, 17, bold: true);
         AddRule(drawing, 48, 721, 499, 1.2m);
 
         DrawRect(drawing, 48, 610, 499, 98);
@@ -54,7 +50,7 @@ public sealed partial class FinancialWorkflowService
         AddText(drawing, $"Attention: {DisplayOrNotProvided(cedent.ContactName)}", 60, 654, 7);
         AddWrappedText(drawing, $"Address: {DisplayOrNotProvided(cedent.AddressLine)}", 60, 639, 7, 88, 9);
         AddText(drawing, $"City / Country: {DisplayOrNotProvided(JoinNonEmpty(cedent.City, cedent.Country))}", 60, 621, 7);
-        AddText(drawing, hasAvoir ? "Credit Note Reference" : "Debit Note Reference", 355, 669, 7, bold: true);
+        AddText(drawing, "Debit Note Reference", 355, 669, 7, bold: true);
         AddText(drawing, documentReference, 355, 654, 8);
         AddText(drawing, "Issue Date", 355, 636, 7, bold: true);
         AddText(drawing, DateTime.UtcNow.ToString("dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture), 420, 636, 8);
@@ -95,24 +91,15 @@ public sealed partial class FinancialWorkflowService
         const int summaryBottom = 337;
         DrawRect(drawing, 48, summaryBottom, 499, summaryTop - summaryBottom);
         DrawFillRect(drawing, 48, summaryTop - 22, 499, 22, 0.90m, 0.93m, 0.96m);
-        AddText(drawing, hasAvoir ? "CREDIT NOTE SUMMARY" : "DEBIT NOTE SUMMARY", 60, summaryTop - 15, 9, bold: true);
+        AddText(drawing, "DEBIT NOTE SUMMARY", 60, summaryTop - 15, 9, bold: true);
         AddRule(drawing, 48, summaryTop - 22, 499, 0.7m);
-        var financialRows = hasAvoir
-            ? new List<(string Label, decimal Amount, string? Text, bool Emphasis)>
-            {
-                ("Contract Gross Premium", contractGrossPremium, null, false),
-                ("Cedent Commission Amount", cedentCommissionAmount, null, false),
-                ("Base Contract Amount", baseContractAmount, null, false),
-                ("Avoir Adjustment", -Math.Abs(totalAvoirAmount), null, false),
-                ("Amount After Avoir", amountAfterAvoir, null, true)
-            }
-            : new List<(string Label, decimal Amount, string? Text, bool Emphasis)>
-            {
-                ("Contract Gross Premium", contractGrossPremium, null, false),
-                ("Cedent Commission Percentage", 0m, $"{cedentCommissionPercentage.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}%", false),
-                ("Cedent Commission Amount", cedentCommissionAmount, null, false),
-                ("Amount Due from Cedent", baseContractAmount, null, true)
-            };
+        var financialRows = new List<(string Label, decimal Amount, string? Text, bool Emphasis)>
+        {
+            ("Contract Gross Premium", contractGrossPremium, null, false),
+            ("Cedent Commission Percentage", 0m, $"{cedentCommissionPercentage.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}%", false),
+            ("Cedent Commission Amount", cedentCommissionAmount, null, false),
+            ("Amount Due from Cedent", amountDue, null, true)
+        };
         var rowY = summaryTop - 39;
         for (var index = 0; index < financialRows.Count; index++)
         {
@@ -161,6 +148,123 @@ public sealed partial class FinancialWorkflowService
         AddText(drawing,
             "In order to comply with the payment terms defined by reinsurers, please make sure to remit the payment by : .../.../......",
             48, 137, 7, italic: true);
+        AddRule(drawing, 48, 88, 499, 0.8m);
+        AddText(drawing, JoinNonEmpty(branding.CompanyName, branding.AddressLine1, branding.AddressLine2), 48, 73, 6, bold: true);
+        AddText(drawing, "Page 1 / 1", 494, 73, 6);
+
+        var stream = Latin1.GetBytes(drawing.ToString());
+        var objects = new List<byte[]>
+        {
+            Ascii("<< /Type /Catalog /Pages 2 0 R >>"),
+            Ascii("<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+        };
+        var alphaObjectId = logo?.Alpha is null ? (int?)null : 7;
+        var contentObjectId = logo is null ? 6 : 8;
+        var resources = logo is null
+            ? "<< /Font << /F1 4 0 R /F2 5 0 R >> >>"
+            : "<< /Font << /F1 4 0 R /F2 5 0 R >> /XObject << /Logo 6 0 R >> >>";
+        objects.Add(Ascii($"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources {resources} /Contents {contentObjectId} 0 R >>"));
+        objects.Add(Ascii("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"));
+        objects.Add(Ascii("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>"));
+        if (logo is not null)
+        {
+            var softMask = alphaObjectId.HasValue ? $" /SMask {alphaObjectId.Value} 0 R" : string.Empty;
+            objects.Add(PdfStream(
+                $"/Type /XObject /Subtype /Image /Width {logo.Width} /Height {logo.Height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 3 /BitsPerComponent 8 /Columns {logo.Width} >>{softMask}",
+                logo.Rgb));
+            if (logo.Alpha is not null)
+                objects.Add(PdfStream(
+                    $"/Type /XObject /Subtype /Image /Width {logo.Width} /Height {logo.Height} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 1 /BitsPerComponent 8 /Columns {logo.Width} >>",
+                    logo.Alpha));
+        }
+        objects.Add(PdfStream(string.Empty, stream));
+        return AssemblePdf(objects);
+    }
+
+    private static byte[] BuildFrenchAvoirCreditNotePdf(
+        Contract contract,
+        Counterparty cedent,
+        string? contractType,
+        string? mainCover,
+        string? avoirLabel,
+        string avoirNumber,
+        DateOnly avoirDate,
+        decimal avoirAmount,
+        string currency,
+        int currencyDecimalPlaces,
+        IrisInvoiceBrandingOptions branding,
+        byte[]? logoBytes)
+    {
+        var drawing = new StringBuilder();
+        var logo = logoBytes is null ? null : DecodePngForPdf(logoBytes);
+        if (logo is not null)
+        {
+            const double logoWidth = 180d;
+            var logoHeight = logoWidth * logo.Height / logo.Width;
+            drawing.Append("q ")
+                .Append(logoWidth.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture))
+                .Append(" 0 0 ")
+                .Append(logoHeight.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture))
+                .Append(" 48 720 cm /Logo Do Q\n");
+        }
+
+        AddText(drawing, branding.CompanyName, 335, 802, 12, bold: true);
+        AddText(drawing, DisplayOrNotProvided(branding.AddressLine1), 335, 786, 8);
+        AddText(drawing, DisplayOrNotProvided(branding.AddressLine2), 335, 774, 8);
+        AddText(drawing, $"Tel. {DisplayOrNotProvided(branding.Phone)}", 335, 762, 8);
+        AddCenteredText(drawing, "CREDIT NOTE", 735, 17, bold: true);
+        AddRule(drawing, 48, 721, 499, 1.2m);
+
+        DrawRect(drawing, 48, 610, 499, 98);
+        DrawFillRect(drawing, 48, 686, 499, 22, 0.90m, 0.93m, 0.96m);
+        AddText(drawing, "ISSUED TO", 60, 693, 9, bold: true);
+        AddRule(drawing, 48, 686, 499, 0.7m);
+        AddText(drawing, DisplayOrNotProvided(cedent.Name), 60, 669, 9, bold: true);
+        AddText(drawing, $"Attention: {DisplayOrNotProvided(cedent.ContactName)}", 60, 654, 7);
+        AddWrappedText(drawing, $"Address: {DisplayOrNotProvided(cedent.AddressLine)}", 60, 639, 7, 88, 9);
+        AddText(drawing, $"City / Country: {DisplayOrNotProvided(JoinNonEmpty(cedent.City, cedent.Country))}", 60, 621, 7);
+        AddText(drawing, "Credit Note Reference", 355, 669, 7, bold: true);
+        AddText(drawing, avoirNumber, 355, 654, 8);
+        AddText(drawing, "Issue Date", 355, 636, 7, bold: true);
+        AddText(drawing, avoirDate.ToString("dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture), 420, 636, 8);
+
+        DrawRect(drawing, 48, 478, 499, 122);
+        DrawFillRect(drawing, 48, 578, 499, 22, 0.90m, 0.93m, 0.96m);
+        AddText(drawing, "CONTRACT INFORMATION", 60, 585, 9, bold: true);
+        AddRule(drawing, 48, 578, 499, 0.7m);
+        var contractFields = new (string Label, string? Value, int LabelX, int ValueX, int ValueWidth)[]
+        {
+            ("Contract", contract.Name, 60, 130, 150), ("UMR", contract.Umr, 303, 350, 185),
+            ("Insured", contract.Name, 60, 130, 150), ("Contract Type", contractType, 303, 385, 150),
+            ("Main Cover", mainCover, 60, 130, 150), ("Contract Period", FormatPeriod(contract), 303, 385, 150),
+            ("Transaction", avoirLabel, 60, 130, 150), ("Currency", currency, 303, 350, 185)
+        };
+        for (var index = 0; index < contractFields.Length; index++)
+        {
+            var field = contractFields[index];
+            var y = 561 - (index / 2) * 23;
+            AddText(drawing, field.Label, field.LabelX, y, 7, bold: true);
+            DrawFillRect(drawing, field.ValueX, y - 5, field.ValueWidth, 16, 0.94m, 0.96m, 0.97m);
+            DrawRect(drawing, field.ValueX, y - 5, field.ValueWidth, 16);
+            AddText(drawing, DisplayOrNotProvided(field.Value), field.ValueX + 4, y, 7);
+        }
+
+        const int summaryTop = 467;
+        const int summaryBottom = 337;
+        DrawRect(drawing, 48, summaryBottom, 499, summaryTop - summaryBottom);
+        DrawFillRect(drawing, 48, summaryTop - 22, 499, 22, 0.90m, 0.93m, 0.96m);
+        AddText(drawing, "CREDIT NOTE SUMMARY", 60, summaryTop - 15, 9, bold: true);
+        AddRule(drawing, 48, summaryTop - 22, 499, 0.7m);
+        var amount = Math.Abs(avoirAmount);
+        var amountY = summaryTop - 48;
+        AddText(drawing, "Avoir Amount", 62, amountY, 9, bold: true);
+        AddText(drawing, currency, 385, amountY, 9, bold: true);
+        AddText(drawing, FormatAmount(amount, currencyDecimalPlaces), 435, amountY, 10, bold: true);
+        var amountInWords = FrenchCurrencyAmountInWords.Convert(amount, currency, currencyDecimalPlaces);
+        AddWrappedText(drawing,
+            $"Arr\u00eat\u00e9 le pr\u00e9sent avoir \u00e0 la somme de : {amountInWords}.",
+            62, amountY - 20, 7, 92, 9);
+
         AddRule(drawing, 48, 88, 499, 0.8m);
         AddText(drawing, JoinNonEmpty(branding.CompanyName, branding.AddressLine1, branding.AddressLine2), 48, 73, 6, bold: true);
         AddText(drawing, "Page 1 / 1", 494, 73, 6);

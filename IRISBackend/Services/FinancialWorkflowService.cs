@@ -1052,20 +1052,10 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
             };
             var precision = PanelRemittanceCalculator.Precision(currency.DecimalPlaces);
             closing.TotalInWords = AmountInWords(netPayable, currency.CurrencyCode, precision);
-            var pdfLines = new List<string>
-            {
-                "IRIS - OUTGOING REINSURER CLOSING", $"Closing: {closing.Reference}", $"Issue date: {now:yyyy-MM-dd}",
-                $"Reinsurer: {reinsurer.Name}", $"Bank: {account.BankName}", $"IBAN: {account.Iban}",
-                $"SWIFT/BIC: {account.SwiftBic}", ""
-            };
             foreach (var line in lines)
             {
                 var signedAmount = IsAvoirSource(line.SourceType)
                     ? -Math.Abs(line.NetPayableAmount!.Value) : Math.Abs(line.NetPayableAmount!.Value);
-                var contract = line.IdPanelNavigation!.IdContractNavigation;
-                pdfLines.Add($"Contract: {contract.Name}; UMR: {contract.Umr}");
-                pdfLines.Add($"Remittance: REM-{line.RemittanceRef1}; Source: {line.SourceType}; Amount: {signedAmount.ToString($"F{precision}", CultureInfo.InvariantCulture)} {currency.CurrencyCode}");
-                pdfLines.Add("");
                 closing.Lines.Add(new OutgoingClosingLine { Remittance = line, PayableAmount = signedAmount });
                 line.Status = "AwaitingFinanceDisbursement";
                 line.ClosingIssuedDate = DateOnly.FromDateTime(now);
@@ -1074,9 +1064,7 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
                 line.UpdatedAt = now;
                 line.UpdatedBy = user;
             }
-            pdfLines.Add($"Net payable: {netPayable.ToString($"F{precision}", CultureInfo.InvariantCulture)} {currency.CurrencyCode}");
-            pdfLines.Add($"In words: {closing.TotalInWords}");
-            closing.PdfContent = OutgoingClosingPdf.Build(pdfLines);
+            closing.PdfContent = [];
             _db.OutgoingClosings.Add(closing);
             _logger.LogInformation("Confirm remittance batch creating closing. TraceId={TraceId} ReinsurerId={ReinsurerId} CurrencyId={CurrencyId} PremiumTotal={PremiumTotal} AvoirTotal={AvoirTotal} Net={Net}",
                 traceId, first.IdCounterparty, first.IdCurrency, signedPremiumTotal, Math.Abs(signedAvoirTotal), netPayable);
@@ -2524,23 +2512,8 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
             if (cedentCommissionAmount < 0m || cedentCommissionAmount > grossPremium)
                 return Failure<PrintablePaymentDocumentDto>("The persisted cedent commission is inconsistent with the contract gross premium.", status: StatusCodes.Status409Conflict, code: "CONTRACT_COMMISSION_INVALID");
 
-            // Avoirs are stored as positive document magnitudes; only their contract-note adjustment is negative.
-            var avoirs = await _db.Invoices.AsNoTracking()
-                .Where(document => document.IdContract == contractId &&
-                    document.InvoiceType != null &&
-                    (document.InvoiceType.Trim().ToUpper() == InvoiceTypeAvoir || document.InvoiceType.Trim().ToUpper() == "CREDIT_NOTE"))
-                .ToListAsync(cancellationToken);
-            var activeAvoirs = avoirs.Where(InvoiceDocumentAccounting.IsActiveDocument)
-                .Where(document => InvoiceDocumentAccounting.IsAvoir(document.InvoiceType))
-                .Where(document => !string.Equals(document.Status?.Trim(), "Voided", StringComparison.OrdinalIgnoreCase))
-                .ToArray();
-            var totalAvoirAmount = PremiumDebitNoteFinancials.RoundMoney(
-                activeAvoirs.Sum(document => Math.Abs(document.GrossPremium ?? 0m)), precision);
             var baseContractAmount = PremiumDebitNoteFinancials.RoundMoney(grossPremium - cedentCommissionAmount, precision);
-            var amountAfterAvoir = PremiumDebitNoteFinancials.RoundMoney(baseContractAmount - totalAvoirAmount, precision);
-            var hasAvoir = activeAvoirs.Length > 0;
-            var documentType = hasAvoir ? "CREDIT NOTE" : "DEBIT NOTE";
-            var reference = $"{(hasAvoir ? "CN" : "DN")}-{contract.Umr.Trim()}";
+            var reference = $"DN-{contract.Umr.Trim()}";
 
             var configuredAccounts = _irisBankAccounts.Accounts ?? [];
             var activeAccountOptions = configuredAccounts
@@ -2588,18 +2561,17 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
                 .Where(selection => selection.IdCoverageItemNavigation is not null && selection.IsPrimary)
                 .Select(selection => selection.IdCoverageItemNavigation!.CoverageName)
                 .FirstOrDefault();
-            var pdf = BuildFrenchContractFinancialNotePdf(
+            var pdf = BuildFrenchContractDebitNotePdf(
                 contract, contract.IdCounterpartyNavigation, ResolveDebitNoteContractType(contract), mainCover,
-                documentType, reference, grossPremium, contract.CedentCommission ?? 0m,
-                cedentCommissionAmount, totalAvoirAmount, baseContractAmount, amountAfterAvoir,
+                reference, grossPremium, contract.CedentCommission ?? 0m,
+                cedentCommissionAmount, baseContractAmount,
                 precision, _invoiceBranding, LoadIrisInvoiceLogo(), bankAccounts);
-            var filePrefix = hasAvoir ? "CreditNote" : "DebitNote";
             return ServiceResult<PrintablePaymentDocumentDto>.Success(new PrintablePaymentDocumentDto
             {
-                FileName = $"{filePrefix}_{SanitizeDocumentFileName(reference)}.pdf",
+                FileName = $"DebitNote_{SanitizeDocumentFileName(reference)}.pdf",
                 Content = pdf,
                 ContentType = "application/pdf",
-                DocumentType = hasAvoir ? "CREDIT_NOTE" : "DEBIT_NOTE",
+                DocumentType = "DEBIT_NOTE",
                 DocumentReference = reference
             });
         }
@@ -2702,6 +2674,78 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
     public async Task<ServiceResult<PrintablePaymentDocumentDto>> GetAvoirCreditNoteDocumentAsync(int avoirId, CancellationToken cancellationToken)
     {
         return await GetCedentDocumentPdfAsync(avoirId, expectAvoir: true, cancellationToken);
+    }
+
+    public async Task<ServiceResult<PrintablePaymentDocumentDto>> GetAvoirFinancialCreditNoteDocumentAsync(
+        int avoirId, CancellationToken cancellationToken)
+    {
+        if (!CanBack()) return Forbidden<PrintablePaymentDocumentDto>();
+
+        var avoir = await _db.Invoices.AsNoTracking()
+            .Include(item => item.IdContractNavigation).ThenInclude(contract => contract.IdCounterpartyNavigation)
+            .Include(item => item.IdContractNavigation).ThenInclude(contract => contract.ContractFac)
+            .Include(item => item.IdContractNavigation).ThenInclude(contract => contract.ContractTreatyProp)
+                .ThenInclude(treaty => treaty!.ContractTreatyPropQuotaShare)
+            .Include(item => item.IdContractNavigation).ThenInclude(contract => contract.ContractTreatyProp)
+                .ThenInclude(treaty => treaty!.ContractTreatyPropSurplu)
+            .Include(item => item.IdContractNavigation).ThenInclude(contract => contract.ContractTreatyNonprops)
+            .Include(item => item.IdContractNavigation).ThenInclude(contract => contract.ContractCoverageSelections)
+                .ThenInclude(selection => selection.IdCoverageItemNavigation)
+            .Include(item => item.IdCurrencyNavigation)
+            .FirstOrDefaultAsync(item => item.IdInvoice == avoirId, cancellationToken);
+        if (avoir is null)
+            return Failure<PrintablePaymentDocumentDto>(
+                "Avoir was not found.", status: StatusCodes.Status404NotFound, code: "AVOIR_NOT_FOUND");
+        if (!InvoiceDocumentAccounting.IsAvoir(avoir.InvoiceType))
+            return Failure<PrintablePaymentDocumentDto>(
+                "The selected document is not an Avoir.", status: StatusCodes.Status409Conflict,
+                code: "INVOICE_DOCUMENT_TYPE_MISMATCH");
+        if (!InvoiceDocumentAccounting.IsActiveDocument(avoir))
+            return Failure<PrintablePaymentDocumentDto>(
+                "A Credit Note is unavailable for an inactive or cancelled Avoir.",
+                status: StatusCodes.Status409Conflict, code: "INVOICE_DOCUMENT_INACTIVE");
+        if (avoir.IdContractNavigation is null || avoir.IdContractNavigation.IdCounterpartyNavigation is null)
+            return Failure<PrintablePaymentDocumentDto>(
+                "The Avoir is missing its contract or cedent information.",
+                status: StatusCodes.Status409Conflict, code: "AVOIR_CEDENT_DATA_MISSING");
+        if (string.IsNullOrWhiteSpace(avoir.IdCurrencyNavigation?.CurrencyCode))
+            return Failure<PrintablePaymentDocumentDto>(
+                "The Avoir has no currency information.",
+                status: StatusCodes.Status409Conflict, code: "AVOIR_CURRENCY_MISSING");
+
+        var persistedAmount = avoir.GrossPremium ?? avoir.NetPremium ?? 0m;
+        var displayAmount = Math.Abs(persistedAmount);
+        if (displayAmount <= 0m)
+            return Failure<PrintablePaymentDocumentDto>(
+                "The Avoir has no persisted positive amount.",
+                status: StatusCodes.Status409Conflict, code: "AVOIR_AMOUNT_MISSING");
+
+        var contract = avoir.IdContractNavigation;
+        var cedent = contract.IdCounterpartyNavigation;
+        var mainCover = contract.ContractCoverageSelections
+            .Where(selection => selection.IdCoverageItemNavigation is not null &&
+                CoverageConstants.IsMainCoverLevel(selection.IdCoverageItemNavigation.CoverageLevel))
+            .OrderByDescending(selection => selection.IsPrimary)
+            .ThenBy(selection => selection.IdCoverageItem)
+            .Select(selection => selection.IdCoverageItemNavigation!.CoverageName)
+            .FirstOrDefault();
+        var precision = PanelRemittanceCalculator.Precision(avoir.IdCurrencyNavigation.DecimalPlaces);
+
+        _logger.LogInformation(
+            "Generating per-Avoir Credit Note with template avoir-credit-note-v1. AvoirId={AvoirId} ContractId={ContractId} TraceId={TraceId}",
+            avoir.IdInvoice, contract.IdContract, _http.HttpContext?.TraceIdentifier);
+        var number = SanitizeDocumentFileName(avoir.InvoiceNumber);
+        var contractType = ResolveDebitNoteContractType(contract);
+        return ServiceResult<PrintablePaymentDocumentDto>.Success(new PrintablePaymentDocumentDto
+        {
+            FileName = $"CreditNote_{number}.pdf",
+            Content = BuildFrenchAvoirCreditNotePdf(
+                contract, cedent, contractType, mainCover, avoir.Label, avoir.InvoiceNumber, avoir.InvoiceDate,
+                persistedAmount, avoir.IdCurrencyNavigation.CurrencyCode, precision, _invoiceBranding, LoadIrisInvoiceLogo()),
+            ContentType = "application/pdf",
+            DocumentType = "CREDIT_NOTE",
+            DocumentReference = avoir.InvoiceNumber
+        });
     }
 
     private async Task<ServiceResult<PrintablePaymentDocumentDto>> GetCedentDocumentPdfAsync(
