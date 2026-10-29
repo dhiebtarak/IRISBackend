@@ -367,3 +367,43 @@ FodyWeavers.xsd
 **/.env.*
 **/.env**
 !**/.env.example
+
+# Nested build and test output.
+**/bin/
+**/obj/
+**/.vs/
+**/TestResults/
+**/coverage/
+**/publish/
+**/out/
+**/artifacts/
+artifacts-*/
+**/artifacts-*/
+.out-*/
+**/.out-*/
+**/tmp/pdfs/
+
+# Runtime data is local state, not source or deployment input.
+**/App_Data/Uploads/
+**/App_Data/Documents/
+**/App_Data/Keys/
+
+# Local SQL databases, backups, secrets, and private keys.
+*.bak
+*.trn
+*.bacpac
+*.p12
+*.pem
+*.key
+*.snk
+**/secrets.local.json
+**/appsettings.*.local.json
+
+# Machine-specific OS/editor state; shared project settings remain trackable.
+**/.DS_Store
+**/Thumbs.db
+**/Desktop.ini
+**/.idea/workspace.xml
+**/.idea/shelf/
+*.swp
+*.swo
