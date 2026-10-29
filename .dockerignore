@@ -1,0 +1,16 @@
+**/bin
+**/obj
+**/App_Data
+**/artifacts*
+**/.vs
+**/.env
+**/.env.*
+**/.env**
+!**/.env.example
+artifacts*/
+.artifacts/
+.out-*/
+.codex-build/
+tmp/
+.git
+.deployment-publish-check

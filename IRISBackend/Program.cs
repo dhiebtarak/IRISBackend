@@ -6,14 +6,17 @@ using IRISBackend.Services;
 using IRISBackend.Validators;
 using FluentValidation;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using Microsoft.Extensions.Logging;
 using System.Text;
 using System.Reflection;
+using System.Net;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -113,6 +116,26 @@ builder.Services.AddDbContext<IRISBackendContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DevDB")));
 builder.Services.AddDbContext<AppIdentityContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DevDB")));
+
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.ForwardLimit = 1;
+
+    var knownProxy = builder.Configuration["ForwardedHeaders:KnownProxy"];
+    if (IPAddress.TryParse(knownProxy, out var proxyAddress))
+    {
+        options.KnownProxies.Add(proxyAddress);
+    }
+});
+
+var dataProtectionKeysPath = builder.Configuration["DataProtection:KeysPath"];
+if (!string.IsNullOrWhiteSpace(dataProtectionKeysPath))
+{
+    Directory.CreateDirectory(dataProtectionKeysPath);
+    builder.Services.AddDataProtection()
+        .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeysPath));
+}
 
 builder.Services
     .AddIdentity<ApplicationUser, IdentityRole>(options =>
@@ -222,15 +245,23 @@ app.Logger.LogInformation(
         $"RoutingPresent={!string.IsNullOrWhiteSpace(account.Rib) || !string.IsNullOrWhiteSpace(account.Iban)}," +
         $"SwiftBicPresent={!string.IsNullOrWhiteSpace(account.SwiftBic)}")));
 
+if (args.Contains("--bootstrap-admin", StringComparer.OrdinalIgnoreCase))
+{
+    await BootstrapDeploymentAdminAsync(app.Services);
+    return;
+}
+
+app.UseForwardedHeaders();
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseMiddleware<RequestLoggingMiddleware>();
 
+var enableHttpsRedirection = builder.Configuration.GetValue("Security:EnableHttpsRedirection", true);
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
-else
+else if (enableHttpsRedirection)
 {
     app.UseHsts();
     app.UseHttpsRedirection();
@@ -244,6 +275,17 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapGet("/health/live", () => Results.Ok(new { status = "Healthy" }))
+    .AllowAnonymous();
+app.MapGet("/health/ready", async (IRISBackendContext db, CancellationToken cancellationToken) =>
+{
+    if (await db.Database.CanConnectAsync(cancellationToken))
+    {
+        return (IResult)Results.Ok(new { status = "Ready" });
+    }
+
+    return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+}).AllowAnonymous();
 app.MapControllerRoute(
     name: "default",
     pattern: "{controller=Home}/{action=Index}/{id?}");
@@ -271,4 +313,53 @@ static string NormalizeContractModelStateKey(string key)
     var normalized = string.Join('.', path.Split('.', StringSplitOptions.RemoveEmptyEntries).Select(segment =>
         segment.Length == 0 ? segment : char.ToLowerInvariant(segment[0]) + segment[1..]));
     return string.IsNullOrWhiteSpace(normalized) ? "request" : normalized;
+}
+
+static async Task BootstrapDeploymentAdminAsync(IServiceProvider services)
+{
+    var email = Environment.GetEnvironmentVariable("IRIS_BOOTSTRAP_ADMIN_EMAIL");
+    var password = Environment.GetEnvironmentVariable("IRIS_BOOTSTRAP_ADMIN_PASSWORD");
+    var fullName = Environment.GetEnvironmentVariable("IRIS_BOOTSTRAP_ADMIN_FULL_NAME");
+
+    if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password) || string.IsNullOrWhiteSpace(fullName))
+    {
+        throw new InvalidOperationException(
+            "Admin bootstrap requires IRIS_BOOTSTRAP_ADMIN_EMAIL, IRIS_BOOTSTRAP_ADMIN_PASSWORD and IRIS_BOOTSTRAP_ADMIN_FULL_NAME.");
+    }
+
+    await IdentityRoleSeeder.SeedAsync(services);
+    using var scope = services.CreateScope();
+    var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+    var user = await userManager.FindByEmailAsync(email);
+    if (user is null)
+    {
+        user = new ApplicationUser
+        {
+            UserName = email,
+            Email = email,
+            EmailConfirmed = true,
+            FullName = fullName,
+            Department = "Reassurance",
+            Position = "Administrator"
+        };
+
+        var createResult = await userManager.CreateAsync(user, password);
+        if (!createResult.Succeeded)
+        {
+            throw new InvalidOperationException(
+                $"Admin bootstrap could not create the identity account: {string.Join("; ", createResult.Errors.Select(error => error.Code))}");
+        }
+    }
+
+    if (!await userManager.IsInRoleAsync(user, IdentityRoles.Admin))
+    {
+        var roleResult = await userManager.AddToRoleAsync(user, IdentityRoles.Admin);
+        if (!roleResult.Succeeded)
+        {
+            throw new InvalidOperationException(
+                $"Admin bootstrap could not assign the Admin role: {string.Join("; ", roleResult.Errors.Select(error => error.Code))}");
+        }
+    }
+
+    Console.WriteLine("Deployment administrator is ready. Remove bootstrap credentials from the process environment.");
 }
