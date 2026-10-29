@@ -11,70 +11,100 @@ namespace IRISBackend.Services
         private readonly RoleManager<IdentityRole> _roleManager;
         private readonly ITokenService _tokenService;
         private readonly ILoginAuditService _loginAuditService;
+        private readonly ILogger<AuthService> _logger;
 
         public AuthService(
             UserManager<ApplicationUser> userManager,
             SignInManager<ApplicationUser> signInManager,
             RoleManager<IdentityRole> roleManager,
             ITokenService tokenService,
-            ILoginAuditService loginAuditService)
+            ILoginAuditService loginAuditService,
+            ILogger<AuthService> logger)
         {
             _userManager = userManager;
             _signInManager = signInManager;
             _roleManager = roleManager;
             _tokenService = tokenService;
             _loginAuditService = loginAuditService;
+            _logger = logger;
         }
 
-        public async Task<ServiceResult<AuthResponseDto>> RegisterAsync(RegisterRequestDto request)
+        public async Task<ServiceResult<UserProfileResponseDto>> CreateUserAsync(RegisterRequestDto request)
         {
             var ruleErrors = RegistrationRules.Validate(request).ToArray();
             if (ruleErrors.Length > 0)
             {
-                return ServiceResult<AuthResponseDto>.Failure("Validation failed.", ruleErrors);
+                return ServiceResult<UserProfileResponseDto>.Failure("User validation failed.", ruleErrors);
             }
 
-            if (!string.Equals(request.Password, request.ConfirmPassword, StringComparison.Ordinal))
+            if (await _userManager.FindByNameAsync(request.Username.Trim()) is not null)
             {
-                return ServiceResult<AuthResponseDto>.Failure(
-                    "Validation failed.",
-                    ["Password and confirm password do not match."]);
+                return ServiceResult<UserProfileResponseDto>.Failure(
+                    "Username already exists.", ["Username: This username is already in use."],
+                    StatusCodes.Status409Conflict, "DUPLICATE_USERNAME");
             }
 
+            if (await _userManager.FindByEmailAsync(request.Email.Trim()) is not null)
+                return ServiceResult<UserProfileResponseDto>.Failure(
+                    "Email already exists.", ["Email: This email address is already in use."],
+                    StatusCodes.Status409Conflict, "DUPLICATE_EMAIL");
+
+            if (!await _roleManager.RoleExistsAsync(IdentityRoles.Employee))
+                return ServiceResult<UserProfileResponseDto>.Failure(
+                    "The staff role is not configured.", statusCode: StatusCodes.Status409Conflict,
+                    code: "STAFF_ROLE_NOT_CONFIGURED");
+
+            var (department, position) = RegistrationRules.Normalize(request.Department, request.Position);
             var user = new ApplicationUser
             {
-                UserName = request.Username,
-                Email = request.Email,
-                FullName = request.FullName,
-                Department = request.Department,
-                Position = request.Position
+                UserName = request.Username.Trim(),
+                Email = request.Email.Trim(),
+                FullName = request.FullName.Trim(),
+                Department = department,
+                Position = position
             };
 
             var result = await _userManager.CreateAsync(user, request.Password);
             if (!result.Succeeded)
             {
-                return ServiceResult<AuthResponseDto>.Failure(
-                    "Registration failed.",
-                    result.Errors.Select(error => error.Description));
+                var errors = result.Errors.Select(error => error.Description).ToArray();
+                var duplicateUserName = result.Errors.Any(error => error.Code.Contains("UserName", StringComparison.OrdinalIgnoreCase));
+                var duplicateEmail = result.Errors.Any(error => error.Code.Contains("Email", StringComparison.OrdinalIgnoreCase));
+                var status = duplicateUserName || duplicateEmail ? StatusCodes.Status409Conflict : StatusCodes.Status400BadRequest;
+                var code = duplicateUserName ? "DUPLICATE_USERNAME" : duplicateEmail ? "DUPLICATE_EMAIL" : "USER_CREATION_FAILED";
+                return ServiceResult<UserProfileResponseDto>.Failure("User creation failed.", errors, status, code);
             }
 
-            if (!await _roleManager.RoleExistsAsync(IdentityRoles.Employee))
+            IdentityResult roleResult;
+            try
             {
-                await _roleManager.CreateAsync(new IdentityRole(IdentityRoles.Employee));
+                roleResult = await _userManager.AddToRoleAsync(user, IdentityRoles.Employee);
+            }
+            catch (Exception exception)
+            {
+                var cleanup = await _userManager.DeleteAsync(user);
+                if (!cleanup.Succeeded)
+                    _logger.LogCritical(exception, "Failed to assign required staff role and failed to remove the newly created account. UserId={UserId}", user.Id);
+                else
+                    _logger.LogError(exception, "Failed to assign required staff role; the newly created account was removed. UserId={UserId}", user.Id);
+                return ServiceResult<UserProfileResponseDto>.Failure(
+                    "The account could not be assigned its required staff role.", statusCode: StatusCodes.Status500InternalServerError,
+                    code: "STAFF_ROLE_ASSIGNMENT_FAILED");
             }
 
-            var roleResult = await _userManager.AddToRoleAsync(user, IdentityRoles.Employee);
             if (!roleResult.Succeeded)
             {
-                await _userManager.DeleteAsync(user);
-
-                return ServiceResult<AuthResponseDto>.Failure(
-                    "Registration failed.",
-                    roleResult.Errors.Select(error => error.Description));
+                var cleanup = await _userManager.DeleteAsync(user);
+                if (!cleanup.Succeeded)
+                    _logger.LogCritical("Failed to assign required staff role and failed to remove the newly created account. UserId={UserId}", user.Id);
+                return ServiceResult<UserProfileResponseDto>.Failure(
+                    "The account could not be assigned its required staff role.",
+                    roleResult.Errors.Select(error => error.Description),
+                    StatusCodes.Status500InternalServerError, "STAFF_ROLE_ASSIGNMENT_FAILED");
             }
 
-            var response = await BuildAuthResponseAsync(user);
-            return ServiceResult<AuthResponseDto>.Success(response, StatusCodes.Status201Created);
+            return ServiceResult<UserProfileResponseDto>.Success(
+                UserMapping.ToProfile(user, [IdentityRoles.Employee]), StatusCodes.Status201Created);
         }
 
         public async Task<ServiceResult<AuthResponseDto>> LoginAsync(LoginRequestDto request)
