@@ -29,7 +29,7 @@ public sealed class BankAccountEligibilityTests
     [Fact]
     public void RejectsAmbiguousMatchingAccounts()
     {
-        var result = BankAccountEligibility.Select([Account(7, false), Account(8, true)]);
+        var result = BankAccountEligibility.Select([Account(7, false), Account(8, false)]);
 
         Assert.False(result.IsValid);
         Assert.Null(result.Account);

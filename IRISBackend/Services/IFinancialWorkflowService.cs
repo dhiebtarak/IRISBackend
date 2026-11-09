@@ -6,6 +6,8 @@ public interface IFinancialWorkflowService
 {
     Task<ServiceResult<IReadOnlyList<BankAccountResponseDto>>> GetBankAccountsAsync(int counterpartyId, bool activeOnly, CancellationToken cancellationToken);
     Task<ServiceResult<PagedResponseDto<BankAccountOptionDto>>> GetBankAccountOptionsAsync(BankAccountOptionQueryDto query, CancellationToken cancellationToken);
+    Task<ServiceResult<BankAccountEditResponseDto>> GetBankAccountAsync(int counterpartyId, int bankAccountId, CancellationToken cancellationToken);
+    Task<ServiceResult<BankAccountResponseDto>> SetBankAccountDefaultAsync(int counterpartyId, int bankAccountId, CancellationToken cancellationToken);
     Task<ServiceResult<BankAccountResponseDto>> CreateBankAccountAsync(int counterpartyId, BankAccountRequestDto request, CancellationToken cancellationToken);
     Task<ServiceResult<BankAccountResponseDto>> UpdateBankAccountAsync(int counterpartyId, int bankAccountId, BankAccountRequestDto request, CancellationToken cancellationToken);
     Task<ServiceResult<bool>> SetBankAccountStatusAsync(int counterpartyId, int bankAccountId, bool isActive, CancellationToken cancellationToken);
@@ -34,12 +36,12 @@ public interface IFinancialWorkflowService
     Task<ServiceResult<bool>> MarkNotificationReadAsync(int id, bool all, CancellationToken cancellationToken);
     Task<ServiceResult<IReadOnlyList<FinanceClosingQueueItemDto>>> ListDisbursementQueueAsync(CancellationToken cancellationToken);
     Task<ServiceResult<DisbursementResponseDto>> CreateDisbursementAsync(DisbursementRequestDto request, CancellationToken cancellationToken);
-    Task<ServiceResult<DisbursementContextDto>> GetDisbursementContextAsync(int remittanceRef, CancellationToken cancellationToken);
-    Task<ServiceResult<ClosingDisbursementContextDto>> GetClosingDisbursementContextAsync(int closingId, CancellationToken cancellationToken);
+    Task<ServiceResult<DisbursementContextDto>> GetDisbursementContextAsync(int remittanceRef, CancellationToken cancellationToken, int? bankAccountId = null);
+    Task<ServiceResult<ClosingDisbursementContextDto>> GetClosingDisbursementContextAsync(int closingId, CancellationToken cancellationToken, int? bankAccountId = null);
     Task<ServiceResult<PrintablePaymentDocumentDto>> GetFinanceClosingPdfAsync(int closingId, CancellationToken cancellationToken);
-    Task<ServiceResult<ClosingDisbursementContextDto>> StartClosingDisbursementAsync(int closingId, CancellationToken cancellationToken);
+    Task<ServiceResult<ClosingDisbursementContextDto>> StartClosingDisbursementAsync(int closingId, CancellationToken cancellationToken, int? bankAccountId = null);
     Task<ServiceResult<ClosingDisbursementContextDto>> ConfirmClosingTransferAsync(int closingId, CancellationToken cancellationToken);
-    Task<ServiceResult<StartDisbursementResponseDto>> StartDisbursementAsync(int remittanceRef, CancellationToken cancellationToken);
+    Task<ServiceResult<StartDisbursementResponseDto>> StartDisbursementAsync(int remittanceRef, CancellationToken cancellationToken, int? bankAccountId = null);
     Task<ServiceResult<DisbursementResponseDto>> ConfirmDisbursementAsync(int id, CancellationToken cancellationToken);
     Task<ServiceResult<ConfirmTransferResponseDto>> ConfirmTransferAsync(int id, CancellationToken cancellationToken);
     Task<ServiceResult<PrintablePaymentDocumentDto>> GetDisbursementInvoiceAsync(int disbursementId, CancellationToken cancellationToken);

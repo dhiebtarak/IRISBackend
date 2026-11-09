@@ -33,7 +33,8 @@ namespace IRISBackend.Services
                 Department = user.Department,
                 Position = user.Position,
                 Roles = user.Roles,
-                Permissions = ["read"]
+                Permissions = ["read"],
+                Modules = user.Modules
             });
         }
 

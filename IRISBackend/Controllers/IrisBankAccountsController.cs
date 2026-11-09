@@ -94,7 +94,8 @@ public sealed class IrisBankAccountsController : ControllerBase
         return NoContent();
     }
 
-    private bool CanManage() => User.IsInRole(IdentityRoles.Admin) || FinancialAccessRules.IsFinanceOfficer(User);
+    private bool CanManage() => User.IsInRole(IdentityRoles.Admin) ||
+        User.HasClaim(ModuleAccessCatalog.ClaimType, ModuleAccessCatalog.Decaissement);
     private static string NormalizeIban(string value) => string.Concat(value.Where(character => !char.IsWhiteSpace(character))).ToUpperInvariant();
     private static string? Optional(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     private static bool TryValidate(IrisBankAccountRequest request, out string error)

@@ -62,8 +62,9 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
         var page = Math.Clamp(query.PageNumber, 1, int.MaxValue);
         var size = Math.Clamp(query.PageSize, 1, 50);
         var accounts = _db.CounterpartyBankAccounts.AsNoTracking()
-            .Where(x => x.IsActive && x.IdCounterpartyNavigation.IsActive);
+            .Where(x => x.IsActive && x.IdCounterpartyNavigation.IsActive && x.IdCurrencyNavigation.IsActive);
 
+        if(query.CounterpartyId.HasValue) accounts=accounts.Where(x=>x.IdCounterparty==query.CounterpartyId.Value);
         var search = query.Search?.Trim();
         if (!string.IsNullOrWhiteSpace(search))
         {
@@ -72,6 +73,7 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
             accounts = accounts.Where(x =>
                 x.IdCounterpartyNavigation.Name.ToLower().Contains(text) ||
                 x.BankName.ToLower().Contains(text) ||
+                (x.AccountLabel != null && x.AccountLabel.ToLower().Contains(text)) ||
                 (x.Iban != null && x.Iban.Replace(" ", "").ToLower().Contains(normalized)) ||
                 (x.SwiftBic != null && x.SwiftBic.ToLower().Contains(text)) ||
                 x.IdCurrencyNavigation.CurrencyCode.ToLower().Contains(text));
@@ -85,11 +87,12 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
             {
                 IdBankAccount = x.IdBankAccount,
                 CounterpartyId = x.IdCounterparty,
+                AccountLabel = x.AccountLabel, IsDefault = x.IsDefault,
                 BeneficiaryName = x.IdCounterpartyNavigation.Name,
                 BankName = x.BankName,
                 BankCity = x.BankCity,
                 BankCountry = x.BankCountry,
-                MaskedIban = x.Iban == null || x.Iban == "" ? null : x.Iban.Length <= 4 ? x.Iban : x.Iban.Substring(0, 2) + "****" + x.Iban.Substring(x.Iban.Length - 4, 4),
+                MaskedIban = x.Iban == null || x.Iban == "" ? null : x.Iban.Length <= 4 ? "****" : x.Iban.Substring(0, 2) + "****" + x.Iban.Substring(x.Iban.Length - 4, 4),
                 SwiftBic = x.SwiftBic,
                 CurrencyId = x.IdCurrency,
                 CurrencyCode = x.IdCurrencyNavigation.CurrencyCode,
@@ -108,83 +111,50 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
         });
     }
 
-    public async Task<ServiceResult<BankAccountResponseDto>> CreateBankAccountAsync(int counterpartyId, BankAccountRequestDto request, CancellationToken cancellationToken)
-    {
-        if (!CanFinance()) return Forbidden<BankAccountResponseDto>();
-        var user = CurrentUser();
-        if (user is null) return Unauthorized<BankAccountResponseDto>();
-        if (!await _db.Counterparties.AnyAsync(x => x.Id == counterpartyId, cancellationToken)) return NotFound<BankAccountResponseDto>("Counterparty was not found.");
-        var validation = await ValidateBankAccountAsync(request, cancellationToken);
-        if (validation is not null) return ServiceResult<BankAccountResponseDto>.Failure(validation);
-        await using var tx = await _db.Database.BeginTransactionAsync(cancellationToken);
-        if (request.IsDefault && request.IsActive) await ClearDefaultAsync(counterpartyId, request.CurrencyId, null, user, cancellationToken);
-        var account = new CounterpartyBankAccount
-        {
-            IdCounterparty = counterpartyId, IdCurrency = request.CurrencyId, BankName = request.BankName.Trim(),
-            BankCity = request.BankCity.Trim(), BankCountry = request.BankCountry.Trim(),
-            AgencyCode = Optional(request.AgencyCode), Rib = Optional(request.Rib), Iban = NormalizeIban(request.Iban), SwiftBic = NormalizeBic(request.SwiftBic),
-            HasCorrespondentBank = request.HasCorrespondentBank, CorrespondentBankName = request.HasCorrespondentBank ? Optional(request.CorrespondentBankName) : null, CorrespondentSwiftBic = request.HasCorrespondentBank ? NormalizeBic(request.CorrespondentSwiftBic) : null,
-            AccountLabel = Optional(request.AccountLabel), IsDefault = request.IsDefault && request.IsActive, IsActive = request.IsActive,
-            CreatedAt = DateTime.UtcNow, CreatedBy = user
-        };
-        _db.CounterpartyBankAccounts.Add(account);
-        await _db.SaveChangesAsync(cancellationToken);
-        await tx.CommitAsync(cancellationToken);
-        await _db.Entry(account).Reference(x => x.IdCurrencyNavigation).LoadAsync(cancellationToken);
-        await _db.Entry(account).Reference(x => x.IdCounterpartyNavigation).LoadAsync(cancellationToken);
-        return ServiceResult<BankAccountResponseDto>.Success(MapBankAccount(account), StatusCodes.Status201Created);
-    }
-
-    public async Task<ServiceResult<BankAccountResponseDto>> UpdateBankAccountAsync(int counterpartyId, int bankAccountId, BankAccountRequestDto request, CancellationToken cancellationToken)
-    {
-        if (!CanFinance()) return Forbidden<BankAccountResponseDto>();
-        var user = CurrentUser();
-        if (user is null) return Unauthorized<BankAccountResponseDto>();
-        var account = await _db.CounterpartyBankAccounts.FirstOrDefaultAsync(x => x.IdCounterparty == counterpartyId && x.IdBankAccount == bankAccountId, cancellationToken);
-        if (account is null) return NotFound<BankAccountResponseDto>("Bank account was not found.");
-        var validation = await ValidateBankAccountAsync(request, cancellationToken);
-        if (validation is not null) return ServiceResult<BankAccountResponseDto>.Failure(validation);
-        await using var tx = await _db.Database.BeginTransactionAsync(cancellationToken);
-        if (request.IsDefault && request.IsActive) await ClearDefaultAsync(counterpartyId, request.CurrencyId, account.IdBankAccount, user, cancellationToken);
-        account.IdCurrency = request.CurrencyId; account.BankName = request.BankName.Trim(); account.BankCity = request.BankCity.Trim(); account.BankCountry = request.BankCountry.Trim(); account.AgencyCode = Optional(request.AgencyCode);
-        account.Rib = Optional(request.Rib); account.Iban = NormalizeIban(request.Iban); account.SwiftBic = NormalizeBic(request.SwiftBic); account.HasCorrespondentBank = request.HasCorrespondentBank; account.CorrespondentBankName = request.HasCorrespondentBank ? Optional(request.CorrespondentBankName) : null; account.CorrespondentSwiftBic = request.HasCorrespondentBank ? NormalizeBic(request.CorrespondentSwiftBic) : null; account.AccountLabel = Optional(request.AccountLabel);
-        account.IsActive = request.IsActive; account.IsDefault = request.IsDefault && request.IsActive; account.UpdatedAt = DateTime.UtcNow; account.UpdatedBy = user;
-        await _db.SaveChangesAsync(cancellationToken); await tx.CommitAsync(cancellationToken);
-        await _db.Entry(account).Reference(x => x.IdCurrencyNavigation).LoadAsync(cancellationToken);
-        await _db.Entry(account).Reference(x => x.IdCounterpartyNavigation).LoadAsync(cancellationToken);
-        return ServiceResult<BankAccountResponseDto>.Success(MapBankAccount(account));
-    }
-
-    public async Task<ServiceResult<bool>> SetBankAccountStatusAsync(int counterpartyId, int bankAccountId, bool isActive, CancellationToken cancellationToken)
-    {
-        if (!CanFinance()) return Forbidden<bool>();
-        var user = CurrentUser(); if (user is null) return Unauthorized<bool>();
-        var account = await _db.CounterpartyBankAccounts.FirstOrDefaultAsync(x => x.IdCounterparty == counterpartyId && x.IdBankAccount == bankAccountId, cancellationToken);
-        if (account is null) return NotFound<bool>("Bank account was not found.");
-        account.IsActive = isActive; if (!isActive) account.IsDefault = false; account.UpdatedAt = DateTime.UtcNow; account.UpdatedBy = user;
-        await _db.SaveChangesAsync(cancellationToken); return ServiceResult<bool>.Success(true);
-    }
-
     public async Task<ServiceResult<PagedResponseDto<BankReceiptResponseDto>>> ListReceiptsAsync(FinancialReceiptQueryDto query, bool backOffice, CancellationToken cancellationToken)
     {
         if (!CanFinanceOrBack()) return Forbidden<PagedResponseDto<BankReceiptResponseDto>>();
-        var current = _db.BankReceipts.AsNoTracking().Include(x => x.IdCounterpartyNavigation).Include(x => x.IdCurrencyNavigation).Include(x => x.ReceiptAllocations).AsQueryable();
-        if (!string.IsNullOrWhiteSpace(query.Search)) current = current.Where(x => x.BankReference.Contains(query.Search) || x.SettlementLabel.Contains(query.Search));
+        var validation = new IRISBackend.Validators.FinancialReceiptQueryValidator().Validate(query);
+        if (!validation.IsValid) return ServiceResult<PagedResponseDto<BankReceiptResponseDto>>.Failure("Invalid receipt filters.", validation.Errors.Select(e=>$"{e.PropertyName}: {e.ErrorMessage}"));
+        var current = _db.BankReceipts.AsNoTracking().AsQueryable();
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            var search = query.Search.Trim().ToLowerInvariant();
+            var referenceId = int.TryParse(search.StartsWith("br-") ? search[3..] : search, out var id) ? id : 0;
+            current = current.Where(x => x.IdBankReceipt == referenceId ||
+                (x.BusinessReference != null && x.BusinessReference.ToLower().Contains(search)) ||
+                (x.BankReference != null && x.BankReference.ToLower().Contains(search)) ||
+                (x.SettlementLabel != null && x.SettlementLabel.ToLower().Contains(search)));
+        }
         if (query.CounterpartyId.HasValue) current = current.Where(x => x.IdCounterparty == query.CounterpartyId);
         if (query.CurrencyId.HasValue) current = current.Where(x => x.IdCurrency == query.CurrencyId);
         if (query.OperationFrom.HasValue) current = current.Where(x => x.OperationDate >= query.OperationFrom);
         if (query.OperationTo.HasValue) current = current.Where(x => x.OperationDate <= query.OperationTo);
+        if (query.MinAmount.HasValue) current = current.Where(x => x.AmountReceived >= query.MinAmount);
+        if (query.MaxAmount.HasValue) current = current.Where(x => x.AmountReceived <= query.MaxAmount);
+        if (!string.IsNullOrWhiteSpace(query.DetailsStatus))
+        {
+            var status=query.DetailsStatus.Replace("_", "").Replace(" ", "").ToLowerInvariant();
+            current=current.Where(x=>x.DetailsStatus != null && x.DetailsStatus.Replace("_", "").Replace(" ", "").ToLower()==status);
+        }
         var projected = current.Select(ToReceiptExpression);
-        if (!string.IsNullOrWhiteSpace(query.PairingStatus)) projected = projected.Where(x => x.PairingStatus == query.PairingStatus);
+        if (!string.IsNullOrWhiteSpace(query.PairingStatus))
+        {
+            var status=query.PairingStatus.Replace("_", "").Replace(" ", "").ToLowerInvariant();
+            projected=projected.Where(x=>x.PairingStatus.Replace("_", "").Replace(" ", "").ToLower()==status);
+        }
         var total = await projected.CountAsync(cancellationToken);
+        var desc=query.SortDirection?.Equals("desc", StringComparison.OrdinalIgnoreCase)==true;
         var ordered = query.SortBy?.ToLowerInvariant() switch
         {
-            "operationdate" => query.SortDirection?.Equals("desc", StringComparison.OrdinalIgnoreCase) == true ? projected.OrderByDescending(x => x.OperationDate) : projected.OrderBy(x => x.OperationDate),
-            "amountreceived" => projected.OrderByDescending(x => x.AmountReceived),
-            _ => projected.OrderBy(x => x.PairingStatus == "Paired").ThenByDescending(x => x.OperationDate)
+            "operationdate" => desc ? projected.OrderByDescending(x=>x.OperationDate) : projected.OrderBy(x=>x.OperationDate),
+            "receptiondate" => desc ? projected.OrderByDescending(x=>x.ReceptionDate) : projected.OrderBy(x=>x.ReceptionDate),
+            "amountreceived" => desc ? projected.OrderByDescending(x=>x.AmountReceived) : projected.OrderBy(x=>x.AmountReceived),
+            "counterpartyname" => desc ? projected.OrderByDescending(x=>x.CounterpartyName) : projected.OrderBy(x=>x.CounterpartyName),
+            _ => desc ? projected.OrderByDescending(x=>x.PairingStatus) : projected.OrderBy(x=>x.PairingStatus)
         };
-        var page = Math.Clamp(query.PageNumber, 1, int.MaxValue); var size = Math.Clamp(query.PageSize, 1, 100);
-        var items = await ordered.Skip((page - 1) * size).Take(size).ToListAsync(cancellationToken);
+        var page=query.PageNumber; var size=query.PageSize;
+        var items=await ordered.ThenBy(x=>x.IdBankReceipt).Skip((page-1)*size).Take(size).ToListAsync(cancellationToken);
         return ServiceResult<PagedResponseDto<BankReceiptResponseDto>>.Success(new PagedResponseDto<BankReceiptResponseDto> { Items = items, PageNumber = page, PageSize = size, TotalCount = total });
     }
 
@@ -207,19 +177,22 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
             if (!DateTime.TryParseExact(request.DeclaredInvoiceMonth.Trim(), "yyyy-MM", CultureInfo.InvariantCulture, DateTimeStyles.None, out var declaredMonth)) return Failure<BankReceiptResponseDto>("Declared invoice month must use the YYYY-MM format.");
             declaredInvoiceMonth = new DateOnly(declaredMonth.Year, declaredMonth.Month, 1);
         }
-        if (!DateTime.TryParseExact(request.ReceiptMonth?.Trim(), "yyyy-MM", CultureInfo.InvariantCulture, DateTimeStyles.None, out var month)) return Failure<BankReceiptResponseDto>("Receipt month must use the YYYY-MM format.");
-        var operationMonth = DateOnly.FromDateTime(month).AddDays(1 - DateOnly.FromDateTime(month).Day);
+        var validation = new IRISBackend.Validators.BankReceiptRequestValidator().Validate(request);
+        if (!validation.IsValid) return ServiceResult<BankReceiptResponseDto>.Failure("Encaissement validation failed.", validation.Errors.Select(e=>$"{e.PropertyName}: {e.ErrorMessage}"));
+        var operationDate = request.OperationDate!.Value;
         var currentMonth = new DateOnly(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1);
-        if (operationMonth > currentMonth.AddMonths(1)) return Failure<BankReceiptResponseDto>("Receipt month cannot be unreasonably future-dated.");
+        if (operationDate > currentMonth.AddMonths(2).AddDays(-1)) return Failure<BankReceiptResponseDto>("Encaissement date cannot be unreasonably future-dated.");
         var account = await _db.CounterpartyBankAccounts
             .Include(x => x.IdCounterpartyNavigation)
             .Include(x => x.IdCurrencyNavigation)
             .FirstOrDefaultAsync(x => x.IdBankAccount == request.BankAccountId && x.IsActive && x.IdCounterpartyNavigation.IsActive && x.IdCurrencyNavigation.IsActive, cancellationToken);
         if (account is null) return Failure<BankReceiptResponseDto>("An active bank account for an active counterparty is required.", status: StatusCodes.Status400BadRequest);
+        if (request.CounterpartyId.HasValue && request.CounterpartyId.Value != account.IdCounterparty)
+            return ServiceResult<BankReceiptResponseDto>.Failure("The bank account does not belong to the selected counterparty.", ["CounterpartyId: Select an account belonging to this counterparty."]);
         await using var tx = await _db.Database.BeginTransactionAsync(cancellationToken);
         var now = DateTime.UtcNow;
         var businessReference = Optional(request.BusinessReference) ?? Optional(request.SettlementLabel);
-        var receipt = new BankReceipt { IdBankAccount = account.IdBankAccount, IdCounterparty = account.IdCounterparty, ReceptionDate = DateOnly.FromDateTime(now), OperationDate = operationMonth, AmountReceived = request.AmountReceived, IdCurrency = account.IdCurrency, AppliedExchangeRate = request.AppliedExchangeRate, SettlementMethod = request.SettlementMethod.Trim(), BankReference = Optional(request.BankReference), SettlementLabel = businessReference, BusinessReference = businessReference, DeclaredInvoiceNumber = Optional(request.DeclaredInvoiceNumber), DeclaredInvoiceMonth = declaredInvoiceMonth, Reason = Optional(request.Reason), DetailsStatus = "Unpaired", CreatedAt = now, CreatedBy = user };
+        var receipt = new BankReceipt { IdBankAccount = account.IdBankAccount, IdCounterparty = account.IdCounterparty, ReceptionDate = DateOnly.FromDateTime(now), OperationDate = operationDate, AmountReceived = request.AmountReceived, IdCurrency = account.IdCurrency, AppliedExchangeRate = request.AppliedExchangeRate, SettlementMethod = request.SettlementMethod.Trim(), BankReference = Optional(request.BankReference), SettlementLabel = Optional(request.SettlementLabel) ?? businessReference, BusinessReference = businessReference, DeclaredInvoiceNumber = Optional(request.DeclaredInvoiceNumber), DeclaredInvoiceMonth = declaredInvoiceMonth, Reason = Optional(request.Reason), DetailsStatus = "Unpaired", CreatedAt = now, CreatedBy = user };
         _db.BankReceipts.Add(receipt); await _db.SaveChangesAsync(cancellationToken);
         await NotifyRoleAsync("Back Officer", "New incoming receipt", "New incoming receipt requires pairing.", "BANK_RECEIPT", receipt.IdBankReceipt, cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
@@ -1219,7 +1192,7 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
     public Task<ServiceResult<IReadOnlyList<FinanceClosingQueueItemDto>>> ListDisbursementQueueAsync(CancellationToken cancellationToken) =>
         ListClosingDisbursementQueueAsync(cancellationToken);
 
-    public async Task<ServiceResult<DisbursementContextDto>> GetDisbursementContextAsync(int remittanceRef, CancellationToken cancellationToken)
+    public async Task<ServiceResult<DisbursementContextDto>> GetDisbursementContextAsync(int remittanceRef, CancellationToken cancellationToken, int? bankAccountId = null)
     {
         if (!CanFinance()) return Forbidden<DisbursementContextDto>();
         var remittance = await _db.RemittanceRefs.AsNoTracking()
@@ -1261,12 +1234,12 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
             .Where(x => x.IdCounterparty == remittance.IdCounterparty && x.IsActive && x.IdCurrency == remittance.IdCurrency)
             .OrderBy(x => x.IdBankAccount)
             .ToListAsync(cancellationToken);
-        var accountSelection = BankAccountEligibility.Select(eligibleAccounts);
+        var accountSelection = BankAccountEligibility.Select(eligibleAccounts, bankAccountId);
         var account = accountSelection.Account;
         var validAccount = accountSelection.IsValid;
         var isAvoirRefund = string.Equals(remittance.SourceType, "AVOIR_REFUND", StringComparison.OrdinalIgnoreCase)
             && string.Equals(remittance.BeneficiaryType, "CEDENT", StringComparison.OrdinalIgnoreCase);
-        if (isAvoirRefund && !validAccount)
+        if (isAvoirRefund && !validAccount && eligibleAccounts.Count == 0)
             return ServiceResult<DisbursementContextDto>.Failure(
                 accountSelection.ValidationMessage ?? "An active bank account for the cedent in the refund currency is required.",
                 statusCode: StatusCodes.Status409Conflict,
@@ -1290,6 +1263,11 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
         var canStart = !closingId.HasValue && string.Equals(status, "AwaitingFinanceDisbursement", StringComparison.OrdinalIgnoreCase) && validAccount && remittance.NetPayableAmount > 0m;
         var canConfirm = !closingId.HasValue && string.Equals(status, "PaymentInProgress", StringComparison.OrdinalIgnoreCase) && invoice is not null;
         var selectedBankAccount = account is null ? null : MapBankAccountSnapshot(account);
+        if(remittance.IdDisbursement.HasValue)
+        {
+            var attachedId=await _db.Disbursements.Where(x=>x.IdDisbursement==remittance.IdDisbursement.Value).Select(x=>x.IdBankAccount).SingleAsync(cancellationToken);
+            selectedBankAccount=await GetBankAccountSnapshotAsync(attachedId,remittance.IdCounterparty,remittance.IdCurrency,cancellationToken);
+        }
         return ServiceResult<DisbursementContextDto>.Success(new DisbursementContextDto
         {
             RemittanceId = remittanceRef,
@@ -1329,14 +1307,14 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
             CanStartPayment = canStart,
             CanConfirmTransfer = canConfirm,
             ActiveBankAccountCount = eligibleAccounts.Count,
-            BankAccountSelectionRequired = eligibleAccounts.Count > 1,
+            BankAccountSelectionRequired = eligibleAccounts.Count > 1 && !accountSelection.IsValid,
             SelectedBankAccount = selectedBankAccount,
             DefaultBankAccount = selectedBankAccount,
             ValidationMessage = accountSelection.ValidationMessage
         });
     }
 
-    public async Task<ServiceResult<StartDisbursementResponseDto>> StartDisbursementAsync(int remittanceRef, CancellationToken cancellationToken)
+    public async Task<ServiceResult<StartDisbursementResponseDto>> StartDisbursementAsync(int remittanceRef, CancellationToken cancellationToken, int? bankAccountId = null)
     {
         if (!CanFinance()) return Forbidden<StartDisbursementResponseDto>();
         var batchId = await _db.OutgoingClosingLines.AsNoTracking().Where(x => x.RemittanceId == remittanceRef && x.IsActive && x.Closing.IsActive)
@@ -1422,7 +1400,7 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
             .Where(x => x.IdCounterparty == remittance.IdCounterparty && x.IdCurrency == remittance.IdCurrency && x.IsActive)
             .OrderBy(x => x.IdBankAccount)
             .ToListAsync(cancellationToken);
-        var accountSelection = BankAccountEligibility.Select(eligibleAccounts);
+        var accountSelection = BankAccountEligibility.Select(eligibleAccounts, bankAccountId);
         if (!accountSelection.IsValid)
             return Failure<StartDisbursementResponseDto>(accountSelection.ValidationMessage!);
         var account = accountSelection.Account!;
@@ -1510,7 +1488,7 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
     {
         if (!CanFinance()) return Forbidden<DisbursementResponseDto>();
         var user = CurrentUser(); if (user is null) return Unauthorized<DisbursementResponseDto>();
-        var started = await StartDisbursementAsync(request.RemittanceRef, cancellationToken);
+        var started = await StartDisbursementAsync(request.RemittanceRef, cancellationToken, request.BankAccountId);
         if (!started.Succeeded)
             return ServiceResult<DisbursementResponseDto>.Failure(started.Error?.Message ?? "The payment could not be started.", started.Error?.Errors, started.StatusCode);
         var startedDisbursement = await _db.Disbursements
@@ -3410,26 +3388,6 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
         _db.PremiumRefs.Add(item); await _db.SaveChangesAsync(cancellationToken); return ServiceResult<CedentClosingResponseDto>.Success(new CedentClosingResponseDto { PremiumRef = item.PremiumRef1, ContractId = contractId, CounterpartyId = item.IdCounterparty, CurrencyId = item.IdCurrency, Status = item.Status, ClosingInformation = item.ClosingInformation, OperationDate = item.OperationDate }, StatusCodes.Status201Created);
     }
 
-    private async Task<string?> ValidateBankAccountAsync(BankAccountRequestDto request, CancellationToken cancellationToken)
-    {
-        if (string.IsNullOrWhiteSpace(request.BankName)) return "Bank name is required.";
-        if (string.IsNullOrWhiteSpace(request.BankCity)) return "Bank city is required.";
-        if (string.IsNullOrWhiteSpace(request.BankCountry)) return "Bank country is required.";
-        if (string.IsNullOrWhiteSpace(request.Iban)) return "IBAN is required.";
-        if (!System.Text.RegularExpressions.Regex.IsMatch(NormalizeIban(request.Iban) ?? string.Empty, "^[A-Z]{2}[0-9A-Z]{13,32}$")) return "IBAN format is invalid.";
-        if (string.IsNullOrWhiteSpace(request.SwiftBic) || !System.Text.RegularExpressions.Regex.IsMatch(NormalizeBic(request.SwiftBic) ?? string.Empty, "^[A-Z0-9]{8}([A-Z0-9]{3})?$") ) return "SWIFT/BIC format is invalid.";
-        if (request.HasCorrespondentBank && string.IsNullOrWhiteSpace(request.CorrespondentBankName)) return "Correspondent bank name is required when correspondent bank is enabled.";
-        if (request.HasCorrespondentBank && (string.IsNullOrWhiteSpace(request.CorrespondentSwiftBic) || !System.Text.RegularExpressions.Regex.IsMatch(NormalizeBic(request.CorrespondentSwiftBic) ?? string.Empty, "^[A-Z0-9]{8}([A-Z0-9]{3})?$"))) return "Correspondent SWIFT/BIC format is invalid.";
-        if (!await _db.Currencies.AnyAsync(x => x.IdCurrency == request.CurrencyId, cancellationToken)) return "Currency was not found.";
-        return null;
-    }
-
-    private async Task ClearDefaultAsync(int counterpartyId, int currencyId, int? exceptId, string user, CancellationToken cancellationToken)
-    {
-        var accounts = await _db.CounterpartyBankAccounts.Where(x => x.IdCounterparty == counterpartyId && x.IdCurrency == currencyId && x.IsDefault && (!exceptId.HasValue || x.IdBankAccount != exceptId)).ToListAsync(cancellationToken);
-        foreach (var account in accounts) { account.IsDefault = false; account.UpdatedAt = DateTime.UtcNow; account.UpdatedBy = user; }
-    }
-
     private async Task NotifyRoleAsync(string position, string title, string message, string entityType, int entityId, CancellationToken cancellationToken, string? notificationType = null, string? targetRouteOverride = null)
     {
         var users = await _db.AspNetUsers.Where(x => x.Position != null && x.Position.Trim().ToLower() == position.ToLower()).Select(x => x.Id).ToListAsync(cancellationToken);
@@ -3487,13 +3445,13 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
     private bool CanBack() => FinancialAccessRules.IsBackOfficer(_http.HttpContext?.User ?? new ClaimsPrincipal());
     private bool CanFinanceOrBack() => FinancialAccessRules.IsFinanceOrBackOfficer(_http.HttpContext?.User ?? new ClaimsPrincipal());
     private static string? Optional(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-    private static string? NormalizeIban(string? value) => Optional(value)?.Replace(" ", string.Empty, StringComparison.Ordinal).ToUpperInvariant();
+    private static string? NormalizeIban(string? value) => string.IsNullOrWhiteSpace(value) ? null : string.Concat(value.Where(c=>!char.IsWhiteSpace(c))).ToUpperInvariant();
     private static string? NormalizeBic(string? value) => Optional(value)?.ToUpperInvariant();
-    private static string? MaskIban(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Length <= 4 ? value : $"{value[..2]}****{value[^4..]}";
-    private static BankAccountResponseDto MapBankAccount(CounterpartyBankAccount x) => new() { IdBankAccount = x.IdBankAccount, IdCounterparty = x.IdCounterparty, BeneficiaryName = x.IdCounterpartyNavigation?.Name ?? string.Empty, BeneficiaryAddress = x.IdCounterpartyNavigation?.AddressLine, BeneficiaryCity = x.IdCounterpartyNavigation?.City, BeneficiaryCountry = x.IdCounterpartyNavigation?.Country, CurrencyId = x.IdCurrency, CurrencyCode = x.IdCurrencyNavigation?.CurrencyCode ?? string.Empty, BankName = x.BankName, BankCity = x.BankCity, BankCountry = x.BankCountry, AgencyCode = x.AgencyCode, Rib = x.Rib, Iban = x.Iban, MaskedIban = MaskIban(x.Iban), SwiftBic = x.SwiftBic, HasCorrespondentBank = x.HasCorrespondentBank, CorrespondentBankName = x.CorrespondentBankName, CorrespondentSwiftBic = x.CorrespondentSwiftBic, AccountLabel = x.AccountLabel, IsDefault = x.IsDefault, IsActive = x.IsActive };
-    private static readonly System.Linq.Expressions.Expression<Func<CounterpartyBankAccount, BankAccountResponseDto>> MapBankAccountExpression = x => new() { IdBankAccount = x.IdBankAccount, IdCounterparty = x.IdCounterparty, BeneficiaryName = x.IdCounterpartyNavigation.Name, BeneficiaryAddress = x.IdCounterpartyNavigation.AddressLine, BeneficiaryCity = x.IdCounterpartyNavigation.City, BeneficiaryCountry = x.IdCounterpartyNavigation.Country, CurrencyId = x.IdCurrency, CurrencyCode = x.IdCurrencyNavigation.CurrencyCode, BankName = x.BankName, BankCity = x.BankCity, BankCountry = x.BankCountry, AgencyCode = x.AgencyCode, Rib = x.Rib, MaskedIban = x.Iban == null ? null : x.Iban.Length <= 4 ? x.Iban : x.Iban.Substring(0, 2) + "****" + x.Iban.Substring(x.Iban.Length - 4, 4), SwiftBic = x.SwiftBic, HasCorrespondentBank = x.HasCorrespondentBank, CorrespondentBankName = x.CorrespondentBankName, CorrespondentSwiftBic = x.CorrespondentSwiftBic, AccountLabel = x.AccountLabel, IsDefault = x.IsDefault, IsActive = x.IsActive };
-    private static readonly System.Linq.Expressions.Expression<Func<BankReceipt, BankReceiptResponseDto>> ToReceiptExpression = x => new() { IdBankReceipt = x.IdBankReceipt, BankAccountId = x.IdBankAccount, CounterpartyId = x.IdCounterparty, CounterpartyName = x.IdCounterpartyNavigation.Name, BankName = x.IdBankAccountNavigation.BankName, MaskedIban = x.IdBankAccountNavigation.Iban == null || x.IdBankAccountNavigation.Iban == "" ? null : x.IdBankAccountNavigation.Iban.Length <= 4 ? x.IdBankAccountNavigation.Iban : x.IdBankAccountNavigation.Iban.Substring(0, 2) + "****" + x.IdBankAccountNavigation.Iban.Substring(x.IdBankAccountNavigation.Iban.Length - 4, 4), ReceptionDate = x.ReceptionDate, OperationDate = x.OperationDate, ReceiptMonth = x.OperationDate.Year.ToString() + "-" + (x.OperationDate.Month < 10 ? "0" : "") + x.OperationDate.Month.ToString(), AmountReceived = x.AmountReceived, CurrencyId = x.IdCurrency, CurrencyCode = x.IdCurrencyNavigation.CurrencyCode, AppliedExchangeRate = x.AppliedExchangeRate, AvailableAmount = x.AmountReceived - x.ReceiptAllocations.Where(a => a.IsActive).Sum(a => a.AllocatedAmount ?? 0m), AllocatedAmount = x.ReceiptAllocations.Where(a => a.IsActive).Sum(a => a.AllocatedAmount ?? 0m), PairingStatus = x.AmountReceived > 0m && x.ReceiptAllocations.Where(a => a.IsActive).Sum(a => a.AllocatedAmount ?? 0m) >= x.AmountReceived ? "Paired" : "Unpaired", SettlementMethod = x.SettlementMethod, BankReference = x.BankReference, SettlementLabel = x.SettlementLabel, BusinessReference = x.BusinessReference, DeclaredInvoiceNumber = x.DeclaredInvoiceNumber, DeclaredInvoiceMonth = x.DeclaredInvoiceMonth, Reason = x.Reason };
-    private static BankReceiptResponseDto ToReceiptEntity(BankReceipt x) => new() { IdBankReceipt = x.IdBankReceipt, BankAccountId = x.IdBankAccount, CounterpartyId = x.IdCounterparty, CounterpartyName = x.IdCounterpartyNavigation?.Name ?? string.Empty, BankName = x.IdBankAccountNavigation?.BankName ?? string.Empty, MaskedIban = MaskIban(x.IdBankAccountNavigation?.Iban), ReceptionDate = x.ReceptionDate, OperationDate = x.OperationDate, ReceiptMonth = x.OperationDate.ToString("yyyy-MM"), AmountReceived = x.AmountReceived, CurrencyId = x.IdCurrency, CurrencyCode = x.IdCurrencyNavigation?.CurrencyCode ?? string.Empty, AppliedExchangeRate = x.AppliedExchangeRate, AvailableAmount = x.AmountReceived - x.ReceiptAllocations.Where(a => a.IsActive).Sum(a => a.AllocatedAmount ?? 0m), AllocatedAmount = x.ReceiptAllocations.Where(a => a.IsActive).Sum(a => a.AllocatedAmount ?? 0m), PairingStatus = InvoiceRecoveryCalculator.GetReceiptPairingStatus(x.AmountReceived, x.ReceiptAllocations.Where(a => a.IsActive).Sum(a => a.AllocatedAmount ?? 0m)), SettlementMethod = x.SettlementMethod, BankReference = x.BankReference, SettlementLabel = x.SettlementLabel, BusinessReference = x.BusinessReference, DeclaredInvoiceNumber = x.DeclaredInvoiceNumber, DeclaredInvoiceMonth = x.DeclaredInvoiceMonth, Reason = x.Reason };
+    private static string? MaskIban(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Length <= 4 ? "****" : $"{value[..2]}****{value[^4..]}";
+    private static BankAccountResponseDto MapBankAccount(CounterpartyBankAccount x) => new() { IdBankAccount = x.IdBankAccount, IdCounterparty = x.IdCounterparty, BeneficiaryName = x.IdCounterpartyNavigation?.Name ?? string.Empty, BeneficiaryAddress = x.IdCounterpartyNavigation?.AddressLine, BeneficiaryCity = x.IdCounterpartyNavigation?.City, BeneficiaryCountry = x.IdCounterpartyNavigation?.Country, CurrencyId = x.IdCurrency, CurrencyCode = x.IdCurrencyNavigation?.CurrencyCode ?? string.Empty, BankName = x.BankName, BankCity = x.BankCity, BankCountry = x.BankCountry, AgencyCode = x.AgencyCode, Rib = MaskIban(x.Rib), Iban = x.Iban, MaskedIban = MaskIban(x.Iban), SwiftBic = x.SwiftBic, HasCorrespondentBank = x.HasCorrespondentBank, CorrespondentBankName = x.CorrespondentBankName, CorrespondentSwiftBic = x.CorrespondentSwiftBic, AccountLabel = x.AccountLabel, IsDefault = x.IsDefault, IsActive = x.IsActive };
+    private static readonly System.Linq.Expressions.Expression<Func<CounterpartyBankAccount, BankAccountResponseDto>> MapBankAccountExpression = x => new() { IdBankAccount = x.IdBankAccount, IdCounterparty = x.IdCounterparty, BeneficiaryName = x.IdCounterpartyNavigation.Name, BeneficiaryAddress = x.IdCounterpartyNavigation.AddressLine, BeneficiaryCity = x.IdCounterpartyNavigation.City, BeneficiaryCountry = x.IdCounterpartyNavigation.Country, CurrencyId = x.IdCurrency, CurrencyCode = x.IdCurrencyNavigation.CurrencyCode, BankName = x.BankName, BankCity = x.BankCity, BankCountry = x.BankCountry, AgencyCode = x.AgencyCode, Rib = x.Rib == null ? null : x.Rib.Length <= 4 ? "****" : "****" + x.Rib.Substring(x.Rib.Length - 4), MaskedIban = x.Iban == null ? null : x.Iban.Length <= 4 ? "****" : x.Iban.Substring(0, 2) + "****" + x.Iban.Substring(x.Iban.Length - 4, 4), SwiftBic = x.SwiftBic, HasCorrespondentBank = x.HasCorrespondentBank, CorrespondentBankName = x.CorrespondentBankName, CorrespondentSwiftBic = x.CorrespondentSwiftBic, AccountLabel = x.AccountLabel, IsDefault = x.IsDefault, IsActive = x.IsActive };
+    private static readonly System.Linq.Expressions.Expression<Func<BankReceipt, BankReceiptResponseDto>> ToReceiptExpression = x => new() { IdBankReceipt = x.IdBankReceipt, BankAccountId = x.IdBankAccount, CounterpartyId = x.IdCounterparty, CounterpartyName = x.IdCounterpartyNavigation.Name, CounterpartyBusinessCode = x.IdCounterpartyNavigation.LegacyCompanyCode ?? (x.IdCounterpartyNavigation.LegacyClientId.HasValue ? x.IdCounterpartyNavigation.LegacyClientId.Value.ToString() : null), BankName = x.IdBankAccountNavigation.BankName, MaskedIban = x.IdBankAccountNavigation.Iban == null || x.IdBankAccountNavigation.Iban == "" ? null : x.IdBankAccountNavigation.Iban.Length <= 4 ? "****" : x.IdBankAccountNavigation.Iban.Substring(0, 2) + "****" + x.IdBankAccountNavigation.Iban.Substring(x.IdBankAccountNavigation.Iban.Length - 4, 4), ReceptionDate = x.ReceptionDate, OperationDate = x.OperationDate, ReceiptMonth = x.OperationDate.Year.ToString() + "-" + (x.OperationDate.Month < 10 ? "0" : "") + x.OperationDate.Month.ToString(), AmountReceived = x.AmountReceived, CurrencyId = x.IdCurrency, CurrencyCode = x.IdCurrencyNavigation.CurrencyCode, AppliedExchangeRate = x.AppliedExchangeRate, AvailableAmount = x.AmountReceived - x.ReceiptAllocations.Where(a => a.IsActive).Sum(a => a.AllocatedAmount ?? 0m), AllocatedAmount = x.ReceiptAllocations.Where(a => a.IsActive).Sum(a => a.AllocatedAmount ?? 0m), PairingStatus = x.AmountReceived > 0m && x.ReceiptAllocations.Where(a => a.IsActive).Sum(a => a.AllocatedAmount ?? 0m) >= x.AmountReceived ? "Paired" : x.ReceiptAllocations.Where(a => a.IsActive).Sum(a => a.AllocatedAmount ?? 0m) > 0m ? "Partially Paired" : "Unpaired", SettlementMethod = x.SettlementMethod, BankReference = x.BankReference, SettlementLabel = x.SettlementLabel, BusinessReference = x.BusinessReference, DeclaredInvoiceNumber = x.DeclaredInvoiceNumber, DeclaredInvoiceMonth = x.DeclaredInvoiceMonth, Reason = x.Reason };
+    private static BankReceiptResponseDto ToReceiptEntity(BankReceipt x) => new() { IdBankReceipt = x.IdBankReceipt, BankAccountId = x.IdBankAccount, CounterpartyId = x.IdCounterparty, CounterpartyName = x.IdCounterpartyNavigation?.Name ?? string.Empty, CounterpartyBusinessCode = x.IdCounterpartyNavigation?.LegacyCompanyCode ?? x.IdCounterpartyNavigation?.LegacyClientId?.ToString(), BankName = x.IdBankAccountNavigation?.BankName ?? string.Empty, MaskedIban = MaskIban(x.IdBankAccountNavigation?.Iban), ReceptionDate = x.ReceptionDate, OperationDate = x.OperationDate, ReceiptMonth = x.OperationDate.ToString("yyyy-MM"), AmountReceived = x.AmountReceived, CurrencyId = x.IdCurrency, CurrencyCode = x.IdCurrencyNavigation?.CurrencyCode ?? string.Empty, AppliedExchangeRate = x.AppliedExchangeRate, AvailableAmount = x.AmountReceived - x.ReceiptAllocations.Where(a => a.IsActive).Sum(a => a.AllocatedAmount ?? 0m), AllocatedAmount = x.ReceiptAllocations.Where(a => a.IsActive).Sum(a => a.AllocatedAmount ?? 0m), PairingStatus = InvoiceRecoveryCalculator.GetReceiptPairingStatus(x.AmountReceived, x.ReceiptAllocations.Where(a => a.IsActive).Sum(a => a.AllocatedAmount ?? 0m)), SettlementMethod = x.SettlementMethod, BankReference = x.BankReference, SettlementLabel = x.SettlementLabel, BusinessReference = x.BusinessReference, DeclaredInvoiceNumber = x.DeclaredInvoiceNumber, DeclaredInvoiceMonth = x.DeclaredInvoiceMonth, Reason = x.Reason };
     private static RemittanceResponseDto ToRemittance(RemittanceRef x) => new() { RemittanceRef = x.RemittanceRef1, RemittanceReference = x.RemittanceRef1.ToString(), ReceiptAllocationId = x.IdReceiptAllocation, DisbursementId = x.IdDisbursement, PanelId = x.IdPanel, ContractId = x.IdPanelNavigation?.IdContract ?? x.SourceInvoice?.IdContract, ContractName = x.IdPanelNavigation?.IdContractNavigation?.Name ?? x.SourceInvoice?.IdContractNavigation?.Name, Umr = x.IdPanelNavigation?.IdContractNavigation?.Umr ?? x.SourceInvoice?.IdContractNavigation?.Umr, CedentName = x.IdPanelNavigation?.IdContractNavigation?.IdCounterpartyNavigation?.Name ?? x.SourceInvoice?.IdContractNavigation?.IdCounterpartyNavigation?.Name, CounterpartyId = x.IdCounterparty, CounterpartyName = x.IdCounterpartyNavigation?.Name ?? string.Empty, BeneficiaryId = x.IdCounterparty, BeneficiaryName = x.IdCounterpartyNavigation?.Name, BeneficiaryType = x.BeneficiaryType ?? (x.IdPanel.HasValue ? "REINSURER" : "CEDENT"), ReinsurerId = x.IdCounterparty, ReinsurerName = x.IdCounterpartyNavigation?.Name ?? string.Empty, GrossPremium = x.PremiumSignedLine, OtherDeductions = x.Deductions, NetPremiumDue = x.NetPremiumDue, NetPayableAmount = x.NetPayableAmount, CurrencyId = x.IdCurrency, CurrencyCode = x.IdCurrencyNavigation?.CurrencyCode ?? string.Empty, Status = x.Status, Description = x.Description, ConfirmedAt = x.ConfirmedAt, ConfirmedBy = x.ConfirmedBy };
     private static DisbursementResponseDto ToDisbursement(Disbursement x, RemittanceRef? remittance) => new() { IdDisbursement = x.IdDisbursement, RemittanceRef = remittance?.RemittanceRef1 ?? 0, CounterpartyId = x.IdCounterparty, CounterpartyName = x.IdCounterpartyNavigation?.Name ?? remittance?.IdCounterpartyNavigation?.Name ?? string.Empty, TotalAmount = x.TotalAmount, CurrencyId = x.IdBankAccountNavigation?.IdCurrency ?? remittance?.IdCurrency ?? 0, CurrencyCode = x.IdBankAccountNavigation?.IdCurrencyNavigation?.CurrencyCode ?? remittance?.IdCurrencyNavigation?.CurrencyCode ?? string.Empty, OperationDate = x.OperationDate, SignatureStatus = x.SignatureStatus };
     private static InvoiceResponseDto ToInvoice(Invoice x)

@@ -1505,6 +1505,26 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ClosingPaymentAcceptsAnExplicitEligibleAccountAndPreservesItOnRetry()
+    {
+        var closing=await CreateBatchClosing();var finance=Service(_db,"Finance Officer");
+        var second=await finance.CreateBankAccountAsync(closing.IdCounterparty,new BankAccountRequestDto {
+            CounterpartyId=closing.IdCounterparty,CurrencyId=closing.IdCurrency,BankName="Second Payment Bank",BankCity="Tunis",BankCountry="Tunisia",Iban="TN5900000000000000000099",SwiftBic="ABCDEF12",IsActive=true
+        },default);
+        Assert.True(second.Succeeded,second.Error?.Message);
+        var invalid=await finance.StartClosingDisbursementAsync(closing.Id,default,_receipt.IdBankAccount);
+        Assert.False(invalid.Succeeded);Assert.Empty(await _db.Disbursements.ToListAsync());
+        var selected=await finance.GetClosingDisbursementContextAsync(closing.Id,default,second.Value!.IdBankAccount);
+        Assert.True(selected.Value!.CanStartPayment);Assert.Equal(second.Value.IdBankAccount,selected.Value.SelectedBankAccount!.IdBankAccount);
+        var started=await finance.StartClosingDisbursementAsync(closing.Id,default,second.Value.IdBankAccount);
+        Assert.True(started.Succeeded,started.Error?.Message);
+        Assert.Equal(second.Value.IdBankAccount,(await _db.Disbursements.SingleAsync()).IdBankAccount);
+        var original=await _db.CounterpartyBankAccounts.Where(x=>x.IdCounterparty==closing.IdCounterparty&&x.IdBankAccount!=second.Value.IdBankAccount).Select(x=>x.IdBankAccount).FirstAsync();
+        var retry=await finance.StartClosingDisbursementAsync(closing.Id,default,original);
+        Assert.True(retry.Succeeded);Assert.Equal(second.Value.IdBankAccount,retry.Value!.SelectedBankAccount!.IdBankAccount);Assert.Single(await _db.Disbursements.ToListAsync());
+    }
+
+    [Fact]
     public async Task ClosingPaymentProcessesAllLinesAndRetriesIdempotently()
     {
         var closing = await CreateBatchClosing();
@@ -1949,7 +1969,7 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
         var created = await Service(_db, "Finance Officer").CreateReceiptAsync(new BankReceiptRequestDto
         {
             BankAccountId = _receipt.IdBankAccount,
-            ReceiptMonth = "2026-09",
+            OperationDate = new DateOnly(2026, 9, 23),
             AmountReceived = 125m,
             SettlementMethod = "BankTransfer",
             BankReference = "BANK-NO-COLLECTION-TYPE",
@@ -2373,7 +2393,8 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
         Assert.True(context.Succeeded, context.Error?.Message);
         Assert.Equal(45m, context.Value!.InvoiceableNetPremium);
         Assert.Equal(15m, context.Value.RemainingInvoiceableAmount);
-        Assert.Equal(new[] { 35m, 25m, 15m }, history.Value!
+        Assert.NotNull(history.Value);
+        Assert.Equal(new[] { 35m, 25m, 15m }, history.Value
             .OrderBy(item => item.InvoiceDate)
             .Select(item => item.RemainingAmount));
         Assert.Equal(new[] { 35m, 25m, 15m }, history.Value
@@ -3455,7 +3476,7 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
         IrisBankAccountsOptions? bankAccounts = null,
         IConfiguration? configuration = null) => new(db,
         new RequestAccessor { HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(
-            [new SecurityClaim(ClaimTypes.NameIdentifier, position == "Back Officer" ? "back-user" : "finance-user"), new SecurityClaim("position", position)], "Test")) } },
+            [new SecurityClaim(ClaimTypes.NameIdentifier, position == "Back Officer" ? "back-user" : "finance-user"), new SecurityClaim("position", position), .. ModuleAccessCatalog.LegacyModules("Reassurance", position).Select(m=>new SecurityClaim(ModuleAccessCatalog.ClaimType,m))], "Test")) } },
         logger ?? NullLogger<FinancialWorkflowService>.Instance,
         Options.Create(branding ?? new IrisInvoiceBrandingOptions()),
         null,

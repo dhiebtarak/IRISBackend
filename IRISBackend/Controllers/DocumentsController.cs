@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace IRISBackend.Controllers;
 
 [ApiController]
-[Authorize(Roles = IdentityRoles.Employee)]
+[Authorize(Roles = IdentityRoles.Employee, Policy = ModuleAccessCatalog.ContractReadPolicy)]
 [Route("api/documents")]
 public sealed class DocumentsController : ApiControllerBase
 {

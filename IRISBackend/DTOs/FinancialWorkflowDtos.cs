@@ -48,8 +48,19 @@ public sealed class BankAccountResponseDto
     public bool IsActive { get; set; }
 }
 
+public sealed class BankAccountEditResponseDto
+{
+    public BankAccountResponseDto Account { get; set; } = new();
+    public string? Iban { get; set; }
+    public string? Rib { get; set; }
+}
+
+public sealed class StartPaymentRequestDto { public int? BankAccountId { get; set; } }
+
 public sealed class BankReceiptRequestDto
 {
+    public int? CounterpartyId { get; set; }
+    public DateOnly? OperationDate { get; set; }
     public int BankAccountId { get; set; }
     public string ReceiptMonth { get; set; } = string.Empty;
     public decimal AmountReceived { get; set; }
@@ -65,6 +76,7 @@ public sealed class BankReceiptRequestDto
 
 public sealed class BankAccountOptionQueryDto
 {
+    public int? CounterpartyId { get; set; }
     public string? Search { get; set; }
     public int PageNumber { get; set; } = 1;
     public int PageSize { get; set; } = 25;
@@ -72,6 +84,8 @@ public sealed class BankAccountOptionQueryDto
 
 public sealed class BankAccountOptionDto
 {
+    public string? AccountLabel { get; set; }
+    public bool IsDefault { get; set; }
     public int IdBankAccount { get; set; }
     public int CounterpartyId { get; set; }
     public string BeneficiaryName { get; set; } = string.Empty;
@@ -93,6 +107,9 @@ public sealed class FinancialReceiptQueryDto
     public string? PairingStatus { get; set; }
     public DateOnly? OperationFrom { get; set; }
     public DateOnly? OperationTo { get; set; }
+    public decimal? MinAmount { get; set; }
+    public decimal? MaxAmount { get; set; }
+    public string? DetailsStatus { get; set; }
     public int PageNumber { get; set; } = 1;
     public int PageSize { get; set; } = 20;
     public string? SortBy { get; set; }
@@ -105,6 +122,7 @@ public sealed class BankReceiptResponseDto
     public int BankAccountId { get; set; }
     public int CounterpartyId { get; set; }
     public string CounterpartyName { get; set; } = string.Empty;
+    public string? CounterpartyBusinessCode { get; set; }
     public string BankName { get; set; } = string.Empty;
     public string? MaskedIban { get; set; }
     public DateOnly ReceptionDate { get; set; }
