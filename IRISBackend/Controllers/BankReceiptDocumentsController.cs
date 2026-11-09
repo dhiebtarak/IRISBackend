@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace IRISBackend.Controllers;
 
 [ApiController]
-[Authorize(Roles = IdentityRoles.Employee)]
+[Authorize(Roles = IdentityRoles.Employee, Policy = "Module:ReceiptDocuments")]
 [Route("api/bank-receipts/{receiptId:int}/attachments")]
 public sealed class BankReceiptDocumentsController : ApiControllerBase
 {

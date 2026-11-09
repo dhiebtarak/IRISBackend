@@ -61,7 +61,7 @@ public sealed partial class FinancialWorkflowService
         return ServiceResult<IReadOnlyList<FinanceClosingQueueItemDto>>.Success(items);
     }
 
-    public async Task<ServiceResult<ClosingDisbursementContextDto>> GetClosingDisbursementContextAsync(int closingId, CancellationToken ct)
+    public async Task<ServiceResult<ClosingDisbursementContextDto>> GetClosingDisbursementContextAsync(int closingId, CancellationToken ct, int? bankAccountId = null)
     {
         if (!CanFinance()) return Forbidden<ClosingDisbursementContextDto>();
         var closing = await _db.OutgoingClosings.AsNoTracking().Include(x => x.Lines)
@@ -75,7 +75,7 @@ public sealed partial class FinancialWorkflowService
         var accounts = await _db.CounterpartyBankAccounts.AsNoTracking().Include(x => x.IdCounterpartyNavigation).Include(x => x.IdCurrencyNavigation)
             .Where(x => x.IdCounterparty == closing.IdCounterparty && x.IdCurrency == closing.IdCurrency && x.IsActive)
             .OrderBy(x => x.IdBankAccount).ToListAsync(ct);
-        var selection = BankAccountEligibility.Select(accounts);
+        var selection = BankAccountEligibility.Select(accounts, bankAccountId);
         var bank = selection.Account is null ? null : MapBankAccountSnapshot(selection.Account);
         if (closing.IdDisbursement.HasValue)
         {
@@ -129,14 +129,14 @@ public sealed partial class FinancialWorkflowService
     public Task<ServiceResult<PrintablePaymentDocumentDto>> GetFinanceClosingPdfAsync(int closingId, CancellationToken ct) =>
         CanFinance() ? GetOutgoingClosingDocumentAsync(closingId, ct) : Task.FromResult(Forbidden<PrintablePaymentDocumentDto>());
 
-    public async Task<ServiceResult<ClosingDisbursementContextDto>> StartClosingDisbursementAsync(int closingId, CancellationToken ct)
+    public async Task<ServiceResult<ClosingDisbursementContextDto>> StartClosingDisbursementAsync(int closingId, CancellationToken ct, int? bankAccountId = null)
     {
         if (!CanFinance()) return Forbidden<ClosingDisbursementContextDto>();
         var user = CurrentUser();
         if (user is null) return Unauthorized<ClosingDisbursementContextDto>();
         await using var tx = await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         await LockOutgoingWorkflowAsync(ct);
-        var context = await GetClosingDisbursementContextAsync(closingId, ct);
+        var context = await GetClosingDisbursementContextAsync(closingId, ct, bankAccountId);
         if (!context.Succeeded) return context;
         var closing = await _db.OutgoingClosings.Include(x => x.Lines).ThenInclude(x => x.Remittance).SingleAsync(x => x.Id == closingId, ct);
         if (closing.IdDisbursement.HasValue && closing.Status is "PaymentInProgress" or "Closed")

@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace IRISBackend.Controllers
 {
     [ApiController]
-    [Authorize]
+    [Authorize(Policy = ModuleAccessCatalog.CounterpartyReadPolicy)]
     [Route("api/counterparties")]
     public class CounterpartiesController : ApiControllerBase
     {
@@ -32,6 +32,7 @@ namespace IRISBackend.Controllers
         }
 
         [HttpPost]
+        [Authorize(Policy = "Module:Counterparties")]
         [Consumes("application/json")]
         [ProducesResponseType(typeof(CounterpartyDetailsDto), StatusCodes.Status201Created)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status400BadRequest)]
@@ -93,6 +94,7 @@ namespace IRISBackend.Controllers
         }
 
         [HttpPut("{id:int}")]
+        [Authorize(Policy = "Module:Counterparties")]
         [Consumes("application/json")]
         [ProducesResponseType(typeof(CounterpartyDetailsDto), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status400BadRequest)]
@@ -111,6 +113,7 @@ namespace IRISBackend.Controllers
         }
 
         [HttpPatch("{id:int}/status")]
+        [Authorize(Policy = "Module:Counterparties")]
         [ProducesResponseType(typeof(CounterpartyDetailsDto), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status404NotFound)]
         public async Task<IActionResult> SetActiveStatus(int id, CounterpartyStatusUpdateDto request, CancellationToken cancellationToken)

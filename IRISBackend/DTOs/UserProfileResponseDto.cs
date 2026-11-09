@@ -15,5 +15,11 @@ namespace IRISBackend.DTOs
         public string Position { get; set; } = string.Empty;
 
         public IEnumerable<string> Roles { get; set; } = [];
+
+        public IEnumerable<string> Modules { get; set; } = [];
+
+        public bool IsEnabled { get; set; } = true;
+
+        public bool ModuleAssignmentsConfigured { get; set; }
     }
 }

@@ -17,6 +17,7 @@ using Microsoft.Extensions.Logging;
 using System.Text;
 using System.Reflection;
 using System.Net;
+using System.Security.Claims;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -167,6 +168,7 @@ builder.Services
     })
     .AddJwtBearer(options =>
     {
+        options.MapInboundClaims = false;
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
@@ -178,11 +180,113 @@ builder.Services
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSigningKey)),
             ClockSkew = TimeSpan.FromMinutes(1)
         };
+        options.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = async context =>
+            {
+                var principal = context.Principal;
+                var userId = principal?.FindFirstValue(ClaimTypes.NameIdentifier) ?? principal?.FindFirstValue("sub");
+                if (string.IsNullOrWhiteSpace(userId))
+                {
+                    context.Fail("The authenticated user could not be resolved.");
+                    return;
+                }
+
+                var sessionService = context.HttpContext.RequestServices.GetRequiredService<AuthSessionService>();
+                var sid = principal?.FindFirstValue("sid");
+                var logout = context.HttpContext.Request.Path.Equals("/api/auth/logout", StringComparison.OrdinalIgnoreCase)
+                    && HttpMethods.IsPost(context.HttpContext.Request.Method);
+                if (!await sessionService.ValidateAsync(sid, userId, logout, context.HttpContext.RequestAborted))
+                {
+                    context.Fail("The session is unavailable."); return;
+                }
+                if (context.HttpContext.Request.Path.StartsWithSegments("/api") && !context.HttpContext.Request.Path.StartsWithSegments("/api/health") && !logout)
+                    await sessionService.TouchAsync(sid!, context.HttpContext.RequestAborted);
+                var userManager = context.HttpContext.RequestServices.GetRequiredService<UserManager<ApplicationUser>>();
+                var user = await userManager.FindByIdAsync(userId);
+                if (user is null || await userManager.IsLockedOutAsync(user))
+                {
+                    context.Fail("The account is unavailable.");
+                    return;
+                }
+
+                foreach (var identity in principal!.Identities)
+                {
+                    foreach (var stale in identity.FindAll(ModuleAccessCatalog.ClaimType).ToArray()) identity.RemoveClaim(stale);
+                    foreach (var staleRole in identity.FindAll(ClaimTypes.Role).ToArray()) identity.RemoveClaim(staleRole);
+                }
+
+                var targetIdentity = principal.Identities.FirstOrDefault(identity => identity.IsAuthenticated);
+                var currentRoles = await userManager.GetRolesAsync(user);
+                foreach (var role in currentRoles) targetIdentity?.AddClaim(new System.Security.Claims.Claim(ClaimTypes.Role, role));
+
+                IReadOnlyList<string> modules;
+                if (await userManager.IsInRoleAsync(user, IdentityRoles.Admin))
+                {
+                    modules = [];
+                }
+                else
+                {
+                    var claims = await userManager.GetClaimsAsync(user);
+                    modules = claims.Any(claim => claim.Type == ModuleAccessCatalog.ConfigurationClaimType)
+                        ? claims.Where(claim => claim.Type == ModuleAccessCatalog.ClaimType)
+                            .Select(claim => claim.Value).Where(ModuleAccessCatalog.IsValid)
+                            .Select(ModuleAccessCatalog.Canonicalize).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
+                        : ModuleAccessCatalog.LegacyModules(user.Department, user.Position);
+                }
+
+                foreach (var module in modules) targetIdentity?.AddClaim(new System.Security.Claims.Claim(ModuleAccessCatalog.ClaimType, module));
+            }
+        };
     });
 
+builder.Services.AddAuthorization(options =>
+{
+    foreach (var module in ModuleAccessCatalog.All)
+    {
+        options.AddPolicy(ModuleAccessCatalog.Policy(module), policy => policy.RequireAssertion(context =>
+            !context.User.IsInRole(IdentityRoles.Admin) && (
+            context.User.HasClaim(ModuleAccessCatalog.ClaimType, module))));
+    }
+    options.AddPolicy(ModuleAccessCatalog.CounterpartyReadPolicy, policy => policy.RequireAssertion(context =>
+        !context.User.IsInRole(IdentityRoles.Admin) && ( new[]
+        {
+            ModuleAccessCatalog.Counterparties, ModuleAccessCatalog.Contracts,
+            ModuleAccessCatalog.BackOffice, ModuleAccessCatalog.Encaissement,
+            ModuleAccessCatalog.Decaissement, ModuleAccessCatalog.CounterpartyBankAccounts
+        }.Any(module => context.User.HasClaim(ModuleAccessCatalog.ClaimType, module)))));
+    options.AddPolicy(ModuleAccessCatalog.ContractReadPolicy, policy => policy.RequireAssertion(context =>
+        !context.User.IsInRole(IdentityRoles.Admin) && (
+        context.User.HasClaim(ModuleAccessCatalog.ClaimType, ModuleAccessCatalog.Contracts) ||
+        context.User.HasClaim(ModuleAccessCatalog.ClaimType, ModuleAccessCatalog.BackOffice))));
+    options.AddPolicy("Module:ReceiptDocuments", policy => policy.RequireAssertion(context =>
+        !context.User.IsInRole(IdentityRoles.Admin) && (
+        context.User.HasClaim(ModuleAccessCatalog.ClaimType, ModuleAccessCatalog.BackOffice) ||
+        context.User.HasClaim(ModuleAccessCatalog.ClaimType, ModuleAccessCatalog.Encaissement))));
+    options.AddPolicy("Module:FinancialAccountAccess", policy => policy.RequireAssertion(context =>
+        !context.User.IsInRole(IdentityRoles.Admin) && ( new[]
+        {
+            ModuleAccessCatalog.Encaissement, ModuleAccessCatalog.Decaissement,
+            ModuleAccessCatalog.CounterpartyBankAccounts
+        }.Any(module => context.User.HasClaim(ModuleAccessCatalog.ClaimType, module)))));
+    options.AddPolicy("Module:ReferenceData", policy => policy.RequireAssertion(context =>
+        !context.User.IsInRole(IdentityRoles.Admin) && ( ModuleAccessCatalog.All
+            .Where(module => module != ModuleAccessCatalog.Claims)
+            .Any(module => context.User.HasClaim(ModuleAccessCatalog.ClaimType, module)))));
+});
+
+builder.Services.AddDistributedMemoryCache(); // Replace IDistributedCache with a shared provider before running multiple instances.
+builder.Services.AddOptions<AccessActivityOptions>().Bind(builder.Configuration.GetSection("AccessActivity"))
+    .Validate(o => o.RetentionDays >= 1 && o.RetentionDays <= 3650 && o.ValidationCacheSeconds >= 1 && o.ValidationCacheSeconds <= 30,
+        "AccessActivity retention must be 1-3650 days and validation cache 1-30 seconds.").ValidateOnStart();
+builder.Services.AddScoped<AuthSessionService>();
+builder.Services.AddScoped<AccessActivityService>();
+builder.Services.AddHostedService<AccessActivityWorker>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<ITokenService, TokenService>();
-builder.Services.AddScoped<IUserService, UserService>();
+builder.Services.AddScoped<UserService>();
+builder.Services.AddScoped<IUserService>(services => services.GetRequiredService<UserService>());
+builder.Services.AddScoped<IAdminUserManagementService>(services => services.GetRequiredService<UserService>());
 builder.Services.AddScoped<IWorkspaceAccessService, WorkspaceAccessService>();
 builder.Services.AddScoped<ILoginAuditService, LoginAuditService>();
 builder.Services.AddScoped<ICounterpartyService, CounterpartyService>();

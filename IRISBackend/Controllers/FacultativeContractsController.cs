@@ -26,7 +26,7 @@ namespace IRISBackend.Controllers
         }
 
         [HttpPost]
-        [Authorize(Roles = IdentityRoles.Employee)]
+        [Authorize(Roles = IdentityRoles.Employee, Policy = "Module:Contracts")]
         [Consumes("application/json")]
         [ProducesResponseType(typeof(FacultativeContractResponseDto), StatusCodes.Status201Created)]
         [ProducesResponseType(typeof(ContractValidationErrorResponseDto), StatusCodes.Status400BadRequest)]
@@ -63,6 +63,7 @@ namespace IRISBackend.Controllers
         }
 
         [HttpGet("{contractId:int}")]
+        [Authorize(Policy = "Module:Contracts")]
         [ProducesResponseType(typeof(FacultativeContractResponseDto), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status401Unauthorized)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status404NotFound)]
@@ -73,7 +74,7 @@ namespace IRISBackend.Controllers
         }
 
         [HttpPut("{contractId:int}")]
-        [Authorize(Roles = IdentityRoles.Employee)]
+        [Authorize(Roles = IdentityRoles.Employee, Policy = "Module:Contracts")]
         [Consumes("application/json")]
         [ProducesResponseType(typeof(FacultativeContractResponseDto), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ContractValidationErrorResponseDto), StatusCodes.Status400BadRequest)]

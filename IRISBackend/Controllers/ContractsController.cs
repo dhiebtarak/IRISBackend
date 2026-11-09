@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace IRISBackend.Controllers
 {
     [ApiController]
-    [Authorize(Roles = IdentityRoles.Employee)]
+    [Authorize(Roles = IdentityRoles.Employee, Policy = ModuleAccessCatalog.ContractReadPolicy)]
     [Route("api/contracts")]
     public sealed class ContractsController : ApiControllerBase
     {
@@ -86,7 +86,7 @@ namespace IRISBackend.Controllers
 
         /// <summary>Completes an owned draft and moves it to ReadyForPlacement.</summary>
         [HttpPost("{contractId:int}/complete")]
-        [Authorize(Roles = IdentityRoles.Employee)]
+        [Authorize(Roles = IdentityRoles.Employee, Policy = "Module:Contracts")]
         [ProducesResponseType(typeof(ContractOverviewDto), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status401Unauthorized)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status403Forbidden)]
@@ -150,6 +150,7 @@ namespace IRISBackend.Controllers
         }
 
         [HttpPost("{contractId:int}/panels")]
+        [Authorize(Policy = "Module:Contracts")]
         [Consumes("application/json")]
         [ProducesResponseType(typeof(ContractOverviewDto), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status400BadRequest)]
@@ -173,6 +174,7 @@ namespace IRISBackend.Controllers
         }
 
         [HttpPut("{contractId:int}/panels/{panelId:int}")]
+        [Authorize(Policy = "Module:Contracts")]
         [Consumes("application/json")]
         [ProducesResponseType(typeof(ContractOverviewDto), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status400BadRequest)]
@@ -197,6 +199,7 @@ namespace IRISBackend.Controllers
         }
 
         [HttpPost("{contractId:int}/panels/{panelId:int}/confirm")]
+        [Authorize(Policy = "Module:Contracts")]
         [ProducesResponseType(typeof(ContractPanelResponseDto), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status400BadRequest)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status401Unauthorized)]
@@ -213,6 +216,7 @@ namespace IRISBackend.Controllers
         }
 
         [HttpPost("{contractId:int}/start-binding")]
+        [Authorize(Policy = "Module:Contracts")]
         [ProducesResponseType(typeof(ContractOverviewDto), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status400BadRequest)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status401Unauthorized)]
@@ -226,6 +230,7 @@ namespace IRISBackend.Controllers
         }
 
         [HttpPost("{contractId:int}/cancel")]
+        [Authorize(Policy = "Module:Contracts")]
         [ProducesResponseType(typeof(ContractOverviewDto), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status401Unauthorized)]
         [ProducesResponseType(typeof(ApiErrorResponseDto), StatusCodes.Status403Forbidden)]

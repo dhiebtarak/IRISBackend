@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace IRISBackend.Controllers;
 
 [ApiController]
-[Authorize]
+[Authorize(Policy = ModuleAccessCatalog.ContractReadPolicy)]
 [Route("api/contracts/{contractId:int}")]
 public sealed class ContractFinancialController : ApiControllerBase
 {
@@ -23,9 +23,11 @@ public sealed class ContractFinancialController : ApiControllerBase
     public async Task<IActionResult> BackOfficeInvoiceContext(int contractId, CancellationToken cancellationToken) => FromServiceResult(await _service.GetInvoiceContextAsync(contractId, cancellationToken));
 
     [HttpPost("cedent-closings")]
+    [Authorize(Policy = "Module:BackOffice")]
     public async Task<IActionResult> CedentClosing(int contractId, [FromBody] CedentClosingRequestDto request, CancellationToken cancellationToken) => FromServiceResult(await _service.CreateCedentClosingAsync(contractId, request, cancellationToken));
 
     [HttpPost("panels/{panelId:int}/invoices")]
+    [Authorize(Policy = "Module:Contracts")]
     public async Task<IActionResult> PanelInvoice(int contractId, int panelId, [FromBody] InvoiceRequestDto request, CancellationToken cancellationToken)
     {
         request.ContractId = contractId;

@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace IRISBackend.Controllers;
 
 [ApiController]
-[Authorize]
+[Authorize(Policy = "Module:BackOffice")]
 [Route("api/back-office")]
 public sealed class BackOfficeController : ApiControllerBase
 {

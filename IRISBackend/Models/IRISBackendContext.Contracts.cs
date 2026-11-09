@@ -8,6 +8,7 @@ public partial class IRISBackendContext
 
     partial void OnModelCreatingPartial(ModelBuilder modelBuilder)
     {
+        ConfigureAccessActivity(modelBuilder);
         modelBuilder.Entity<IrisBankAccount>(entity =>
         {
             entity.ToTable("IRIS_BANK_ACCOUNT");

@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace IRISBackend.Controllers
 {
     [ApiController]
-    [Authorize]
+    [Authorize(Policy = "Module:ReferenceData")]
     [Route("api/reference-data")]
     public sealed class ReferenceDataController : ApiControllerBase
     {

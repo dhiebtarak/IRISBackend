@@ -19,12 +19,11 @@ namespace IRISBackend.Services
             _userManager = userManager;
         }
 
-        public async Task<string> CreateTokenAsync(ApplicationUser user)
+        public async Task<string> CreateTokenAsync(ApplicationUser user, string sessionIdentifier, DateTime expiresAtUtc)
         {
             var issuer = _configuration["Jwt:Issuer"];
             var audience = _configuration["Jwt:Audience"];
             var signingKey = _configuration["Jwt:SigningKey"];
-            var expirationMinutes = _configuration.GetValue("Jwt:ExpirationMinutes", 60);
 
             if (string.IsNullOrWhiteSpace(issuer) ||
                 string.IsNullOrWhiteSpace(audience) ||
@@ -36,6 +35,7 @@ namespace IRISBackend.Services
             var claims = new List<SecurityClaim>
             {
                 new(JwtRegisteredClaimNames.Sub, user.Id),
+                new("sid", sessionIdentifier),
                 new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
                 new(ClaimTypes.NameIdentifier, user.Id),
                 new(ClaimTypes.Name, user.UserName ?? string.Empty),
@@ -55,7 +55,7 @@ namespace IRISBackend.Services
                 issuer: issuer,
                 audience: audience,
                 claims: claims,
-                expires: DateTime.UtcNow.AddMinutes(expirationMinutes),
+                expires: expiresAtUtc,
                 signingCredentials: credentials);
 
             return new JwtSecurityTokenHandler().WriteToken(token);

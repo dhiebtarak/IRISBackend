@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace IRISBackend.Controllers;
 
 [ApiController]
-[Authorize]
+[Authorize(Policy = "Module:CounterpartyBankAccounts")]
 [Route("api/counterparties/{counterpartyId:int}/bank-accounts")]
 public sealed class FinancialAccountsController : ApiControllerBase
 {
@@ -15,6 +15,12 @@ public sealed class FinancialAccountsController : ApiControllerBase
 
     [HttpGet]
     public async Task<IActionResult> List(int counterpartyId, [FromQuery] bool activeOnly = true, CancellationToken cancellationToken = default) => FromServiceResult(await _service.GetBankAccountsAsync(counterpartyId, activeOnly, cancellationToken));
+
+    [HttpGet("{bankAccountId:int}")]
+    public async Task<IActionResult> Detail(int counterpartyId, int bankAccountId, CancellationToken cancellationToken) => FromServiceResult(await _service.GetBankAccountAsync(counterpartyId, bankAccountId, cancellationToken));
+
+    [HttpPatch("{bankAccountId:int}/default")]
+    public async Task<IActionResult> Default(int counterpartyId, int bankAccountId, CancellationToken cancellationToken) => FromServiceResult(await _service.SetBankAccountDefaultAsync(counterpartyId, bankAccountId, cancellationToken));
 
     [HttpPost]
     public async Task<IActionResult> Create(int counterpartyId, [FromBody] BankAccountRequestDto request, CancellationToken cancellationToken) => FromServiceResult(await _service.CreateBankAccountAsync(counterpartyId, request, cancellationToken));

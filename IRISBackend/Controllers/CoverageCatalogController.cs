@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace IRISBackend.Controllers
 {
     [ApiController]
-    [Authorize]
+    [Authorize(Policy = "Module:Contracts")]
     [Route("api/coverage-catalog")]
     public sealed class CoverageCatalogController : ApiControllerBase
     {

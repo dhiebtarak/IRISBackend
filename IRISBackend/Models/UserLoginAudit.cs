@@ -8,6 +8,9 @@ namespace IRISBackend.Models;
 public partial class UserLoginAudit
 {
     public int Id { get; set; }
+    public string EventType { get; set; } = "LoginSuccessful";
+    public Guid? SessionId { get; set; }
+    public string ActorUserId { get; set; }
 
     public string UserId { get; set; }
 

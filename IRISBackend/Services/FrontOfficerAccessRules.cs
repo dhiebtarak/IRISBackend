@@ -7,20 +7,24 @@ namespace IRISBackend.Services
         public static bool IsFrontOfficer(UserProfileResponseDto user)
         {
             return user.Roles.Contains(IdentityRoles.Employee, StringComparer.OrdinalIgnoreCase) &&
-                   string.Equals(user.Department, ContractConstants.FrontOfficerDepartment, StringComparison.OrdinalIgnoreCase) &&
-                   string.Equals(user.Position, ContractConstants.FrontOfficerPosition, StringComparison.OrdinalIgnoreCase);
+                   EffectiveModules(user).Contains(ModuleAccessCatalog.Contracts, StringComparer.OrdinalIgnoreCase);
         }
 
         public static bool IsFrontOrBackOfficer(UserProfileResponseDto user)
         {
             return user.Roles.Contains(IdentityRoles.Employee, StringComparer.OrdinalIgnoreCase) &&
-                   (IsFrontOfficer(user) || string.Equals(user.Position?.Trim(), "Back officer", StringComparison.OrdinalIgnoreCase));
+                   (IsFrontOfficer(user) || IsBackOfficer(user));
         }
 
         public static bool IsBackOfficer(UserProfileResponseDto user)
         {
             return user.Roles.Contains(IdentityRoles.Employee, StringComparer.OrdinalIgnoreCase) &&
-                   string.Equals(user.Position?.Trim(), "Back officer", StringComparison.OrdinalIgnoreCase);
+                   EffectiveModules(user).Contains(ModuleAccessCatalog.BackOffice, StringComparer.OrdinalIgnoreCase);
         }
+
+        private static IReadOnlyList<string> EffectiveModules(UserProfileResponseDto user) =>
+            user.ModuleAssignmentsConfigured
+                ? user.Modules.ToArray()
+                : ModuleAccessCatalog.LegacyModules(user.Department, user.Position);
     }
 }

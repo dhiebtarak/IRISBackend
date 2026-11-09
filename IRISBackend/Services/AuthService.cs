@@ -12,6 +12,8 @@ namespace IRISBackend.Services
         private readonly ITokenService _tokenService;
         private readonly ILoginAuditService _loginAuditService;
         private readonly ILogger<AuthService> _logger;
+        private readonly AuthSessionService? _sessions;
+        private readonly IHttpContextAccessor? _accessor;
 
         public AuthService(
             UserManager<ApplicationUser> userManager,
@@ -19,7 +21,7 @@ namespace IRISBackend.Services
             RoleManager<IdentityRole> roleManager,
             ITokenService tokenService,
             ILoginAuditService loginAuditService,
-            ILogger<AuthService> logger)
+            ILogger<AuthService> logger, AuthSessionService? sessions = null, IHttpContextAccessor? accessor = null)
         {
             _userManager = userManager;
             _signInManager = signInManager;
@@ -27,6 +29,7 @@ namespace IRISBackend.Services
             _tokenService = tokenService;
             _loginAuditService = loginAuditService;
             _logger = logger;
+            _sessions = sessions; _accessor = accessor;
         }
 
         public async Task<ServiceResult<UserProfileResponseDto>> CreateUserAsync(RegisterRequestDto request)
@@ -125,22 +128,23 @@ namespace IRISBackend.Services
                 return InvalidCredentials();
             }
 
-            await _loginAuditService.RecordAsync(user.Id, request.EmailOrUsername, true);
+            var session = await _sessions!.StartAsync(user, _accessor?.HttpContext?.RequestAborted ?? default);
 
-            var response = await BuildAuthResponseAsync(user);
+            var response = await BuildAuthResponseAsync(user, session);
             return ServiceResult<AuthResponseDto>.Success(response);
         }
 
-        public Task LogoutAsync()
+        public async Task LogoutAsync()
         {
-            return _signInManager.SignOutAsync();
+            await _sessions!.LogoutAsync(_accessor!.HttpContext!.User, _accessor.HttpContext.RequestAborted);
+            await _signInManager.SignOutAsync();
         }
 
-        private async Task<AuthResponseDto> BuildAuthResponseAsync(ApplicationUser user)
+        private async Task<AuthResponseDto> BuildAuthResponseAsync(ApplicationUser user, AuthSession session)
         {
             var roles = await _userManager.GetRolesAsync(user);
             var profile = UserMapping.ToProfile(user, roles);
-            var token = await _tokenService.CreateTokenAsync(user);
+            var token = await _tokenService.CreateTokenAsync(user, session.SessionIdentifier, session.ExpiresAtUtc);
 
             return new AuthResponseDto
             {

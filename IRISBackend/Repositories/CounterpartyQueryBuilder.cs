@@ -10,15 +10,15 @@ namespace IRISBackend.Repositories
         {
             if (!string.IsNullOrWhiteSpace(query.Search))
             {
-                var search = query.Search.Trim();
+                var search = query.Search.Trim().ToLowerInvariant();
                 counterparties = counterparties.Where(counterparty =>
                     (counterparty.LegacyClientId.HasValue && counterparty.LegacyClientId.Value.ToString().Contains(search)) ||
-                    (counterparty.LegacyCompanyCode != null && counterparty.LegacyCompanyCode.Contains(search)) ||
-                    counterparty.Name.Contains(search) ||
-                    (counterparty.Email != null && counterparty.Email.Contains(search)) ||
-                    (counterparty.ContactName != null && counterparty.ContactName.Contains(search)) ||
-                    (counterparty.Country != null && counterparty.Country.Contains(search)) ||
-                    (counterparty.City != null && counterparty.City.Contains(search)));
+                    (counterparty.LegacyCompanyCode != null && counterparty.LegacyCompanyCode.ToLower().Contains(search)) ||
+                    counterparty.Name.ToLower().Contains(search) ||
+                    (counterparty.Email != null && counterparty.Email.ToLower().Contains(search)) ||
+                    (counterparty.ContactName != null && counterparty.ContactName.ToLower().Contains(search)) ||
+                    (counterparty.Country != null && counterparty.Country.ToLower().Contains(search)) ||
+                    (counterparty.City != null && counterparty.City.ToLower().Contains(search)));
             }
 
             if (!string.IsNullOrWhiteSpace(query.Type))
