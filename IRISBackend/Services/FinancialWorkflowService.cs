@@ -2132,7 +2132,7 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
             PairedAmount = pairedAmount,
             AlreadyInvoicedAmount = alreadyInvoicedAmount,
             AvailableAmount = remainingInvoiceableAmount,
-            InvoiceableGrossPremium = contractGrossPremium,
+            InvoiceableGrossPremium = invoiceFinancials.SignedGrossPremium,
             RemainingInvoiceableAmount = remainingInvoiceableAmount,
             RemainingInvoiceAmount = remainingInvoiceableAmount,
             TotalInvoicedAmount = documentTotals.TotalInvoicedAmount,
@@ -2180,7 +2180,7 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
             traceId, contractId, data.Error is null, data.Panels?.Count ?? 0);
         if (data.Error is not null) return ServiceResult<PremiumDebitNotePreviewDto>.Failure(data.Error.Message, data.Error.Errors, data.ErrorStatusCode);
         var remaining = Math.Max(0m, data.InvoiceableNet - data.AlreadyInvoiced);
-        var invoiceableGross = data.InvoiceableGross;
+        var invoiceableGross = data.InvoiceableNet + data.CedentCommissionAmount;
         if (isAvoir && !data.HasActiveInvoiceSource)
             return Failure<PremiumDebitNotePreviewDto>("An Avoir requires at least one active Invoice or Invoice Fees document.");
         if (isAvoir && processingMode == InvoiceDocumentAccounting.DirectToRemittances
@@ -2483,14 +2483,14 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
             if (grossPremium <= 0m)
                 return Failure<PrintablePaymentDocumentDto>("The Bound contract has no positive gross premium.", status: StatusCodes.Status409Conflict, code: "CONTRACT_GROSS_PREMIUM_MISSING");
 
-            var precision = PanelRemittanceCalculator.Precision(contract.IdCurrencyNavigation?.DecimalPlaces);
-            var cedentCommissionAmount = contract.NetPremiumCedent.HasValue
-                ? PremiumDebitNoteFinancials.RoundMoney(grossPremium - contract.NetPremiumCedent.Value, precision)
-                : PremiumDebitNoteFinancials.CalculateCedentCommissionAmount(grossPremium, contract.CedentCommission, precision);
-            if (cedentCommissionAmount < 0m || cedentCommissionAmount > grossPremium)
-                return Failure<PrintablePaymentDocumentDto>("The persisted cedent commission is inconsistent with the contract gross premium.", status: StatusCodes.Status409Conflict, code: "CONTRACT_COMMISSION_INVALID");
-
-            var baseContractAmount = PremiumDebitNoteFinancials.RoundMoney(grossPremium - cedentCommissionAmount, precision);
+            if (!PremiumDebitNoteFinancials.TryCalculateInvoiceablePremium(
+                    contract, out var financials, out var financialError))
+                return Failure<PrintablePaymentDocumentDto>(
+                    "Contract financial data is invalid.", [financialError!],
+                    status: StatusCodes.Status409Conflict, code: "CONTRACT_FINANCIALS_INVALID");
+            var precision = financials!.CurrencyDecimalPlaces;
+            var cedentCommissionAmount = financials.CedentCommissionAmount;
+            var baseContractAmount = financials.InvoiceableNetPremium;
             var reference = $"DN-{contract.Umr.Trim()}";
 
             var configuredAccounts = _irisBankAccounts.Accounts ?? [];
@@ -2541,7 +2541,7 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
                 .FirstOrDefault();
             var pdf = BuildFrenchContractDebitNotePdf(
                 contract, contract.IdCounterpartyNavigation, ResolveDebitNoteContractType(contract), mainCover,
-                reference, grossPremium, contract.CedentCommission ?? 0m,
+                reference, financials.SignedGrossPremium, financials.CedentCommissionPercentage,
                 cedentCommissionAmount, baseContractAmount,
                 precision, _invoiceBranding, LoadIrisInvoiceLogo(), bankAccounts);
             return ServiceResult<PrintablePaymentDocumentDto>.Success(new PrintablePaymentDocumentDto
@@ -2607,12 +2607,12 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
         if (contract is null) return NotFound<IReadOnlyList<PremiumDebitNoteResponseDto>>("Contract was not found.");
         var invoiceable = PremiumDebitNoteFinancials.ResolveContractGrossPremium(contract);
         var currencyPrecision = PanelRemittanceCalculator.Precision(contract.IdCurrencyNavigation?.DecimalPlaces);
-        var cedentCommissionAmount = PremiumDebitNoteFinancials.CalculateCedentCommissionAmount(invoiceable, contract.CedentCommission, currencyPrecision);
         if (!PremiumDebitNoteFinancials.TryCalculateInvoiceablePremium(
                 contract, out var signedInvoiceable, out var invoiceableError))
             return Failure<IReadOnlyList<PremiumDebitNoteResponseDto>>(
                 "Contract financial data is invalid.", [invoiceableError!]);
         var invoiceableNet = signedInvoiceable!.InvoiceableNetPremium;
+        var cedentCommissionAmount = signedInvoiceable.CedentCommissionAmount;
         var runningInvoiced = 0m;
         var runningTotalInvoiced = 0m;
         var runningTotalAvoir = 0m;
@@ -3043,11 +3043,11 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
         if (contract is null) return NotFound<PremiumDebitNoteResponseDto>("Contract was not found.");
         var invoiceable = PremiumDebitNoteFinancials.ResolveContractGrossPremium(contract);
         var currencyPrecision = PanelRemittanceCalculator.Precision(contract.IdCurrencyNavigation?.DecimalPlaces);
-        var cedentCommissionAmount = PremiumDebitNoteFinancials.CalculateCedentCommissionAmount(invoiceable, contract.CedentCommission, currencyPrecision);
         if (!PremiumDebitNoteFinancials.TryCalculateInvoiceablePremium(
                 contract, out var invoiceFinancials, out var invoiceFinancialError))
             return Failure<PremiumDebitNoteResponseDto>("Contract financial data is invalid.", [invoiceFinancialError!]);
         var invoiceableNet = invoiceFinancials!.InvoiceableNetPremium;
+        var cedentCommissionAmount = invoiceFinancials.CedentCommissionAmount;
         var contractDocuments = await _db.Invoices.AsNoTracking()
             .Where(item => item.IdContract == invoice.IdContract).ToListAsync(cancellationToken);
         var totals = InvoiceDocumentAccounting.CalculateTotals(contractDocuments);
@@ -3109,7 +3109,7 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
             ReconciliationDifference = invoice.PanelAllocations.Sum(item => item.GrossPremium - item.CedentCommissionAmount) - (invoice.GrossPremium ?? 0m),
             InvoiceDate = invoice.InvoiceDate,
             ContractGrossPremium = invoiceableGross,
-            InvoiceableGrossPremium = invoiceableGross,
+            InvoiceableGrossPremium = invoiceableNet + cedentCommissionAmount,
             InvoiceableNetPremium = invoiceableNet,
             CedentCommissionAmount = cedentCommissionAmount,
             GrossAmount = invoice.GrossPremium ?? 0m,

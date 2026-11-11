@@ -90,10 +90,11 @@ public sealed partial class FinancialWorkflowService
         var resource = $"IRIS:CounterpartyBankAccounts:{id}";
         await _db.Database.ExecuteSqlInterpolatedAsync($@"DECLARE @r int; EXEC @r=sys.sp_getapplock @Resource={resource},@LockMode='Exclusive',@LockOwner='Transaction',@LockTimeout=10000; IF @r<0 THROW 51000,'Bank accounts are busy; retry the operation.',1;", ct);
     }
-    private Task<bool> DuplicateBankIdentityAsync(int counterpartyId, string? iban, int? exceptId, CancellationToken ct)
+    private async Task<bool> DuplicateBankIdentityAsync(int counterpartyId, string? iban, int? exceptId, CancellationToken ct)
     {
         var normalized = NormalizeIban(iban);
-        return _db.CounterpartyBankAccounts.AnyAsync(x => x.IdCounterparty == counterpartyId && (!exceptId.HasValue || x.IdBankAccount != exceptId)
+        if (string.IsNullOrEmpty(normalized)) return false;
+        return await _db.CounterpartyBankAccounts.AnyAsync(x => x.IdCounterparty == counterpartyId && (!exceptId.HasValue || x.IdBankAccount != exceptId)
             && x.Iban != null && x.Iban.Replace(" ", "").Replace("\t", "").Replace("\r", "").Replace("\n", "").ToUpper() == normalized, ct);
     }
     private static ServiceResult<BankAccountResponseDto> DuplicateAccount() => ServiceResult<BankAccountResponseDto>.Failure(

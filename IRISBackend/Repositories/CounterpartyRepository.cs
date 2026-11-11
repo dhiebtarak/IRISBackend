@@ -41,6 +41,7 @@ namespace IRISBackend.Repositories
         {
             return _dbContext.Counterparties
                 .Include(counterparty => counterparty.TypeAssignments)
+                .Include(counterparty => counterparty.AdditionalContacts)
                 .SingleOrDefaultAsync(counterparty => counterparty.Id == id, cancellationToken);
         }
 

@@ -9,6 +9,7 @@ public partial class IRISBackendContext
     partial void OnModelCreatingPartial(ModelBuilder modelBuilder)
     {
         ConfigureAccessActivity(modelBuilder);
+        ConfigureCounterpartyContacts(modelBuilder);
         modelBuilder.Entity<IrisBankAccount>(entity =>
         {
             entity.ToTable("IRIS_BANK_ACCOUNT");
@@ -200,7 +201,7 @@ public partial class IRISBackendContext
             entity.Property(e => e.BankCountry).HasMaxLength(150).HasColumnName("Bank_country");
             entity.Property(e => e.HasCorrespondentBank).HasDefaultValue(false).HasColumnName("Has_correspondent_bank");
             entity.Property(e => e.CorrespondentBankName).HasMaxLength(255).HasColumnName("Correspondent_bank_name");
-            entity.Property(e => e.CorrespondentSwiftBic).HasMaxLength(100).HasColumnName("Correspondent_swift_bic");
+            entity.Property(e => e.CorrespondentSwiftBic).HasColumnType("nvarchar(max)").HasColumnName("Correspondent_swift_bic");
             entity.HasIndex(e => new { e.IdCounterparty, e.IdCurrency }, "UX_COUNTERPARTY_BANK_ACCOUNT_default_currency")
                 .IsUnique()
                 .HasFilter("[Is_active]=(1) AND [Is_default]=(1)");
@@ -299,10 +300,10 @@ public partial class IRISBackendContext
             entity.Property(e => e.BankNameSnapshot).HasMaxLength(255).HasColumnName("Bank_name_snapshot");
             entity.Property(e => e.BankCitySnapshot).HasMaxLength(150).HasColumnName("Bank_city_snapshot");
             entity.Property(e => e.BankCountrySnapshot).HasMaxLength(150).HasColumnName("Bank_country_snapshot");
-            entity.Property(e => e.IbanSnapshot).HasMaxLength(100).HasColumnName("Iban_snapshot");
-            entity.Property(e => e.SwiftBicSnapshot).HasMaxLength(100).HasColumnName("Swift_bic_snapshot");
+            entity.Property(e => e.IbanSnapshot).HasColumnType("nvarchar(max)").HasColumnName("Iban_snapshot");
+            entity.Property(e => e.SwiftBicSnapshot).HasColumnType("nvarchar(max)").HasColumnName("Swift_bic_snapshot");
             entity.Property(e => e.CorrespondentBankNameSnapshot).HasMaxLength(255).HasColumnName("Correspondent_bank_name_snapshot");
-            entity.Property(e => e.CorrespondentSwiftBicSnapshot).HasMaxLength(100).HasColumnName("Correspondent_swift_bic_snapshot");
+            entity.Property(e => e.CorrespondentSwiftBicSnapshot).HasColumnType("nvarchar(max)").HasColumnName("Correspondent_swift_bic_snapshot");
             entity.Property(e => e.GrossPremiumSnapshot).HasColumnType("decimal(19, 4)").HasColumnName("Gross_premium_snapshot");
             entity.Property(e => e.DeductionsSnapshot).HasColumnType("decimal(19, 4)").HasColumnName("Deductions_snapshot");
             entity.Property(e => e.CurrencyCodeSnapshot).HasMaxLength(20).HasColumnName("Currency_code_snapshot");

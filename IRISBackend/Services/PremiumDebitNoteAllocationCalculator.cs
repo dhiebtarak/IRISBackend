@@ -48,7 +48,7 @@ public static class PremiumDebitNoteAllocationCalculator
 
         var invoiceFraction = invoiceNetAmount / invoiceableValues.InvoiceableNetPremium;
         var invoiceGrossEquivalent = PremiumDebitNoteFinancials.RoundMoney(
-            invoiceableValues.ContractGrossPremium * invoiceFraction, precision);
+            invoiceableValues.SignedGrossPremium * invoiceFraction, precision);
         var totalCedentCommission = invoiceGrossEquivalent - invoiceNetAmount;
         if (totalCedentCommission < 0m)
             throw new ArgumentException("Rounded gross equivalent cannot be less than the net invoice amount.", nameof(invoiceNetAmount));

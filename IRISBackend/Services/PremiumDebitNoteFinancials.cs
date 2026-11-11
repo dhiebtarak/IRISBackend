@@ -17,7 +17,8 @@ public sealed record InvoiceablePremium(
     decimal CedentCommissionPercentage,
     decimal CedentCommissionAmount,
     decimal InvoiceableNetPremium,
-    int CurrencyDecimalPlaces);
+    int CurrencyDecimalPlaces,
+    decimal SignedGrossPremium);
 
 public static class PremiumDebitNoteFinancials
 {
@@ -88,9 +89,8 @@ public static class PremiumDebitNoteFinancials
             return Invalid("cedentCommissionPercentage", "Cedent commission amount cannot exceed contract gross premium.", out validationError);
 
         var signedGrossPremium = RoundMoney(grossPremium * signedSharePercentage.Value / 100m, precision);
-        var contractNetPremium = RoundMoney(grossPremium - commissionAmount, precision);
-        var invoiceableNetPremium = RoundMoney(contractNetPremium * signedSharePercentage.Value / 100m, precision);
-        var signedCommissionAmount = signedGrossPremium - invoiceableNetPremium;
+        var signedCommissionAmount = CalculateCedentCommissionAmount(signedGrossPremium, commissionPercentage, precision);
+        var invoiceableNetPremium = RoundMoney(signedGrossPremium - signedCommissionAmount, precision);
         if (invoiceableNetPremium < 0m)
             return Invalid("invoiceableNetPremium", "Calculated invoiceable net premium cannot be negative.", out validationError);
 
@@ -112,36 +112,16 @@ public static class PremiumDebitNoteFinancials
         out string? validationError)
     {
         result = null;
-        validationError = null;
-        var precision = PanelRemittanceCalculator.Precision(contract.IdCurrencyNavigation?.DecimalPlaces);
+        if (!TryCalculateSignedInvoiceablePremium(contract, out var signed, out validationError))
+            return false;
 
-        if (contract.ContractFac is not null)
-        {
-            if (contract.ContractFac.SumInsured is < 0m)
-                return Invalid("sumInsured", "Sum insured cannot be negative.", out validationError);
-            if (contract.ContractFac.PremiumRate is < 0m or > 100m)
-                return Invalid("premiumRate", "Premium rate must be between 0 and 100 percent.", out validationError);
-        }
-
-        var commissionPercentage = contract.CedentCommission ?? 0m;
-        if (commissionPercentage is < 0m or > 100m)
-            return Invalid("cedentCommissionPercentage", "Cedent commission percentage must be between 0 and 100.", out validationError);
-
-        var grossPremium = ResolveContractGrossPremium(contract);
-        if (grossPremium < 0m)
-            return Invalid("contractGrossPremium", "Contract gross premium cannot be negative.", out validationError);
-
-        var commissionAmount = CalculateCedentCommissionAmount(grossPremium, commissionPercentage, precision);
-        if (commissionAmount > grossPremium)
-            return Invalid("cedentCommissionPercentage", "Cedent commission amount cannot exceed contract gross premium.", out validationError);
-
-        var invoiceableNetPremium = RoundMoney(grossPremium - commissionAmount, precision);
         result = new InvoiceablePremium(
-            grossPremium,
-            commissionPercentage,
-            commissionAmount,
-            invoiceableNetPremium,
-            precision);
+            signed!.ContractGrossPremium,
+            signed.CedentCommissionPercentage,
+            signed.SignedCedentCommissionAmount,
+            signed.InvoiceableNetPremium,
+            signed.CurrencyDecimalPlaces,
+            signed.SignedGrossPremium);
         return true;
     }
 

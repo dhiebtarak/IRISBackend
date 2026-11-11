@@ -6,6 +6,17 @@ namespace IRISBackend.Tests;
 public sealed class FacultativeFinancialCalculatorTests
 {
     [Fact]
+    public void Calculate_TwoMillionAtOnePercentIsTwentyThousand()
+    {
+        var result = FacultativeFinancialCalculator.Calculate(
+            2000000m, 1m, irisCommission: 0m, cedentCommissionPct: 0m, currencyDecimalPlaces: 3);
+
+        Assert.NotNull(result);
+        Assert.Equal(20000m, result.GrossPremium);
+        Assert.Equal(20000m, result.NetPremium);
+    }
+
+    [Fact]
     public void Calculate_UsesPercentagePremiumRateAndSubtractsCedentCommission()
     {
         var result = FacultativeFinancialCalculator.Calculate(100000m, 2m, 200m, 5m);

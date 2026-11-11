@@ -13,6 +13,7 @@ namespace IRISBackend.DTOs
         public string? Email { get; set; }
 
         public string? PhoneNumber { get; set; }
+        public IReadOnlyCollection<CounterpartyContactDto>? AdditionalContacts { get; set; }
 
         public string? AddressLine { get; set; }
 

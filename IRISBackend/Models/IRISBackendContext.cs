@@ -950,7 +950,7 @@ public partial class IRISBackendContext : DbContext
                 .IsRequired()
                 .HasMaxLength(450)
                 .HasColumnName("Created_by");
-            entity.Property(e => e.Iban).HasMaxLength(100);
+            entity.Property(e => e.Iban).HasColumnType("nvarchar(max)");
             entity.Property(e => e.IdCounterparty).HasColumnName("Id_counterparty");
             entity.Property(e => e.IdCurrency).HasColumnName("Id_currency");
             entity.Property(e => e.IsActive)
@@ -960,9 +960,9 @@ public partial class IRISBackendContext : DbContext
             entity.Property(e => e.IsDefault)
                 .HasAnnotation("Relational:DefaultConstraintName", "DF_COUNTERPARTY_BANK_ACCOUNT_is_default")
                 .HasColumnName("Is_default");
-            entity.Property(e => e.Rib).HasMaxLength(100);
+            entity.Property(e => e.Rib).HasColumnType("nvarchar(max)");
             entity.Property(e => e.SwiftBic)
-                .HasMaxLength(100)
+                .HasColumnType("nvarchar(max)")
                 .HasColumnName("Swift_bic");
             entity.Property(e => e.UpdatedAt).HasColumnName("Updated_at");
             entity.Property(e => e.UpdatedBy)
