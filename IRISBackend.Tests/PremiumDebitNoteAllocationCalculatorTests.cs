@@ -29,19 +29,19 @@ public sealed class PremiumDebitNoteAllocationCalculatorTests
     }
 
     [Fact]
-    public void CalculateUsesFullContractPremiumEvenWhenCedentSignedShareIsTwentyPercent()
+    public void CalculateAppliesSignedShareBeforeAllocatingPremiumAndCommission()
     {
         var contract = new Contract
         {
-            GrossPremium = 2000m,
+            GrossPremium = 20000m,
             CedentCommission = 10m,
-            SignedSharePctCedent = 20m,
+            SignedSharePctCedent = 10m,
             IdCurrencyNavigation = new Currency { CurrencyCode = "TND", DecimalPlaces = 3 }
         };
         var panels = new[]
         {
-            new ContractPanel { IdPanel = 1, IdCounterparty = 1, SignedSharePct = 10m },
-            new ContractPanel { IdPanel = 2, IdCounterparty = 2, SignedSharePct = 10m }
+            new ContractPanel { IdPanel = 1, IdCounterparty = 1, SignedSharePct = 5m },
+            new ContractPanel { IdPanel = 2, IdCounterparty = 2, SignedSharePct = 5m }
         };
 
         var result = PremiumDebitNoteAllocationCalculator.Calculate(contract, panels, 1800m, 3);

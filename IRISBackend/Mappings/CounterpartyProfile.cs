@@ -9,13 +9,17 @@ namespace IRISBackend.Mappings
         public CounterpartyProfile()
         {
             CreateMap<CounterpartyCreateDto, Counterparty>()
+                .ForMember(destination => destination.AdditionalContacts, options => options.Ignore())
                 .ForMember(destination => destination.Type, options => options.Ignore())
                 .ForMember(destination => destination.TypeAssignments, options => options.Ignore());
             CreateMap<CounterpartyUpdateDto, Counterparty>()
+                .ForMember(destination => destination.AdditionalContacts, options => options.Ignore())
                 .ForMember(destination => destination.Type, options => options.Ignore())
                 .ForMember(destination => destination.TypeAssignments, options => options.Ignore());
             CreateMap<Counterparty, CounterpartyDetailsDto>()
+                .ForMember(destination => destination.AdditionalContacts, options => options.MapFrom(source => source.AdditionalContacts.OrderBy(contact => contact.SortOrder)))
                 .ForMember(destination => destination.Types, options => options.MapFrom(source => source.TypeAssignments.OrderBy(assignment => assignment.Type).Select(assignment => assignment.Type).ToArray()));
+            CreateMap<CounterpartyContact, CounterpartyContactDto>();
             CreateMap<Counterparty, CounterpartyListItemDto>()
                 .ForMember(destination => destination.Types, options => options.MapFrom(source => source.TypeAssignments.OrderBy(assignment => assignment.Type).Select(assignment => assignment.Type).ToArray()))
                 .ForMember(destination => destination.HasActiveBankAccount, options => options.MapFrom(source => source.CounterpartyBankAccounts.Any(account => account.IsActive)))

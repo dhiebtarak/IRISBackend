@@ -46,13 +46,13 @@ public sealed class PremiumDebitNoteFinancialsTests
     }
 
     [Fact]
-    public void InvoiceablePremiumUsesFullContractGrossAndIgnoresCedentSignedShare()
+    public void InvoiceablePremiumAppliesSignedShareBeforeCedentCommission()
     {
         var contract = new Contract
         {
-            GrossPremium = 2000m,
+            GrossPremium = 20000m,
             CedentCommission = 10m,
-            SignedSharePctCedent = 20m,
+            SignedSharePctCedent = 10m,
             IdCurrencyNavigation = new Currency { DecimalPlaces = 3 }
         };
 
@@ -60,7 +60,8 @@ public sealed class PremiumDebitNoteFinancialsTests
             contract, out var result, out var error);
 
         Assert.True(valid, error);
-        Assert.Equal(2000m, result!.ContractGrossPremium);
+        Assert.Equal(20000m, result!.ContractGrossPremium);
+        Assert.Equal(2000m, result.SignedGrossPremium);
         Assert.Equal(200m, result.CedentCommissionAmount);
         Assert.Equal(1800m, result.InvoiceableNetPremium);
     }

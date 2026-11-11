@@ -29,6 +29,11 @@
 
   <ItemGroup>
     <None Update="Deployment\20261103_access_activity.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Deployment\20261110_counterparty_contacts.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Deployment\20261110_bank_identifier_lengths.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Deployment\20261110_test_schema_updates.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Deployment\20261111_swift_bic_free_text.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Deployment\20261111_test_schema_updates.sql" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup Condition="Exists('Assets\Branding\iris-logo.png')">

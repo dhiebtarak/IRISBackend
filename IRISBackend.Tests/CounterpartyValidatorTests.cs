@@ -7,6 +7,21 @@ namespace IRISBackend.Tests
 {
     public class CounterpartyValidatorTests
     {
+        [Theory]
+        [InlineData("bad email", "", false)]
+        [InlineData("", "", false)]
+        [InlineData("second@example.test", "+21611111111", true)]
+        [InlineData("", "+21611111111", true)]
+        public void ValidatesAdditionalContactPairs(string email, string phone, bool valid)
+        {
+            var result = CreateCreateValidator().Validate(new CounterpartyCreateDto
+            {
+                Name = "Multiple contacts", Types = [CounterpartyTypes.Cedent], Status = "Active",
+                AdditionalContacts = [new() { Email = email, PhoneNumber = phone }]
+            });
+            Assert.Equal(valid, result.IsValid);
+        }
+
         [Fact]
         public void CreateValidator_WhenRequiredFieldsAreMissing_ReturnsErrors()
         {

@@ -1567,8 +1567,7 @@ namespace IRISBackend.Migrations
                         .HasColumnName("Correspondent_bank_name");
 
                     b.Property<string>("CorrespondentSwiftBic")
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)")
+                        .HasColumnType("nvarchar(max)")
                         .HasColumnName("Correspondent_swift_bic");
 
                     b.Property<DateTime>("CreatedAt")
@@ -1591,8 +1590,7 @@ namespace IRISBackend.Migrations
                         .HasColumnName("Has_correspondent_bank");
 
                     b.Property<string>("Iban")
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<int>("IdCounterparty")
                         .HasColumnType("int")
@@ -1615,12 +1613,10 @@ namespace IRISBackend.Migrations
                         .HasAnnotation("Relational:DefaultConstraintName", "DF_COUNTERPARTY_BANK_ACCOUNT_is_default");
 
                     b.Property<string>("Rib")
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("SwiftBic")
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)")
+                        .HasColumnType("nvarchar(max)")
                         .HasColumnName("Swift_bic");
 
                     b.Property<DateTime?>("UpdatedAt")
@@ -1645,6 +1641,35 @@ namespace IRISBackend.Migrations
                         .HasFilter("[Is_active]=(1) AND [Is_default]=(1)");
 
                     b.ToTable("COUNTERPARTY_BANK_ACCOUNT", (string)null);
+                });
+
+            modelBuilder.Entity("IRISBackend.Models.CounterpartyContact", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("CounterpartyId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Email")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("PhoneNumber")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CounterpartyId", "SortOrder");
+
+                    b.ToTable("COUNTERPARTY_CONTACT", (string)null);
                 });
 
             modelBuilder.Entity("IRISBackend.Models.CounterpartyTypeAssignment", b =>
@@ -1948,8 +1973,7 @@ namespace IRISBackend.Migrations
                         .HasColumnName("Correspondent_bank_name_snapshot");
 
                     b.Property<string>("CorrespondentSwiftBicSnapshot")
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)")
+                        .HasColumnType("nvarchar(max)")
                         .HasColumnName("Correspondent_swift_bic_snapshot");
 
                     b.Property<DateTime>("CreatedAt")
@@ -1986,8 +2010,7 @@ namespace IRISBackend.Migrations
                         .HasColumnName("Gross_premium_snapshot");
 
                     b.Property<string>("IbanSnapshot")
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)")
+                        .HasColumnType("nvarchar(max)")
                         .HasColumnName("Iban_snapshot");
 
                     b.Property<int>("IdBankAccount")
@@ -2062,8 +2085,7 @@ namespace IRISBackend.Migrations
                         .HasColumnName("Started_by");
 
                     b.Property<string>("SwiftBicSnapshot")
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)")
+                        .HasColumnType("nvarchar(max)")
                         .HasColumnName("Swift_bic_snapshot");
 
                     b.Property<decimal>("TotalAmount")
@@ -4002,6 +4024,17 @@ namespace IRISBackend.Migrations
                     b.Navigation("UpdatedByNavigation");
                 });
 
+            modelBuilder.Entity("IRISBackend.Models.CounterpartyContact", b =>
+                {
+                    b.HasOne("IRISBackend.Models.Counterparty", "Counterparty")
+                        .WithMany("AdditionalContacts")
+                        .HasForeignKey("CounterpartyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Counterparty");
+                });
+
             modelBuilder.Entity("IRISBackend.Models.CounterpartyTypeAssignment", b =>
                 {
                     b.HasOne("IRISBackend.Models.Counterparty", "Counterparty")
@@ -4817,6 +4850,8 @@ namespace IRISBackend.Migrations
 
             modelBuilder.Entity("IRISBackend.Models.Counterparty", b =>
                 {
+                    b.Navigation("AdditionalContacts");
+
                     b.Navigation("BankReceipts");
 
                     b.Navigation("CollectionNotes");

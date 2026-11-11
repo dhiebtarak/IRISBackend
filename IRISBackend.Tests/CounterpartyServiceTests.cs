@@ -17,6 +17,33 @@ namespace IRISBackend.Tests
     public class CounterpartyServiceTests
     {
         [Fact]
+        public async Task AdditionalContactsRoundTripAndLegacyUpdatesPreserveThem()
+        {
+            var repository = new FakeCounterpartyRepository();
+            var service = CreateService(repository);
+            var created = await service.CreateAsync(new CounterpartyCreateDto
+            {
+                Name = "Multiple contacts", Types = [CounterpartyTypes.Cedent], Email = "primary@example.test",
+                AdditionalContacts = [
+                    new() { Email = " second@example.test ", PhoneNumber = " +21611111111 " },
+                    new() { Email = "third@example.test", PhoneNumber = "+21622222222" }
+                ]
+            });
+            Assert.True(created.Succeeded);
+            Assert.Equal("primary@example.test", created.Value!.Email);
+            Assert.Equal(new[] { "second@example.test", "third@example.test" }, created.Value.AdditionalContacts.Select(contact => contact.Email));
+            var id = created.Value.Id;
+            var loaded = await service.GetByIdAsync(id);
+            Assert.Equal(2, loaded.Value!.AdditionalContacts.Count);
+            var legacy = await service.UpdateAsync(id, new CounterpartyUpdateDto
+            { Name = "Legacy update", Types = [CounterpartyTypes.Cedent] });
+            Assert.Equal(2, legacy.Value!.AdditionalContacts.Count);
+            var cleared = await service.UpdateAsync(id, new CounterpartyUpdateDto
+            { Name = "Clear extra contacts", Types = [CounterpartyTypes.Cedent], AdditionalContacts = [] });
+            Assert.Empty(cleared.Value!.AdditionalContacts);
+        }
+
+        [Fact]
         public async Task CreateAsync_WhenLegacyIdentifiersAreUnique_CreatesActiveCounterparty()
         {
             var repository = new FakeCounterpartyRepository();

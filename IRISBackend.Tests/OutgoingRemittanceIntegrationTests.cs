@@ -188,6 +188,55 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AdditionalCounterpartyContactsPersistAndCanBeRemovedWithoutChangingPrimary()
+    {
+        var deploymentSql = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Deployment", "20261110_counterparty_contacts.sql"));
+        await _db.Database.ExecuteSqlRawAsync(deploymentSql);
+        var counterparty = await _db.Counterparties.SingleAsync(item => item.Id == _receipt.IdCounterparty);
+        var id = counterparty.Id;
+        counterparty.Email = "primary@example.test";
+        counterparty.AdditionalContacts.Add(new CounterpartyContact { Email = "second@example.test", PhoneNumber = "+21611111111", SortOrder = 0 });
+        counterparty.AdditionalContacts.Add(new CounterpartyContact { Email = "third@example.test", PhoneNumber = "+21622222222", SortOrder = 1 });
+        await _db.SaveChangesAsync();
+        await _db.Database.ExecuteSqlRawAsync(deploymentSql);
+        _db.ChangeTracker.Clear();
+        var repository = new IRISBackend.Repositories.CounterpartyRepository(_db);
+        var reloaded = await repository.GetByIdWithTypesAsync(id);
+        Assert.Equal(2, reloaded!.AdditionalContacts.Count);
+        Assert.Equal("primary@example.test", reloaded.Email);
+        reloaded.AdditionalContacts.Remove(reloaded.AdditionalContacts.Single(contact => contact.SortOrder == 0));
+        await repository.SaveChangesAsync();
+        _db.ChangeTracker.Clear();
+        var afterRemoval = await repository.GetByIdWithTypesAsync(id);
+        Assert.Equal("third@example.test", Assert.Single(afterRemoval!.AdditionalContacts).Email);
+        Assert.Equal("primary@example.test", afterRemoval.Email);
+    }
+
+    [Fact]
+    public async Task ContractDebitNoteAppliesSignedShareBeforeCedentCommission()
+    {
+        var contract = await _db.Contracts.SingleAsync(item => item.IdContract == _invoice.IdContract);
+        contract.GrossPremium = 20000m;
+        contract.SignedSharePctCedent = 10m;
+        contract.CedentCommission = 10m;
+        contract.NetPremiumCedent = 18000m;
+        await _db.SaveChangesAsync();
+
+        var result = await Service(_db, bankAccounts: TestIrisBankAccounts())
+            .GetContractFinancialNoteAsync(contract.IdContract, default);
+
+        Assert.True(result.Succeeded, result.Error?.Message);
+        Assert.Equal("DEBIT_NOTE", result.Value!.DocumentType);
+        var pdf = Encoding.Latin1.GetString(result.Value.Content);
+        Assert.Contains("Contract Gross Premium", pdf);
+        Assert.Contains("2 000,000", pdf);
+        Assert.Contains("200,000", pdf);
+        Assert.Contains("1 800,000", pdf);
+        Assert.DoesNotContain("20 000,000", pdf);
+        Assert.DoesNotContain("18 000,000", pdf);
+    }
+
+    [Fact]
     public async Task ContractFinancialNoteIsGeneratedFromContractWithoutInvoiceSelection()
     {
         var contract = await _db.Contracts.SingleAsync(item => item.IdContract == _invoice.IdContract);
@@ -2292,19 +2341,19 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task InvoiceContextUsesFullContractGrossWithoutApplyingCedentSignedShare()
+    public async Task InvoiceContextAppliesSignedShareBeforeCommissionAndEnforcesInvoiceLimit()
     {
         var contract = await _db.Contracts.SingleAsync(item => item.IdContract == _invoice.IdContract);
-        contract.GrossPremium = 2000m;
+        contract.GrossPremium = 20000m;
         contract.CedentCommission = 10m;
-        contract.SignedSharePctCedent = 20m;
-        _panels[0].SignedSharePct = 10m;
-        _panels[1].SignedSharePct = 10m;
+        contract.SignedSharePctCedent = 10m;
+        _panels[0].SignedSharePct = 5m;
+        _panels[1].SignedSharePct = 5m;
         _db.ContractFacs.Add(new ContractFac
         {
             IdContract = contract.IdContract,
-            SumInsured = 500000m,
-            PremiumRate = 0.1m
+            SumInsured = 2000000m,
+            PremiumRate = 1m
         });
         _invoice.Status = "Cancelled";
         await _db.SaveChangesAsync();
@@ -2312,18 +2361,28 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
         var context = await Service(_db).GetInvoiceContextAsync(contract.IdContract, default);
 
         Assert.True(context.Succeeded, context.Error?.Message);
-        Assert.Equal(2000m, context.Value!.ContractGrossPremium);
-        Assert.Equal(1800m, context.Value.AvailableCreditBalance);
+        Assert.Equal(20000m, context.Value!.ContractGrossPremium);
+        Assert.Equal(18000m, context.Value.AvailableCreditBalance);
         Assert.Equal(10m, context.Value.CedentCommissionPct);
         Assert.Equal(10m, context.Value.CedentCommissionPercentage);
         Assert.Equal(200m, context.Value.CedentCommissionAmount);
-        Assert.Equal(20m, context.Value.ContractSignedSharePercentage);
+        Assert.Equal(10m, context.Value.ContractSignedSharePercentage);
         Assert.Equal(1800m, context.Value.InvoiceableNetPremium);
         Assert.Equal(2000m, context.Value.InvoiceableGrossPremium);
         Assert.Equal(0m, context.Value.AlreadyInvoicedAmount);
         Assert.Equal(1800m, context.Value.RemainingInvoiceableAmount);
         Assert.Equal(3, context.Value.CurrencyDecimalPlaces);
         Assert.Equal("TND", context.Value.Currency);
+
+        var preview = await Service(_db).PreviewPremiumInvoiceAsync(contract.IdContract, new PremiumDebitNoteRequestDto
+        {
+            InvoiceType = "INVOICE", GrossAmount = 1800m, InvoiceDate = new(2026, 10, 20)
+        }, default);
+        Assert.True(preview.Succeeded, preview.Error?.Message);
+        Assert.Equal(20000m, preview.Value!.ContractGrossPremium);
+        Assert.Equal(2000m, preview.Value.InvoiceableGrossPremium);
+        Assert.Equal(200m, preview.Value.CedentCommissionAmount);
+        Assert.Equal(1800m, preview.Value.Allocations.Sum(line => line.AllocationAmount));
 
         var overLimit = await Service(_db).CreatePremiumInvoiceAsync(contract.IdContract, new PremiumDebitNoteRequestDto
         {
@@ -2343,7 +2402,18 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
         }, default);
         Assert.True(accepted.Succeeded, accepted.Error?.Message);
         Assert.Equal(1800m, accepted.Value!.Amount);
-        Assert.Equal(45m, accepted.Value.Allocations.Sum(line => line.AllocationAmount));
+        Assert.Equal(1800m, accepted.Value.Allocations.Sum(line => line.AllocationAmount));
+        Assert.Equal(2000m, accepted.Value.InvoiceableGrossPremium);
+        Assert.Equal(200m, accepted.Value.CedentCommissionAmount);
+        Assert.Equal(2000m, accepted.Value.Allocations.Sum(line => line.AllocatedGrossPremium));
+        Assert.Equal(200m, accepted.Value.Allocations.Sum(line => line.CedentCommissionAmount));
+
+        var history = await Service(_db).ListContractInvoicesAsync(contract.IdContract, default);
+        Assert.True(history.Succeeded, history.Error?.Message);
+        var saved = Assert.Single(history.Value!);
+        Assert.Equal(200m, saved.CedentCommissionAmount);
+        Assert.Equal(2000m, saved.InvoiceableGrossPremium);
+        Assert.Equal(0m, saved.RemainingInvoiceAmount);
 
         var duplicateOverage = await Service(_db).CreatePremiumInvoiceAsync(contract.IdContract, new PremiumDebitNoteRequestDto
         {

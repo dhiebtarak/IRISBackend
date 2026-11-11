@@ -152,12 +152,96 @@ public sealed class FinanceWorkspaceImprovementsTests : IAsyncLifetime
         var missing = Account(currencyId: 999999); Assert.Equal(404, (await service.CreateBankAccountAsync(first.Id, missing, default)).StatusCode);
     }
     [Fact]
-    public async Task MissingCurrencyAndInvalidIdentifiersReturnFieldValidationErrors()
+    public async Task MissingCurrencyReturnsFieldValidationErrorWithoutValidatingIban()
     {
-        var request = Account(currencyId: 0); request.Iban = "invalid";
+        var request = Account(currencyId: 0); request.Iban = "invalid@identifier";
         var result = await service.CreateBankAccountAsync(first.Id, request, default);
-        Assert.Equal(400, result.StatusCode); Assert.Contains(result.Error!.Errors, e => e.StartsWith("CurrencyId:")); Assert.Contains(result.Error.Errors, e => e.StartsWith("Iban:"));
+        Assert.Equal(400, result.StatusCode); Assert.Contains(result.Error!.Errors, e => e.StartsWith("CurrencyId:")); Assert.DoesNotContain(result.Error.Errors, e => e.StartsWith("Iban:"));
         Assert.Empty(await db.CounterpartyBankAccounts.ToListAsync());
+    }
+
+    [Fact]
+    public async Task LongAndHyphenatedBankIdentifiersPersistWithoutTruncation()
+    {
+        // Simulate a test database that has neither feature deployed yet.
+        await db.Database.ExecuteSqlRawAsync("""
+DROP TABLE dbo.COUNTERPARTY_CONTACT;
+ALTER TABLE dbo.COUNTERPARTY_BANK_ACCOUNT ALTER COLUMN Iban nvarchar(100) NULL;
+ALTER TABLE dbo.COUNTERPARTY_BANK_ACCOUNT ALTER COLUMN Rib nvarchar(100) NULL;
+ALTER TABLE dbo.DISBURSEMENT ALTER COLUMN Iban_snapshot nvarchar(100) NULL;
+""");
+        var script = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Deployment", "20261110_test_schema_updates.sql"));
+        await db.Database.ExecuteSqlRawAsync(script);
+        var input = Account();
+        input.Iban = "354415-USD-0000001069-01-" + new string('9', 512);
+        input.Rib = "RIB-" + new string('7', 512);
+        var created = await service.CreateBankAccountAsync(first.Id, input, default);
+        Assert.True(created.Succeeded, created.Error?.Message);
+        await db.Database.ExecuteSqlRawAsync(script);
+        var saved = await db.CounterpartyBankAccounts.AsNoTracking().SingleAsync();
+        Assert.Equal(input.Iban, saved.Iban);
+        Assert.Equal(input.Rib, saved.Rib);
+        var detail = await service.GetBankAccountAsync(first.Id, saved.IdBankAccount, default);
+        Assert.Equal(input.Iban, detail.Value!.Iban);
+        Assert.Equal(input.Rib, detail.Value.Rib);
+        db.Disbursements.Add(new Disbursement
+        {
+            IdBankAccount = saved.IdBankAccount, IdCounterparty = first.Id, IdUser = "finance-test",
+            CaseReference = "LONG-IDENTIFIER-TEST", TotalAmount = 1m, OperationDate = new DateOnly(2026, 11, 10),
+            PaymentMethode = "BankTransfer", SignatureStatus = "PaymentInProgress", Description = "Test payment",
+            CreatedAt = DateTime.UtcNow, CreatedBy = "finance-test", IbanSnapshot = input.Iban
+        });
+        db.CounterpartyContacts.Add(new CounterpartyContact
+        { CounterpartyId = first.Id, SortOrder = 0, Email = "extra@example.test", PhoneNumber = "+21611111111" });
+        await db.SaveChangesAsync();
+        await db.Database.ExecuteSqlRawAsync(script);
+        Assert.Equal(input.Iban, (await db.Disbursements.AsNoTracking().SingleAsync()).IbanSnapshot);
+        Assert.Equal("extra@example.test", (await db.CounterpartyContacts.AsNoTracking().SingleAsync()).Email);
+        var duplicate = Account(); duplicate.Iban = input.Iban.ToLowerInvariant();
+        Assert.Equal(409, (await service.CreateBankAccountAsync(first.Id, duplicate, default)).StatusCode);
+        var snapshot = db.Model.FindEntityType(typeof(Disbursement))!.FindProperty("IbanSnapshot")!;
+        Assert.Equal("nvarchar(max)", snapshot.GetColumnType());
+        Assert.Null(snapshot.GetMaxLength());
+    }
+
+    [Fact]
+    public async Task IbanAndSwiftAcceptBlankNumericPunctuationAndLongValuesOnCreateAndUpdate()
+    {
+        await db.Database.ExecuteSqlRawAsync("""
+ALTER TABLE dbo.COUNTERPARTY_BANK_ACCOUNT ALTER COLUMN Swift_bic nvarchar(100) NULL;
+ALTER TABLE dbo.COUNTERPARTY_BANK_ACCOUNT ALTER COLUMN Correspondent_swift_bic nvarchar(100) NULL;
+ALTER TABLE dbo.DISBURSEMENT ALTER COLUMN Swift_bic_snapshot nvarchar(100) NULL;
+ALTER TABLE dbo.DISBURSEMENT ALTER COLUMN Correspondent_swift_bic_snapshot nvarchar(100) NULL;
+""");
+        var script = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Deployment", "20261111_test_schema_updates.sql"));
+        await db.Database.ExecuteSqlRawAsync(script);
+        var request = Account(); request.Iban = null; request.SwiftBic = null;
+        request.HasCorrespondentBank = true; request.CorrespondentBankName = "Test correspondent"; request.CorrespondentSwiftBic = null;
+        var created = await service.CreateBankAccountAsync(first.Id, request, default);
+        Assert.True(created.Succeeded, created.Error?.Message);
+        Assert.True((await service.CreateBankAccountAsync(first.Id, request, default)).Succeeded);
+        request.Iban = "NOT@AN/IBAN!"; request.SwiftBic = "29590495"; request.CorrespondentSwiftBic = "CORRESPONDENT/@";
+        var updated = await service.UpdateBankAccountAsync(first.Id, created.Value!.IdBankAccount, request, default);
+        Assert.True(updated.Succeeded, updated.Error?.Message);
+        var detail = await service.GetBankAccountAsync(first.Id, created.Value.IdBankAccount, default);
+        Assert.Equal(request.Iban, detail.Value!.Iban); Assert.Equal("29590495", detail.Value.Account.SwiftBic);
+        request.Iban += new string('9', 512); request.SwiftBic = new string('8', 512); request.CorrespondentSwiftBic = new string('7', 512);
+        updated = await service.UpdateBankAccountAsync(first.Id, created.Value.IdBankAccount, request, default);
+        Assert.True(updated.Succeeded, updated.Error?.Message);
+        db.Disbursements.Add(new Disbursement
+        {
+            IdBankAccount = created.Value.IdBankAccount, IdCounterparty = first.Id, IdUser = "finance-test",
+            CaseReference = "FREE-TEXT-SWIFT", TotalAmount = 1m, OperationDate = new DateOnly(2026, 11, 11),
+            PaymentMethode = "BankTransfer", SignatureStatus = "PaymentInProgress", Description = "Test payment",
+            CreatedAt = DateTime.UtcNow, CreatedBy = "finance-test", IbanSnapshot = request.Iban,
+            SwiftBicSnapshot = request.SwiftBic, CorrespondentSwiftBicSnapshot = request.CorrespondentSwiftBic
+        });
+        await db.SaveChangesAsync();
+        await db.Database.ExecuteSqlRawAsync(script);
+        var saved = await db.CounterpartyBankAccounts.AsNoTracking().SingleAsync(account => account.IdBankAccount == created.Value.IdBankAccount);
+        Assert.Equal(request.Iban, saved.Iban); Assert.Equal(request.SwiftBic, saved.SwiftBic); Assert.Equal(request.CorrespondentSwiftBic, saved.CorrespondentSwiftBic);
+        var payment = await db.Disbursements.AsNoTracking().SingleAsync();
+        Assert.Equal(request.SwiftBic, payment.SwiftBicSnapshot); Assert.Equal(request.CorrespondentSwiftBic, payment.CorrespondentSwiftBicSnapshot);
     }
     [Fact]
     public async Task InactiveAccountsDoNotBecomeDefaultUntilActivated()

@@ -48,6 +48,7 @@ namespace IRISBackend.Services
             }
 
             var counterparty = _mapper.Map<Counterparty>(request);
+            ReplaceAdditionalContacts(counterparty, request.AdditionalContacts);
             counterparty.Type = typesResult.Value![0];
             counterparty.TypeAssignments = [];
             counterparty.LegacyCompanyCode = NormalizeOptionalCode(request.LegacyCompanyCode);
@@ -167,6 +168,7 @@ namespace IRISBackend.Services
             }
 
             _mapper.Map(request, counterparty);
+            ReplaceAdditionalContacts(counterparty, request.AdditionalContacts);
             counterparty.Type = typesResult.Value![0];
             counterparty.LegacyCompanyCode = NormalizeOptionalCode(request.LegacyCompanyCode);
             counterparty.Status = NormalizeStatus(request.Status);
@@ -307,6 +309,21 @@ namespace IRISBackend.Services
         private static bool IsActiveStatus(string status)
         {
             return !status.Equals("Inactive", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static void ReplaceAdditionalContacts(Counterparty counterparty, IReadOnlyCollection<CounterpartyContactDto>? contacts)
+        {
+            // Older clients omit this property: preserve contacts during their updates.
+            if (contacts is null) return;
+            counterparty.AdditionalContacts.Clear();
+            var order = 0;
+            foreach (var contact in contacts)
+                counterparty.AdditionalContacts.Add(new CounterpartyContact
+                {
+                    Email = string.IsNullOrWhiteSpace(contact.Email) ? null : contact.Email.Trim(),
+                    PhoneNumber = string.IsNullOrWhiteSpace(contact.PhoneNumber) ? null : contact.PhoneNumber.Trim(),
+                    SortOrder = order++
+                });
         }
 
         private async Task<CounterpartyDetailsDto> BuildDetailsDtoAsync(Counterparty counterparty, CancellationToken cancellationToken)

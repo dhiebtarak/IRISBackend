@@ -9,6 +9,9 @@ namespace IRISBackend.Validators
         public CounterpartyUpdateDtoValidator()
         {
             var attachmentValidator = new AttachmentUploadDtoValidator();
+            RuleFor(counterparty => counterparty.AdditionalContacts).Must(contacts => contacts is null || contacts.Count <= 50)
+                .WithMessage("A counterparty can have up to 50 additional contacts.");
+            RuleForEach(counterparty => counterparty.AdditionalContacts).NotNull().SetValidator(new CounterpartyContactDtoValidator());
 
             RuleFor(counterparty => counterparty.LegacyClientId)
                 .GreaterThan(0)
