@@ -558,7 +558,7 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
         var user = CurrentUser(); if (user is null) return Unauthorized<RemittanceResponseDto>();
         var item = await _db.RemittanceRefs.Include(x => x.IdCounterpartyNavigation).Include(x => x.IdCurrencyNavigation).FirstOrDefaultAsync(x => x.RemittanceRef1 == remittanceRef, cancellationToken);
         if (item is null) return NotFound<RemittanceResponseDto>("Remittance was not found.");
-        if (string.Equals(item.SourceType?.Trim(), "AVOIR", StringComparison.OrdinalIgnoreCase)
+        if (IsAvoirSource(item.SourceType)
             && !await _db.OutgoingClosingLines.AnyAsync(line => line.IsActive && line.RemittanceId == remittanceRef && line.Closing.IsActive, cancellationToken))
             return Failure<RemittanceResponseDto>("Avoir remittances must be netted with eligible Premium remittances for the same reinsurer and currency before confirmation.", status: StatusCodes.Status409Conflict);
         var isAvoirRefund = string.Equals(item.SourceType, "AVOIR_REFUND", StringComparison.OrdinalIgnoreCase)
@@ -618,7 +618,7 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
 
         if (string.Equals(item.SourceType?.Trim(), "AVOIR", StringComparison.OrdinalIgnoreCase)
             && !await _db.OutgoingClosingLines.AnyAsync(line => line.IsActive && line.RemittanceId == remittanceRef && line.Closing.IsActive, cancellationToken))
-            return Failure<RemittanceConfirmationResponseDto>("Avoir remittances must be netted with eligible Premium remittances for the same reinsurer and currency before confirmation.", status: StatusCodes.Status409Conflict);
+            return Failure<RemittanceConfirmationResponseDto>("Claim and Avoir credits must be netted with eligible Premium remittances for the same reinsurer and currency before confirmation.", status: StatusCodes.Status409Conflict);
 
         if (string.Equals(item.Status, "AwaitingFinanceDisbursement", StringComparison.OrdinalIgnoreCase))
         {
@@ -748,7 +748,7 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
             .ToListAsync(cancellationToken);
         if (sourceTypes.Count == requestedIds.Length
             && sourceTypes.All(row => string.Equals(row.SourceType?.Trim(), "Premium", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(row.SourceType?.Trim(), "AVOIR", StringComparison.OrdinalIgnoreCase)))
+                || IsAvoirSource(row.SourceType)))
         {
             return await ConfirmReinsurerRemittanceBatchAsync(requestedIds, traceId, cancellationToken);
         }
@@ -1093,7 +1093,8 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
     }
 
     private static bool IsAvoirSource(string? sourceType) =>
-        string.Equals(sourceType?.Trim(), "AVOIR", StringComparison.OrdinalIgnoreCase);
+        string.Equals(sourceType?.Trim(), "AVOIR", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(sourceType?.Trim(), "Claim", StringComparison.OrdinalIgnoreCase);
 
     private static ServiceResult<T> WithTrace<T>(ServiceResult<T> result, string traceId)
     {
@@ -1328,8 +1329,8 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
             .Include(x => x.SourceInvoice).ThenInclude(x => x!.IdContractNavigation).ThenInclude(x => x.IdCounterpartyNavigation)
             .FirstOrDefaultAsync(x => x.RemittanceRef1 == remittanceRef, cancellationToken);
         if (remittance is null) return NotFound<StartDisbursementResponseDto>("Remittance was not found.");
-        if (string.Equals(remittance.SourceType?.Trim(), "AVOIR", StringComparison.OrdinalIgnoreCase))
-            return Failure<StartDisbursementResponseDto>("Avoir remittances must be netted through a reinsurer closing before disbursement.", status: StatusCodes.Status409Conflict);
+        if (IsAvoirSource(remittance.SourceType))
+            return Failure<StartDisbursementResponseDto>("Claim and Avoir credits must be netted through a reinsurer closing before disbursement.", status: StatusCodes.Status409Conflict);
         var paymentInProgress = string.Equals(remittance.Status, "PaymentInProgress", StringComparison.OrdinalIgnoreCase);
         var closed = string.Equals(remittance.Status, "Closed", StringComparison.OrdinalIgnoreCase);
         Disbursement? existingDisbursement = remittance.IdDisbursement.HasValue

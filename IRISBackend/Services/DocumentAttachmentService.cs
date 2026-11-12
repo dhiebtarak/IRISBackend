@@ -6,7 +6,7 @@ using System.Security.Claims;
 
 namespace IRISBackend.Services;
 
-public sealed class DocumentAttachmentService : IDocumentAttachmentService
+public sealed partial class DocumentAttachmentService : IDocumentAttachmentService
 {
     private const string ContractDocumentType = "ContractAttachment";
     private const string PanelDocumentType = "PlacementAttachment";

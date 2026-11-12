@@ -460,6 +460,7 @@ public sealed partial class FinancialWorkflowService
     }
 
     private IQueryable<RemittanceRef> RemittanceDetails() => _db.RemittanceRefs.AsNoTrackingWithIdentityResolution()
+        .Include(x => x.ClaimRefNavigation)
         .Include(x => x.IdCounterpartyNavigation).Include(x => x.IdCurrencyNavigation)
         .Include(x => x.IdPanelNavigation).ThenInclude(x => x.IdContractNavigation).ThenInclude(contract => contract.IdCounterpartyNavigation)
         .Include(x => x.IdPanelNavigation).ThenInclude(panel => panel.IdContractNavigation)
@@ -578,7 +579,7 @@ public sealed partial class FinancialWorkflowService
     private static decimal RemainingPayable(RemittanceRef x) => x.Status is "Closed" or "Paid" ? 0m : x.NetPayableAmount ?? 0m;
 
     private static decimal SignedRemittanceAmount(string? sourceType, decimal? amount) =>
-        string.Equals(sourceType?.Trim(), "AVOIR", StringComparison.OrdinalIgnoreCase)
+        IsAvoirSource(sourceType)
             ? -Math.Abs(amount ?? 0m) : Math.Abs(amount ?? 0m);
 
     private static decimal SignedRemittanceAmount(RemittanceRef remittance) =>
@@ -628,8 +629,9 @@ public sealed partial class FinancialWorkflowService
         dto.SourceType = x.SourceType;
         dto.SourceInvoiceId = x.SourceInvoiceId;
         dto.SourceInvoiceNumber = x.SourceInvoice?.InvoiceNumber;
-        dto.SourceDocumentId = x.SourceInvoiceId ?? x.IdReceiptAllocationNavigation?.IdInvoice;
-        dto.SourceDocumentNumber = dto.InvoiceAvoirNumber;
+        dto.SourceDocumentId = x.ClaimRef ?? x.SourceInvoiceId ?? x.IdReceiptAllocationNavigation?.IdInvoice;
+        dto.SourceDocumentNumber = x.ClaimRefNavigation?.CollectionReference ?? dto.InvoiceAvoirNumber;
+        if (x.ClaimRef.HasValue) { dto.Label = x.ClaimRefNavigation?.ClaimNumber; dto.InvoiceAvoirNumber = dto.SourceDocumentNumber; }
         dto.Amount = SignedRemittanceAmount(x);
         dto.SignedNetPayableAmount = SignedRemittanceAmount(x);
         dto.AllocationPercentage = x.PartPct;
@@ -886,7 +888,7 @@ public sealed partial class FinancialWorkflowService
     }
 
     private static bool IsClosingAvoir(string? sourceType) =>
-        string.Equals(sourceType?.Trim(), "AVOIR", StringComparison.OrdinalIgnoreCase);
+        IsAvoirSource(sourceType);
 
     private static string BuildClosingDescription(Contract contract, string? coverage) =>
         $"Your share of the reinsurance premium in respect to \"{contract.Name?.Trim() ?? string.Empty}\" {coverage?.Trim() ?? string.Empty} Policy.";

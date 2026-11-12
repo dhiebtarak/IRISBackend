@@ -9,6 +9,28 @@ namespace IRISBackend.Tests;
 
 public sealed class DocumentStorageServiceTests
 {
+    [Theory]
+    [InlineData("evidence.zip")]
+    [InlineData("evidence.msg")]
+    [InlineData("evidence")]
+    public async Task ClaimUploadsAcceptArbitraryFileTypesWithoutChangingContractRules(string filename)
+    {
+        var root = CreateRoot();
+        try
+        {
+            var service = CreateService(root);
+            var request = new DocumentUploadRequestDto { FileName = filename, MimeType = "", ContentBase64 = "AAECAw==" };
+            var stored = await service.SaveAsync("claims", 42, request);
+            Assert.Equal("application/octet-stream", stored.MimeType);
+            Assert.StartsWith("claims/42/", stored.RelativePath);
+            await using var stream = await service.OpenReadAsync(stored.RelativePath);
+            using var copy = new MemoryStream(); await stream!.CopyToAsync(copy);
+            Assert.Equal(new byte[] { 0, 1, 2, 3 }, copy.ToArray());
+            await Assert.ThrowsAsync<InvalidOperationException>(() => service.SaveAsync("contracts", 42, request));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     [Fact]
     public async Task SaveAsync_StoresGeneratedFileAndCanReadIt()
     {

@@ -4,6 +4,14 @@ namespace IRISBackend.Services;
 
 public interface IFinancialWorkflowService
 {
+    Task<ServiceResult<ClaimContextDto>> GetClaimContextAsync(int contractId, CancellationToken ct);
+    Task<ServiceResult<PagedResponseDto<ClaimResponseDto>>> ListClaimsAsync(int? contractId, int page, int pageSize, bool soaOnly, CancellationToken ct);
+    Task<ServiceResult<ClaimResponseDto>> SaveClaimAsync(int contractId, int? claimId, ClaimRequestDto request, CancellationToken ct);
+    Task<ServiceResult<ClaimResponseDto>> IssueClaimCollectionAsync(int claimId, ClaimIssueRequestDto request, CancellationToken ct);
+    Task<ServiceResult<ClaimResponseDto>> PairClaimAsync(int claimId, ClaimPairRequestDto request, CancellationToken ct);
+    Task<ServiceResult<IReadOnlyList<ClaimReceiptOptionDto>>> GetClaimReceiptsAsync(int claimId, CancellationToken ct);
+    Task<ServiceResult<PrintablePaymentDocumentDto>> GetClaimCollectionDocumentAsync(int claimId, CancellationToken ct);
+    Task<ServiceResult<ClaimResponseDto>> CloseClaimAsync(int claimId, CancellationToken ct);
     Task<ServiceResult<IReadOnlyList<BankAccountResponseDto>>> GetBankAccountsAsync(int counterpartyId, bool activeOnly, CancellationToken cancellationToken);
     Task<ServiceResult<PagedResponseDto<BankAccountOptionDto>>> GetBankAccountOptionsAsync(BankAccountOptionQueryDto query, CancellationToken cancellationToken);
     Task<ServiceResult<BankAccountEditResponseDto>> GetBankAccountAsync(int counterpartyId, int bankAccountId, CancellationToken cancellationToken);

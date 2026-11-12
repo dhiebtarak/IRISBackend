@@ -273,6 +273,10 @@ ALTER TABLE dbo.DISBURSEMENT ALTER COLUMN Correspondent_swift_bic_snapshot nvarc
     public async Task RealHttpAuthorizationAndDateBindingReturn401403400And201()
     {
         var account = await Create();
+        var claimContract = new Contract { Name = "Claims HTTP test", Umr = "CLAIM-HTTP", Status = "Bound", TypeOfBusiness = "Facultative",
+            IdCounterparty = first.Id, IdCurrency = currency.IdCurrency, IdUser = "finance-test", CreatedBy = "finance-test", CreatedAt = DateTime.UtcNow,
+            InceptionDate = new DateOnly(2026, 1, 1), ExpiryDate = new DateOnly(2026, 12, 31) };
+        db.Contracts.Add(claimContract); await db.SaveChangesAsync();
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" }); builder.Logging.ClearProviders(); builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.Services.AddDbContext<IRISBackendContext>(o => o.UseSqlServer(db.Database.GetConnectionString())); builder.Services.AddHttpContextAccessor(); builder.Services.AddScoped<IFinancialWorkflowService, FinancialWorkflowService>();
         builder.Services.AddControllers().AddApplicationPart(typeof(FinanceController).Assembly);
@@ -283,13 +287,23 @@ ALTER TABLE dbo.DISBURSEMENT ALTER COLUMN Correspondent_swift_bic_snapshot nvarc
         {
             var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single(); using var client = new HttpClient { BaseAddress = new Uri(address) };
             Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/finance/bank-receipts")).StatusCode);
+            Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/claims")).StatusCode);
             client.DefaultRequestHeaders.Add("X-Test-Role", "front"); Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/finance/bank-receipts")).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/claims")).StatusCode);
             client.DefaultRequestHeaders.Remove("X-Test-Role"); client.DefaultRequestHeaders.Add("X-Test-Role", "finance");
             var invalid = new StringContent("{\"bankAccountId\":" + account.IdBankAccount + ",\"operationDate\":\"2026-02-30\",\"amountReceived\":100,\"settlementMethod\":\"BankTransfer\"}", Encoding.UTF8, "application/json");
             Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsync("/api/finance/bank-receipts", invalid)).StatusCode);
             var valid = await client.PostAsJsonAsync("/api/finance/bank-receipts", Receipt(account.IdBankAccount, new(2026, 9, 23))); Assert.Equal(HttpStatusCode.Created, valid.StatusCode);
             using var json = JsonDocument.Parse(await valid.Content.ReadAsStringAsync()); Assert.Equal("2026-09-23", json.RootElement.GetProperty("operationDate").GetString());
             Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync("/api/finance/bank-receipts?operationFrom=2026-09-24&operationTo=2026-09-23")).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync($"/api/claims/contracts/{claimContract.IdContract}", new ClaimRequestDto())).StatusCode);
+            client.DefaultRequestHeaders.Remove("X-Test-Role"); client.DefaultRequestHeaders.Add("X-Test-Role", "claims");
+            var badClaim = await client.PostAsync($"/api/claims/contracts/{claimContract.IdContract}", new StringContent("{\"dateOfLoss\":\"2026-02-30\"}", Encoding.UTF8, "application/json"));
+            Assert.Equal(HttpStatusCode.BadRequest, badClaim.StatusCode);
+            var claimCreated = await client.PostAsJsonAsync($"/api/claims/contracts/{claimContract.IdContract}", new ClaimRequestDto
+            { DateOfLoss = new DateOnly(2026, 10, 1), CurrencyId = currency.IdCurrency, Reserve = 0m, Status = "Outstanding" });
+            Assert.Equal(HttpStatusCode.Created, claimCreated.StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await client.GetAsync($"/api/claims?contractId={claimContract.IdContract}")).StatusCode);
         }
         finally { await app.StopAsync(); }
     }
@@ -298,7 +312,7 @@ ALTER TABLE dbo.DISBURSEMENT ALTER COLUMN Correspondent_swift_bic_snapshot nvarc
         protected override Task<AuthenticateResult> HandleAuthenticateAsync()
         {
             var role = Request.Headers["X-Test-Role"].ToString(); if (string.IsNullOrEmpty(role)) return Task.FromResult(AuthenticateResult.NoResult());
-            var modules = role == "finance" ? new[] { ModuleAccessCatalog.Encaissement, ModuleAccessCatalog.Decaissement, ModuleAccessCatalog.CounterpartyBankAccounts } : new[] { ModuleAccessCatalog.Contracts };
+            var modules = role == "claims" ? new[] { ModuleAccessCatalog.Claims } : role == "finance" ? new[] { ModuleAccessCatalog.Encaissement, ModuleAccessCatalog.Decaissement, ModuleAccessCatalog.CounterpartyBankAccounts } : new[] { ModuleAccessCatalog.Contracts };
             var claims = new[] { new SecurityClaim(ClaimTypes.NameIdentifier, "finance-test"), new SecurityClaim(ClaimTypes.Role, "Employee") }.Concat(modules.Select(m => new SecurityClaim(ModuleAccessCatalog.ClaimType, m)));
             return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(new ClaimsIdentity(claims, Scheme.Name)), Scheme.Name)));
         }

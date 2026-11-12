@@ -9,6 +9,7 @@ public partial class IRISBackendContext
     partial void OnModelCreatingPartial(ModelBuilder modelBuilder)
     {
         ConfigureAccessActivity(modelBuilder);
+        ConfigureClaimsWorkflow(modelBuilder);
         ConfigureCounterpartyContacts(modelBuilder);
         modelBuilder.Entity<IrisBankAccount>(entity =>
         {

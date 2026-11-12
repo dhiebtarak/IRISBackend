@@ -68,14 +68,16 @@ public sealed class DocumentStorageService : IDocumentStorageService
 
         var originalFileName = SanitizeOriginalFileName(request.FileName);
         var extension = NormalizeExtension(Path.GetExtension(originalFileName));
-        if (!_allowedExtensions.Contains(extension))
+        var isClaim = string.Equals(scope, "claims", StringComparison.Ordinal);
+        if (!isClaim && !_allowedExtensions.Contains(extension))
         {
             throw new InvalidOperationException(
                 $"Only the following file formats are allowed: {string.Join(", ", _allowedExtensions)}.");
         }
 
-        if (!AllowedMimeTypes.TryGetValue(extension, out var expectedMimeType) ||
-            !string.Equals(request.MimeType?.Trim(), expectedMimeType, StringComparison.OrdinalIgnoreCase))
+        var knownType = AllowedMimeTypes.TryGetValue(extension, out var expectedMimeType);
+        if (!isClaim && (!knownType ||
+            !string.Equals(request.MimeType?.Trim(), expectedMimeType, StringComparison.OrdinalIgnoreCase)))
         {
             throw new InvalidOperationException("Document MIME type does not match the file extension.");
         }
@@ -107,7 +109,7 @@ public sealed class DocumentStorageService : IDocumentStorageService
                 $"Document file size must not exceed {_options.MaxFileSizeBytes / (1024 * 1024)} MB.");
         }
 
-        if (!HasValidSignature(extension, bytes))
+        if ((!isClaim || knownType) && !HasValidSignature(extension, bytes))
         {
             throw new InvalidOperationException("Document content does not match the declared file type.");
         }
@@ -129,7 +131,7 @@ public sealed class DocumentStorageService : IDocumentStorageService
             StoredFileName = storedFileName,
             RelativePath = relativePath,
             FileExtension = extension.TrimStart('.'),
-            MimeType = expectedMimeType,
+            MimeType = expectedMimeType ?? "application/octet-stream",
             FileSize = bytes.LongLength
         };
     }
