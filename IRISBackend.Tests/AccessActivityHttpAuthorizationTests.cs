@@ -35,10 +35,11 @@ public sealed class AccessActivityHttpAuthorizationTests
         {
             o.MapInboundClaims=false;
             o.TokenValidationParameters=new TokenValidationParameters {ValidateAudience=false,ValidateIssuer=false,ValidateIssuerSigningKey=true,IssuerSigningKey=key,ClockSkew=TimeSpan.Zero};
-            o.Events=new JwtBearerEvents {OnTokenValidated=async c=>
+            o.Events=new JwtBearerEvents {OnAuthenticationFailed=SessionAuthenticationResponses.AuthenticationFailed,OnChallenge=SessionAuthenticationResponses.Challenge,OnTokenValidated=async c=>
             {
                 var service=c.HttpContext.RequestServices.GetRequiredService<AuthSessionService>();
-                if(!await service.ValidateAsync(c.Principal!.FindFirstValue("sid"),c.Principal!.FindFirstValue(ClaimTypes.NameIdentifier)!,false,default)) c.Fail("Session unavailable.");
+                var failure=await service.ValidationFailureAsync(c.Principal!.FindFirstValue("sid"),c.Principal!.FindFirstValue(ClaimTypes.NameIdentifier)!,false,default);
+                if(failure is not null) { c.HttpContext.Items[SessionAuthenticationResponses.FailureKey]=failure; c.Fail("Session unavailable."); }
             }};
         });
         builder.Services.AddAuthorization();
@@ -59,7 +60,26 @@ public sealed class AccessActivityHttpAuthorizationTests
             Assert.Equal(HttpStatusCode.OK,(await client.GetAsync("/protected")).StatusCode);
             Assert.Equal(HttpStatusCode.Forbidden,(await client.GetAsync("/api/admin/access-activity/test")).StatusCode);
             await cache.SetStringAsync("iris:session:"+sid+":terminal","Revoked");
-            Assert.Equal(HttpStatusCode.Unauthorized,(await client.GetAsync("/protected")).StatusCode);
+            var revoked=await client.GetAsync("/protected");
+            Assert.Equal(HttpStatusCode.Unauthorized,revoked.StatusCode);
+            Assert.Contains("SESSION_REVOKED",await revoked.Content.ReadAsStringAsync());
+            await cache.SetStringAsync("iris:session:"+sid+":terminal","Expired");
+            var expiredSession=await client.GetAsync("/protected");
+            Assert.Equal(HttpStatusCode.Unauthorized,expiredSession.StatusCode);
+            Assert.Contains("SESSION_EXPIRED",await expiredSession.Content.ReadAsStringAsync());
+            var expiredToken=handler.CreateToken(new SecurityTokenDescriptor { Subject=new ClaimsIdentity([new System.Security.Claims.Claim(ClaimTypes.NameIdentifier,"employee")]),NotBefore=DateTime.UtcNow.AddMinutes(-10),IssuedAt=DateTime.UtcNow.AddMinutes(-10),Expires=DateTime.UtcNow.AddMinutes(-1),SigningCredentials=new SigningCredentials(key,SecurityAlgorithms.HmacSha256)});
+            client.DefaultRequestHeaders.Authorization=new AuthenticationHeaderValue("Bearer",expiredToken);
+            var expiredJwt=await client.GetAsync("/protected");
+            Assert.Equal(HttpStatusCode.Unauthorized,expiredJwt.StatusCode);
+            Assert.Contains("SESSION_EXPIRED",await expiredJwt.Content.ReadAsStringAsync());
+            client.DefaultRequestHeaders.Authorization=new AuthenticationHeaderValue("Bearer","invalid");
+            var invalid=await client.GetAsync("/protected");
+            Assert.Equal(HttpStatusCode.Unauthorized,invalid.StatusCode);
+            Assert.DoesNotContain("SESSION_EXPIRED",await invalid.Content.ReadAsStringAsync());
+            client.DefaultRequestHeaders.Authorization=null;
+            var missing=await client.GetAsync("/protected");
+            Assert.Equal(HttpStatusCode.Unauthorized,missing.StatusCode);
+            Assert.DoesNotContain("SESSION_EXPIRED",await missing.Content.ReadAsStringAsync());
         }
         finally {await app.StopAsync();}
     }

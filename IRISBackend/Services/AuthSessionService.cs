@@ -39,23 +39,34 @@ public sealed class AuthSessionService(IRISBackendContext db, ILoginAuditService
     }
 
     public async Task<bool> ValidateAsync(string? sid, string userId, bool logout, CancellationToken ct)
+        => await ValidationFailureAsync(sid, userId, logout, ct) is null;
+
+    public async Task<string?> ValidationFailureAsync(string? sid, string userId, bool logout, CancellationToken ct)
     {
-        if (sid is null || sid.Length != 64) return false;
+        if (sid is null || sid.Length != 64) return "SESSION_UNAVAILABLE";
         var terminal = await cache.GetStringAsync(CacheKey(sid) + ":terminal", ct);
-        if (terminal != null) return logout && terminal == "LoggedOut";
+        if (terminal != null) return Failure(terminal, logout);
         var cached = await cache.GetStringAsync(CacheKey(sid), ct);
-        if (cached == "Revoked" || cached == "Expired") return false;
-        if (cached == "LoggedOut") return logout;
-        if (cached == userId) return true;
+        if (cached is "Revoked" or "Expired" or "LoggedOut") return Failure(cached, logout);
+        if (cached == userId) return null;
         var session = await db.AuthSessions.AsNoTracking().SingleOrDefaultAsync(s => s.SessionIdentifier == sid && s.UserId == userId, ct);
-        if (session is null || session.ExpiresAtUtc <= DateTime.UtcNow) return false;
-        if (session.Status != "Active") return logout && session.Status == "LoggedOut";
+        if (session is null) return "SESSION_UNAVAILABLE";
+        if (session.Status != "Active") return Failure(session.Status, logout);
+        if (session.ExpiresAtUtc <= DateTime.UtcNow) return SessionAuthenticationResponses.ExpiredCode;
         await cache.SetStringAsync(CacheKey(sid), userId, new DistributedCacheEntryOptions
         {
             AbsoluteExpiration = new DateTimeOffset(DateTime.SpecifyKind(new[] { session.ExpiresAtUtc, DateTime.UtcNow.AddSeconds(configuration.GetValue("AccessActivity:ValidationCacheSeconds", 15)) }.Min(), DateTimeKind.Utc))
         }, ct);
-        return true;
+        return null;
     }
+
+    private static string? Failure(string status, bool logout) => status switch
+    {
+        "Expired" => SessionAuthenticationResponses.ExpiredCode,
+        "Revoked" => "SESSION_REVOKED",
+        "LoggedOut" when logout => null,
+        _ => "SESSION_UNAVAILABLE"
+    };
 
     public async Task TouchAsync(string sid, CancellationToken ct)
     {
