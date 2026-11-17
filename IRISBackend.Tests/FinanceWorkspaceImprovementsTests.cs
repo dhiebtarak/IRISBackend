@@ -298,7 +298,7 @@ ALTER TABLE dbo.DISBURSEMENT ALTER COLUMN Correspondent_swift_bic_snapshot nvarc
         protected override Task<AuthenticateResult> HandleAuthenticateAsync()
         {
             var role = Request.Headers["X-Test-Role"].ToString(); if (string.IsNullOrEmpty(role)) return Task.FromResult(AuthenticateResult.NoResult());
-            var modules = role == "finance" ? new[] { ModuleAccessCatalog.Encaissement, ModuleAccessCatalog.Decaissement, ModuleAccessCatalog.CounterpartyBankAccounts } : new[] { ModuleAccessCatalog.Contracts };
+            var modules = role == "claims" ? new[] { ModuleAccessCatalog.Claims } : role == "finance" ? new[] { ModuleAccessCatalog.Encaissement, ModuleAccessCatalog.Decaissement, ModuleAccessCatalog.CounterpartyBankAccounts } : new[] { ModuleAccessCatalog.Contracts };
             var claims = new[] { new SecurityClaim(ClaimTypes.NameIdentifier, "finance-test"), new SecurityClaim(ClaimTypes.Role, "Employee") }.Concat(modules.Select(m => new SecurityClaim(ModuleAccessCatalog.ClaimType, m)));
             return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(new ClaimsIdentity(claims, Scheme.Name)), Scheme.Name)));
         }

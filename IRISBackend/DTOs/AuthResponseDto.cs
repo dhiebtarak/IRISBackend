@@ -2,6 +2,7 @@ namespace IRISBackend.DTOs
 {
     public class AuthResponseDto
     {
+        public DateTime ServerTimeUtc { get; set; } = DateTime.UtcNow;
         public string Id { get; set; } = string.Empty;
 
         public string FullName { get; set; } = string.Empty;

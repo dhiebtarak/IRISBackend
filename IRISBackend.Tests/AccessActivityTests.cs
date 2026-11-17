@@ -81,6 +81,10 @@ public sealed class AccessActivityTests
         Assert.True(await service.ValidateAsync(sid, "user-1", true, default));
         Assert.False(await service.ValidateAsync(sid, "user-1", false, default));
         Assert.False(await service.ValidateAsync(null, "user-1", false, default));
+        await cache.SetStringAsync("iris:session:" + sid + ":terminal", "Expired");
+        Assert.Equal("SESSION_EXPIRED", await service.ValidationFailureAsync(sid, "user-1", false, default));
+        await cache.SetStringAsync("iris:session:" + sid + ":terminal", "Revoked");
+        Assert.Equal("SESSION_REVOKED", await service.ValidationFailureAsync(sid, "user-1", false, default));
     }
     [Fact]
     public async Task FailedLoginAuditHasSafeMetadataAndNoCredentials()

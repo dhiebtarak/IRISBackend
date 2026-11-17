@@ -106,6 +106,8 @@ services:
     build:
       context: ../../FrontAuthIRIS
       dockerfile: Dockerfile
+      args:
+        BUILD_REVISION: "${FRONTEND_BUILD_REVISION:-unknown}"
     ports:
       - "8080:80"
     volumes:
