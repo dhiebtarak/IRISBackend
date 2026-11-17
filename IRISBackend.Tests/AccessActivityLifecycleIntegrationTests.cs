@@ -76,6 +76,8 @@ public sealed class AccessActivityLifecycleIntegrationTests
             Assert.Single(await db.UserLoginAudits.Where(a=>a.EventType=="LoginSuccessful" && a.UserId==user.Id).ToListAsync());
             var failed = await auth.LoginAsync(new LoginRequestDto { EmailOrUsername="missing-user",Password="WrongPassword123!" });
             Assert.False(failed.Succeeded);Assert.Equal(401,failed.StatusCode);
+            Assert.Null(failed.Error!.Code);
+            Assert.DoesNotContain("SESSION_EXPIRED", failed.Error.Message);
             Assert.Null((await db.UserLoginAudits.SingleAsync(a=>a.EventType=="LoginFailed" && a.EmailOrUsername=="missing-user")).UserId);
             var principal = new ClaimsPrincipal(new ClaimsIdentity([new System.Security.Claims.Claim(ClaimTypes.NameIdentifier,user.Id),new System.Security.Claims.Claim("sid",first.SessionIdentifier)],"test"));
             await sessions.LogoutAsync(principal);await sessions.LogoutAsync(principal);
@@ -91,6 +93,7 @@ public sealed class AccessActivityLifecycleIntegrationTests
             expired.LoginAtUtc=DateTime.UtcNow.AddHours(-2);expired.LastActivityAtUtc=expired.LoginAtUtc;expired.ExpiresAtUtc=DateTime.UtcNow.AddHours(-1);
             await db.SaveChangesAsync();await sessions.MaintainAsync(365,default);await sessions.MaintainAsync(365,default);
             Assert.Equal("Expired",expired.Status);Assert.Null(expired.LogoutAtUtc);
+            Assert.Equal("SESSION_EXPIRED",await sessions.ValidationFailureAsync(expired.SessionIdentifier,user.Id,false,default));
             Assert.Single(await db.UserLoginAudits.Where(a=>a.EventType=="SessionExpired").ToListAsync());
             var summary=await activity.SummaryAsync(default);
             Assert.Equal(0,summary.ActiveSessions);Assert.Equal(3,summary.SuccessfulLoginsToday);Assert.Equal(1,summary.FailedLoginsLast24Hours);Assert.Equal(1,summary.RevokedSessionsToday);

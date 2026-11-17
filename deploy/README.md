@@ -1,5 +1,7 @@
 # Optima-rea deployment handoff
 
+For the session-expiration, frontend version detection and FCFA release, follow [the 2026-11-16 deployment guide](session-update-fcfa-20261116.md). It includes branch checks, verified backup, the reference-data SQL command, redeployment and manual checks. It does not run EF migrations on the imported schema.
+
 Target host: Windows 11 `DESKTOP-32FH4OL`, office IP `192.168.10.2`, with Docker Compose in WSL2 Ubuntu 24.04. Expected sibling checkouts:
 
 ```text

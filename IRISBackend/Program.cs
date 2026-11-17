@@ -178,10 +178,12 @@ builder.Services
             ValidIssuer = jwtIssuer,
             ValidAudience = jwtAudience,
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSigningKey)),
-            ClockSkew = TimeSpan.FromMinutes(1)
+            ClockSkew = TimeSpan.Zero
         };
         options.Events = new JwtBearerEvents
         {
+            OnAuthenticationFailed = SessionAuthenticationResponses.AuthenticationFailed,
+            OnChallenge = SessionAuthenticationResponses.Challenge,
             OnTokenValidated = async context =>
             {
                 var principal = context.Principal;
@@ -196,8 +198,10 @@ builder.Services
                 var sid = principal?.FindFirstValue("sid");
                 var logout = context.HttpContext.Request.Path.Equals("/api/auth/logout", StringComparison.OrdinalIgnoreCase)
                     && HttpMethods.IsPost(context.HttpContext.Request.Method);
-                if (!await sessionService.ValidateAsync(sid, userId, logout, context.HttpContext.RequestAborted))
+                var failure = await sessionService.ValidationFailureAsync(sid, userId, logout, context.HttpContext.RequestAborted);
+                if (failure is not null)
                 {
+                    context.HttpContext.Items[SessionAuthenticationResponses.FailureKey] = failure;
                     context.Fail("The session is unavailable."); return;
                 }
                 if (context.HttpContext.Request.Path.StartsWithSegments("/api") && !context.HttpContext.Request.Path.StartsWithSegments("/api/health") && !logout)

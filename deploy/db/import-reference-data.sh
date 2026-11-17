@@ -119,4 +119,8 @@ SQL
 compose exec -T db sh -c 'SQLCMDPASSWORD="$MSSQL_SA_PASSWORD" /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -C -b -V 16 -f 65001 -d "$DB_NAME"' \
   < "$temp_dir/import.sql"
 
-echo "Imported 9 currencies, 38 coverage items and 37 coverage relationships. Audit user references now point to the supplied deployed Admin ID."
+# Keep the original exported IDs and source files intact. Apply canonical additions afterward.
+compose exec -T db sh -c 'SQLCMDPASSWORD="$MSSQL_SA_PASSWORD" /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -C -b -V 16 -f 65001 -d "$DB_NAME"' \
+  < "$deploy_dir/../IRISBackend/Deployment/20261116_add_fcfa_currency.sql"
+
+echo "Imported 9 original currencies plus FCFA, 38 coverage items and 37 coverage relationships. Audit user references now point to the supplied deployed Admin ID."
