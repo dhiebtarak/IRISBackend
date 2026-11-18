@@ -52,3 +52,18 @@ jobs:
         run: |
           echo "### Published backend image" >> "$GITHUB_STEP_SUMMARY"
           echo "\`$IMAGE@$DIGEST\`" >> "$GITHUB_STEP_SUMMARY"
+      - name: Trigger backend deployment
+        if: github.event_name == 'push' && github.ref == 'refs/heads/testing'
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOYMENT_TOKEN }}
+          IMAGE: ${{ vars.DOCKERHUB_IMAGE }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh api \
+            --method POST \
+            repos/dhiebtarak/IRIS-Deployment/actions/workflows/deploy-testing.yml/dispatches \
+            -f ref=main \
+            -f "inputs[api_image]=$IMAGE@$DIGEST"
