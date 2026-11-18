@@ -1,0 +1,54 @@
+name: Backend Docker CI
+
+on:
+  pull_request:
+    branches: [testing]
+  push:
+    branches: [testing]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-docker-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and optionally publish backend
+        id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./IRISBackend/Dockerfile
+          platforms: linux/amd64
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ vars.DOCKERHUB_IMAGE }}:api-sha-${{ github.sha }}
+
+      - name: Record published image
+        if: github.event_name == 'push'
+        env:
+          IMAGE: ${{ vars.DOCKERHUB_IMAGE }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          echo "### Published backend image" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`$IMAGE@$DIGEST\`" >> "$GITHUB_STEP_SUMMARY"
