@@ -38,7 +38,7 @@ internal static class InvoiceDocumentAccounting
 
     public static InvoiceDocumentTotals CalculateTotals(IEnumerable<Invoice> invoices)
     {
-        var activeDocuments = invoices.Where(IsActiveDocument).ToList();
+        var activeDocuments = invoices.Where(i => i.ClaimRef == null).Where(IsActiveDocument).ToList();
         var totalInvoiced = activeDocuments
             .Where(invoice => !IsAvoir(invoice.InvoiceType))
             .Sum(invoice => invoice.GrossPremium ?? 0m);
@@ -67,6 +67,7 @@ internal static class InvoiceDocumentAccounting
     }
 
     public static decimal NetInvoiced(IEnumerable<Invoice> invoices) => invoices
+        .Where(i => i.ClaimRef == null)
         .Where(IsActiveDocument)
         .Sum(SignedAmount);
 

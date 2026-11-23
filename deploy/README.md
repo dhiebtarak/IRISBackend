@@ -148,3 +148,9 @@ Do not run the existing EF migration chain against this imported schema: history
 Open `http://192.168.10.2:8080` from a separate office PC. Confirm browser requests use same-origin `/api`, deep links survive refresh, login/contract access and document uploads/downloads work, and uploaded files survive a container restart. Verify both health routes through Nginx and confirm API/SQL ports are not reachable from the office network. Reboot Windows to verify the WSL task and Compose restart policies.
 
 This HTTP setup is for a restricted office-network test only; JWTs are stored in browser local storage and HTTP does not protect them in transit. Use TLS termination at Nginx before production, then enable API HTTPS redirection and retain the configured trusted forwarded proxy.
+
+## Claim invoicing schema — 19 November 2026
+
+Before deploying the claim-invoicing API/web images, follow [the complete claim invoicing deployment and validation report](../docs/claim-invoicing-20261119.md). The manual PowerShell helper [Deploy-ClaimInvoicing.ps1](Deploy-ClaimInvoicing.ps1) uses the existing WSL checkout and Compose db service. It quiesces api/web, backs up and verifies IRISBackend, applies the additive SQL with sqlcmd -b and verifies the new links/guards. It was not executed on this hosted machine by the implementation task.
+
+Required order: **verified backup ? approved SQL ? verify columns/FKs/indexes ? backend image ? frontend image ? /health/live ? /health/ready ? controlled end-to-end claim test**. Do not run EF migrations against the imported schema. Keep the backup for recovery; prefer retaining the additive schema when rolling application images back.

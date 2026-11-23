@@ -519,6 +519,9 @@ public sealed class InvoiceQueryDto
 
 public sealed class InvoiceResponseDto
 {
+    public int? ClaimId { get; set; }
+    public string? ClaimNumber { get; set; }
+    public string SourceType { get; set; } = "Contract/Original Premium";
     public int IdInvoice { get; set; }
     public int InvoiceId { get; set; }
     public int ContractId { get; set; }
@@ -716,6 +719,9 @@ public sealed class PremiumDebitNoteAllocationDto
 
 public sealed class PremiumDebitNoteResponseDto
 {
+    public int? ClaimId { get; set; }
+    public string? ClaimNumber { get; set; }
+    public string SourceType { get; set; } = "Contract/Original Premium";
     public int IdInvoice { get; set; }
     public int InvoiceId { get; set; }
     public int IdContract { get; set; }

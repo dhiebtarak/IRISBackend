@@ -39,3 +39,7 @@ No test server/database was supplied in the request, so this package has not bee
 IBAN and SWIFT/BIC inputs (including correspondent SWIFT/BIC) have no required, format or length validators when creating or updating a bank account. Blank values and values such as `29590495` are accepted. RIB has no field-specific length limit. Existing normalization is retained; nonempty IBAN duplicate-account checks, authorization, ownership, currency and masking rules remain in place. Removing field validators does not change the separate requirements for starting a payment with complete bank details.
 
 Migration rollback refuses to shorten bank columns while identifiers longer than the old sizes exist. Never truncate values to force a rollback.
+
+## Claim invoicing — 19 November 2026
+
+Apply `20261119_claim_invoicing_workflow.sql` after the existing claim workflow deployment and before matching API/web deployment. It does not add duplicate claim currency/deductible columns, alter existing financial values or renumber documents. It adds real claim/Avoir and collection-note/remittance links plus approval audit/concurrency fields. See [the implementation/deployment report](../../docs/claim-invoicing-20261119.md) and [hosted PowerShell helper](../../deploy/Deploy-ClaimInvoicing.ps1) for backup-first execution, verification and recovery. Do not execute the imported EF migration chain.

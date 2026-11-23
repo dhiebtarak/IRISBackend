@@ -143,7 +143,9 @@ public sealed class BankReceiptDocumentAttachmentIntegrationTests : IAsyncLifeti
         var principal = new ClaimsPrincipal(new ClaimsIdentity(new[]
         {
             new SecurityClaim(ClaimTypes.NameIdentifier, "finance-user"),
-            new SecurityClaim("position", position)
+            new SecurityClaim("position", position),
+            new SecurityClaim(ModuleAccessCatalog.ClaimType,
+                position == "Finance officer" ? ModuleAccessCatalog.Encaissement : ModuleAccessCatalog.BackOffice)
         }, "Test"));
         var http = new HttpContextAccessor { HttpContext = new DefaultHttpContext { User = principal } };
 
