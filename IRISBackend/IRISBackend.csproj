@@ -34,6 +34,9 @@
     <None Update="Deployment\20261110_test_schema_updates.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Update="Deployment\20261111_swift_bic_free_text.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Update="Deployment\20261111_test_schema_updates.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Deployment\20261112_claim_attachments.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Deployment\20261111_claims_workflow.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Deployment\20261111_claims_test_schema_updates.sql" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup Condition="Exists('Assets\Branding\iris-logo.png')">

@@ -4,6 +4,10 @@ namespace IRISBackend.Services;
 
 public interface IDocumentAttachmentService
 {
+    Task<ServiceResult<IReadOnlyList<DocumentAttachmentResponseDto>>> ListClaimDocumentsAsync(int claimId, CancellationToken cancellationToken = default);
+    Task<ServiceResult<DocumentAttachmentResponseDto>> UploadClaimDocumentAsync(int claimId, DocumentUploadRequestDto request, CancellationToken cancellationToken = default);
+    Task<ServiceResult<DocumentDownload>> DownloadClaimDocumentAsync(int claimId, int documentId, CancellationToken cancellationToken = default);
+    Task<ServiceResult<bool>> ArchiveClaimDocumentAsync(int claimId, int documentId, CancellationToken cancellationToken = default);
     Task<ServiceResult<IReadOnlyList<DocumentAttachmentResponseDto>>> ListContractDocumentsAsync(
         int contractId,
         CancellationToken cancellationToken = default);

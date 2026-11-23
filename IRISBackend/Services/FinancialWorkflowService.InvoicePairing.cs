@@ -48,6 +48,7 @@ public sealed partial class FinancialWorkflowService
             if (receipt is null) return NotFound<ReceiptBatchAllocationResponseDto>("Bank receipt was not found.");
             var invoices = await _db.Invoices.AsNoTracking().Include(x => x.IdContractNavigation)
                 .Where(x => ids.Contains(x.IdInvoice)).ToDictionaryAsync(x => x.IdInvoice, ct);
+            if (invoices.Values.Any(i => i.ClaimRef.HasValue)) return Conflict("CLAIM_INVOICING_SOURCE", "Claim Avoirs are processed through their linked Claim collection-note remittances.");
             if (invoices.Count != ids.Length) return NotFound<ReceiptBatchAllocationResponseDto>("One or more invoices were not found.");
             var existingReceiptAmount = await _db.ReceiptAllocations.AsNoTracking()
                 .Where(x => x.IsActive && x.IdBankReceipt == receiptId).SumAsync(x => x.AllocatedAmount ?? 0m, ct);

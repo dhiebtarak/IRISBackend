@@ -467,6 +467,33 @@ namespace IRISBackend.Migrations
                         .HasColumnType("date")
                         .HasColumnName("Closing_date");
 
+                    b.Property<decimal?>("CollectionAmount")
+                        .HasColumnType("decimal(19,4)")
+                        .HasColumnName("Collection_amount");
+
+                    b.Property<DateTime?>("CollectionIssuedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("Collection_issued_at");
+
+                    b.Property<string>("CollectionIssuedBy")
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)")
+                        .HasColumnName("Collection_issued_by");
+
+                    b.Property<byte[]>("CollectionPdf")
+                        .HasColumnType("varbinary(max)")
+                        .HasColumnName("Collection_pdf");
+
+                    b.Property<string>("CollectionReference")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("Collection_reference");
+
+                    b.Property<string>("ContractNameSnapshot")
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)")
+                        .HasColumnName("Contract_name_snapshot");
+
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
@@ -479,6 +506,11 @@ namespace IRISBackend.Migrations
                         .HasMaxLength(450)
                         .HasColumnType("nvarchar(450)")
                         .HasColumnName("Created_by");
+
+                    b.Property<string>("CurrencyCodeSnapshot")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)")
+                        .HasColumnName("Currency_code_snapshot");
 
                     b.Property<DateOnly>("DateOfLoss")
                         .HasColumnType("date")
@@ -534,6 +566,10 @@ namespace IRISBackend.Migrations
                         .HasColumnType("date")
                         .HasColumnName("Notification_date");
 
+                    b.Property<decimal?>("OtherFees")
+                        .HasColumnType("decimal(19,4)")
+                        .HasColumnName("Other_fees");
+
                     b.Property<decimal?>("PaidLoss")
                         .HasColumnType("decimal(19, 4)")
                         .HasColumnName("Paid_loss");
@@ -543,10 +579,24 @@ namespace IRISBackend.Migrations
                         .HasColumnType("nvarchar(50)")
                         .HasColumnName("Payment_status");
 
+                    b.Property<string>("ProcessingMode")
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)")
+                        .HasColumnName("Processing_mode");
+
+                    b.Property<decimal?>("SignedShareSnapshot")
+                        .HasColumnType("decimal(19,8)")
+                        .HasColumnName("Signed_share_snapshot");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("UmrSnapshot")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("Umr_snapshot");
 
                     b.Property<int?>("UnderwritingYear")
                         .HasColumnType("int")
@@ -562,6 +612,11 @@ namespace IRISBackend.Migrations
                         .HasColumnName("Updated_by");
 
                     b.HasKey("ClaimRef");
+
+                    b.HasIndex("ClaimNumber")
+                        .IsUnique()
+                        .HasDatabaseName("UX_CLAIM_number")
+                        .HasFilter("[Claim_number] IS NOT NULL");
 
                     b.HasIndex("CreatedBy");
 
@@ -623,9 +678,22 @@ namespace IRISBackend.Migrations
                         .HasColumnType("int")
                         .HasColumnName("Id_counterparty");
 
+                    b.Property<int?>("IdCurrency")
+                        .HasColumnType("int")
+                        .HasColumnName("Id_currency");
+
+                    b.Property<int?>("IdPanel")
+                        .HasColumnType("int")
+                        .HasColumnName("Id_panel");
+
                     b.Property<decimal?>("PartPct")
                         .HasColumnType("decimal(19, 8)")
                         .HasColumnName("Part_pct");
+
+                    b.Property<string>("ReinsurerNameSnapshot")
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)")
+                        .HasColumnName("Reinsurer_name_snapshot");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -647,11 +715,18 @@ namespace IRISBackend.Migrations
 
                     b.HasIndex("CreatedBy");
 
-                    b.HasIndex("IdClaim");
-
                     b.HasIndex("IdCounterparty");
 
+                    b.HasIndex("IdCurrency");
+
+                    b.HasIndex("IdPanel");
+
                     b.HasIndex("UpdatedBy");
+
+                    b.HasIndex("IdClaim", "IdPanel")
+                        .IsUnique()
+                        .HasDatabaseName("UX_COLLECTION_NOTE_claim_panel")
+                        .HasFilter("[Id_panel] IS NOT NULL");
 
                     b.ToTable("COLLECTION_NOTE", (string)null);
                 });
@@ -2188,6 +2263,10 @@ namespace IRISBackend.Migrations
                         .HasColumnType("int")
                         .HasColumnName("id_bank_receipt");
 
+                    b.Property<int?>("IdClaim")
+                        .HasColumnType("int")
+                        .HasColumnName("Id_claim");
+
                     b.Property<int?>("IdContract")
                         .HasColumnType("int")
                         .HasColumnName("Id_contract");
@@ -2260,6 +2339,8 @@ namespace IRISBackend.Migrations
                     b.HasIndex("IdPanel");
 
                     b.HasIndex("UpdatedBy");
+
+                    b.HasIndex("IdClaim").HasDatabaseName("IX_DOCUMENT_ATTACHMENT_Id_claim");
 
                     b.HasIndex(new[] { "IdBankReceipt" }, "IX_DOCUMENT_ATTACHMENT_id_bank_receipt");
 
@@ -3288,7 +3369,10 @@ namespace IRISBackend.Migrations
 
                     b.HasKey("IdReceiptAllocation");
 
-                    b.HasIndex("ClaimRef");
+                    b.HasIndex("ClaimRef")
+                        .IsUnique()
+                        .HasDatabaseName("UX_RECEIPT_ALLOCATION_active_claim")
+                        .HasFilter("[Claim_ref] IS NOT NULL AND [is_active] = 1");
 
                     b.HasIndex("IdContract");
 
@@ -3440,8 +3524,6 @@ namespace IRISBackend.Migrations
 
                     b.HasKey("RemittanceRef1");
 
-                    b.HasIndex("ClaimRef");
-
                     b.HasIndex("CreatedBy");
 
                     b.HasIndex("IdCounterparty");
@@ -3459,6 +3541,11 @@ namespace IRISBackend.Migrations
                     b.HasIndex("SourceInvoiceId");
 
                     b.HasIndex("UpdatedBy");
+
+                    b.HasIndex("ClaimRef", "IdPanel")
+                        .IsUnique()
+                        .HasDatabaseName("UX_REMITTANCE_REF_active_claim_panel")
+                        .HasFilter("[Claim_ref] IS NOT NULL AND [Is_active] = 1");
 
                     b.HasIndex(new[] { "IdReceiptAllocation", "SourceInvoiceId", "IdInvoiceAllocation", "IdPanel" }, "UX_REMITTANCE_REF_source_allocation_panel")
                         .IsUnique()
@@ -3811,6 +3898,16 @@ namespace IRISBackend.Migrations
                         .IsRequired()
                         .HasConstraintName("FK_COLLECTION_NOTE_id_counterparty");
 
+                    b.HasOne("IRISBackend.Models.Currency", null)
+                        .WithMany()
+                        .HasForeignKey("IdCurrency")
+                        .OnDelete(DeleteBehavior.NoAction);
+
+                    b.HasOne("IRISBackend.Models.ContractPanel", null)
+                        .WithMany()
+                        .HasForeignKey("IdPanel")
+                        .OnDelete(DeleteBehavior.NoAction);
+
                     b.HasOne("IRISBackend.Models.AspNetUser", "UpdatedByNavigation")
                         .WithMany("CollectionNoteUpdatedByNavigations")
                         .HasForeignKey("UpdatedBy")
@@ -4143,6 +4240,12 @@ namespace IRISBackend.Migrations
 
             modelBuilder.Entity("IRISBackend.Models.DocumentAttachment", b =>
                 {
+                    b.HasOne("IRISBackend.Models.Claim", null)
+                        .WithMany()
+                        .HasForeignKey("IdClaim")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .HasConstraintName("FK_DOCUMENT_ATTACHMENT_CLAIM");
+
                     b.HasOne("IRISBackend.Models.AspNetUser", "CreatedByNavigation")
                         .WithMany("DocumentAttachmentCreatedByNavigations")
                         .HasForeignKey("CreatedBy")

@@ -558,7 +558,7 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
         var user = CurrentUser(); if (user is null) return Unauthorized<RemittanceResponseDto>();
         var item = await _db.RemittanceRefs.Include(x => x.IdCounterpartyNavigation).Include(x => x.IdCurrencyNavigation).FirstOrDefaultAsync(x => x.RemittanceRef1 == remittanceRef, cancellationToken);
         if (item is null) return NotFound<RemittanceResponseDto>("Remittance was not found.");
-        if (string.Equals(item.SourceType?.Trim(), "AVOIR", StringComparison.OrdinalIgnoreCase)
+        if (IsAvoirSource(item.SourceType)
             && !await _db.OutgoingClosingLines.AnyAsync(line => line.IsActive && line.RemittanceId == remittanceRef && line.Closing.IsActive, cancellationToken))
             return Failure<RemittanceResponseDto>("Avoir remittances must be netted with eligible Premium remittances for the same reinsurer and currency before confirmation.", status: StatusCodes.Status409Conflict);
         var isAvoirRefund = string.Equals(item.SourceType, "AVOIR_REFUND", StringComparison.OrdinalIgnoreCase)
@@ -618,7 +618,7 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
 
         if (string.Equals(item.SourceType?.Trim(), "AVOIR", StringComparison.OrdinalIgnoreCase)
             && !await _db.OutgoingClosingLines.AnyAsync(line => line.IsActive && line.RemittanceId == remittanceRef && line.Closing.IsActive, cancellationToken))
-            return Failure<RemittanceConfirmationResponseDto>("Avoir remittances must be netted with eligible Premium remittances for the same reinsurer and currency before confirmation.", status: StatusCodes.Status409Conflict);
+            return Failure<RemittanceConfirmationResponseDto>("Claim and Avoir credits must be netted with eligible Premium remittances for the same reinsurer and currency before confirmation.", status: StatusCodes.Status409Conflict);
 
         if (string.Equals(item.Status, "AwaitingFinanceDisbursement", StringComparison.OrdinalIgnoreCase))
         {
@@ -748,7 +748,7 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
             .ToListAsync(cancellationToken);
         if (sourceTypes.Count == requestedIds.Length
             && sourceTypes.All(row => string.Equals(row.SourceType?.Trim(), "Premium", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(row.SourceType?.Trim(), "AVOIR", StringComparison.OrdinalIgnoreCase)))
+                || IsAvoirSource(row.SourceType)))
         {
             return await ConfirmReinsurerRemittanceBatchAsync(requestedIds, traceId, cancellationToken);
         }
@@ -1093,7 +1093,8 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
     }
 
     private static bool IsAvoirSource(string? sourceType) =>
-        string.Equals(sourceType?.Trim(), "AVOIR", StringComparison.OrdinalIgnoreCase);
+        string.Equals(sourceType?.Trim(), "AVOIR", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(sourceType?.Trim(), "Claim", StringComparison.OrdinalIgnoreCase);
 
     private static ServiceResult<T> WithTrace<T>(ServiceResult<T> result, string traceId)
     {
@@ -1328,8 +1329,8 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
             .Include(x => x.SourceInvoice).ThenInclude(x => x!.IdContractNavigation).ThenInclude(x => x.IdCounterpartyNavigation)
             .FirstOrDefaultAsync(x => x.RemittanceRef1 == remittanceRef, cancellationToken);
         if (remittance is null) return NotFound<StartDisbursementResponseDto>("Remittance was not found.");
-        if (string.Equals(remittance.SourceType?.Trim(), "AVOIR", StringComparison.OrdinalIgnoreCase))
-            return Failure<StartDisbursementResponseDto>("Avoir remittances must be netted through a reinsurer closing before disbursement.", status: StatusCodes.Status409Conflict);
+        if (IsAvoirSource(remittance.SourceType))
+            return Failure<StartDisbursementResponseDto>("Claim and Avoir credits must be netted through a reinsurer closing before disbursement.", status: StatusCodes.Status409Conflict);
         var paymentInProgress = string.Equals(remittance.Status, "PaymentInProgress", StringComparison.OrdinalIgnoreCase);
         var closed = string.Equals(remittance.Status, "Closed", StringComparison.OrdinalIgnoreCase);
         Disbursement? existingDisbursement = remittance.IdDisbursement.HasValue
@@ -1882,6 +1883,9 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
             .Skip((page - 1) * size).Take(size)
             .Select(x => new InvoiceResponseDto
             {
+                ClaimId = x.ClaimRef,
+                ClaimNumber = x.SourceClaim == null ? null : x.SourceClaim.ClaimNumber,
+                SourceType = x.ClaimRef.HasValue ? "Claim" : "Contract/Original Premium",
                 IdInvoice = x.IdInvoice,
                 InvoiceId = x.IdInvoice,
                 ContractId = x.IdContract,
@@ -2064,6 +2068,7 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
         var invoiceableNetPremium = invoiceFinancials.InvoiceableNetPremium;
         var contractDocuments = await _db.Invoices.AsNoTracking()
             .Where(invoice => invoice.IdContract == contractId)
+            .Include(invoice => invoice.SourceClaim)
             .Include(invoice => invoice.IdContractNavigation)
                 .ThenInclude(contract => contract.IdCounterpartyNavigation)
             .Include(invoice => invoice.IdCurrencyNavigation)
@@ -2140,14 +2145,12 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
             AvailableCreditBalance = availableCreditBalance,
             CanCreateInvoice = blockingReason is null,
             BlockingReason = blockingReason,
-            CanCreateAvoir = status == ContractConstants.BoundStatus && hasActiveInvoice && availableCreditBalance > 0m,
+            CanCreateAvoir = status == ContractConstants.BoundStatus && hasActiveInvoice,
             AvoirBlockingReason = status != ContractConstants.BoundStatus
                 ? "CONTRACT_NOT_BOUND"
                 : !hasActiveInvoice
                     ? "NO_ACTIVE_INVOICES"
-                    : availableCreditBalance <= 0m
-                        ? "NO_AVAILABLE_CREDIT_BALANCE"
-                        : null,
+                    : null,
             PreviousInvoices = previousInvoices,
             ReceiptAllocations = allocationRows,
             ReinsurerPanels = panels
@@ -2186,15 +2189,12 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
         if (isAvoir && processingMode == InvoiceDocumentAccounting.DirectToRemittances
             && await ValidateDirectAvoirPrerequisitesAsync(data, null, cancellationToken) is { } prerequisiteError)
             return Failure<PremiumDebitNotePreviewDto>(prerequisiteError, status: StatusCodes.Status400BadRequest);
-        if (isAvoir && amount > data.AvailableCreditBalance)
-            return Failure<PremiumDebitNotePreviewDto>(FormatAvoirBalanceError(
-                data.AvailableCreditBalance, data.Contract!.IdCurrencyNavigation?.CurrencyCode, data.CurrencyDecimalPlaces));
         if (!isAvoir && remaining <= 0m) return Failure<PremiumDebitNotePreviewDto>("Invoice validation failed.", ["grossAmount: No invoiceable premium remains for this contract."]);
         if (!isAvoir && amount > remaining) return Failure<PremiumDebitNotePreviewDto>("Invoice validation failed.", ["amount: Invoice amount exceeds the remaining invoiceable net premium."]);
         PremiumDebitNoteAllocationCalculation calculation;
         try
         {
-            calculation = PremiumDebitNoteAllocationCalculator.Calculate(data.Contract!, data.Panels!, amount, data.CurrencyDecimalPlaces);
+            calculation = PremiumDebitNoteAllocationCalculator.Calculate(data.Contract!, data.Panels!, amount, data.CurrencyDecimalPlaces, enforceInvoiceableLimit: !isAvoir);
         }
         catch (ArgumentException exception)
         {
@@ -2287,16 +2287,13 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
         if (isAvoir && processingMode == InvoiceDocumentAccounting.DirectToRemittances
             && await ValidateDirectAvoirPrerequisitesAsync(data, user, cancellationToken) is { } prerequisiteError)
             return Failure<PremiumDebitNoteResponseDto>(prerequisiteError, status: StatusCodes.Status409Conflict);
-        if (isAvoir && amount > data.AvailableCreditBalance)
-            return Failure<PremiumDebitNoteResponseDto>(FormatAvoirBalanceError(
-                data.AvailableCreditBalance, data.Contract!.IdCurrencyNavigation?.CurrencyCode, data.CurrencyDecimalPlaces));
         if (!isAvoir && remaining <= 0m) return Failure<PremiumDebitNoteResponseDto>("Invoice validation failed.", ["grossAmount: No invoiceable premium remains for this contract."]);
         if (!isAvoir && amount > remaining) return Failure<PremiumDebitNoteResponseDto>("Invoice validation failed.", ["amount: Invoice amount exceeds the remaining invoiceable net premium."]);
 
         PremiumDebitNoteAllocationCalculation calculation;
         try
         {
-            calculation = PremiumDebitNoteAllocationCalculator.Calculate(data.Contract!, data.Panels!, amount, data.CurrencyDecimalPlaces);
+            calculation = PremiumDebitNoteAllocationCalculator.Calculate(data.Contract!, data.Panels!, amount, data.CurrencyDecimalPlaces, enforceInvoiceableLimit: !isAvoir);
         }
         catch (ArgumentException exception)
         {
@@ -2587,6 +2584,7 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
         if (!CanBack()) return Forbidden<IReadOnlyList<PremiumDebitNoteResponseDto>>();
         if (!await _db.Contracts.AnyAsync(contract => contract.IdContract == contractId, cancellationToken)) return NotFound<IReadOnlyList<PremiumDebitNoteResponseDto>>("Contract was not found.");
         var invoices = await _db.Invoices.AsNoTracking()
+            .Include(invoice => invoice.SourceClaim)
             .Where(invoice => invoice.IdContract == contractId)
             .Include(invoice => invoice.IdContractNavigation)
                 .ThenInclude(contract => contract.IdCounterpartyNavigation)
@@ -2621,7 +2619,7 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
         foreach (var invoice in invoices)
         {
             var previouslyInvoiced = runningInvoiced;
-            if (InvoiceDocumentAccounting.IsActiveDocument(invoice))
+            if (invoice.ClaimRef == null && InvoiceDocumentAccounting.IsActiveDocument(invoice))
             {
                 runningInvoiced += InvoiceDocumentAccounting.SignedAmount(invoice);
                 if (InvoiceDocumentAccounting.IsAvoir(invoice.InvoiceType))
@@ -2674,6 +2672,7 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
         if (avoir is null)
             return Failure<PrintablePaymentDocumentDto>(
                 "Avoir was not found.", status: StatusCodes.Status404NotFound, code: "AVOIR_NOT_FOUND");
+        if (avoir.ClaimRef.HasValue) return await GetClaimInvoicingDocumentAsync(avoir.ClaimRef.Value, "avoir", null, cancellationToken);
         if (!InvoiceDocumentAccounting.IsAvoir(avoir.InvoiceType))
             return Failure<PrintablePaymentDocumentDto>(
                 "The selected document is not an Avoir.", status: StatusCodes.Status409Conflict,
@@ -2733,6 +2732,7 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
     {
         if (!CanBack()) return Forbidden<PrintablePaymentDocumentDto>();
         var invoice = await _db.Invoices.AsNoTracking()
+            .Include(item => item.SourceClaim)
             .Include(item => item.IdContractNavigation).ThenInclude(contract => contract.IdCounterpartyNavigation)
             .Include(item => item.IdContractNavigation).ThenInclude(contract => contract.ContractFac)
             .Include(item => item.IdContractNavigation).ThenInclude(contract => contract.ContractCoverageSelections)
@@ -2745,6 +2745,9 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
                 expectAvoir ? "Avoir was not found." : "Invoice was not found.",
                 statusCode: StatusCodes.Status404NotFound,
                 code: expectAvoir ? "AVOIR_NOT_FOUND" : "INVOICE_NOT_FOUND");
+
+        if (invoice.ClaimRef.HasValue)
+            return await GetClaimInvoicingDocumentAsync(invoice.ClaimRef.Value, "avoir", null, cancellationToken);
 
         if (!InvoiceDocumentAccounting.IsContractReceivableType(invoice.InvoiceType)
             && !InvoiceDocumentAccounting.IsAvoir(invoice.InvoiceType))
@@ -2950,39 +2953,12 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
         var activeDocuments = priorDocuments.Where(InvoiceDocumentAccounting.IsActiveDocument).ToList();
         var totals = InvoiceDocumentAccounting.CalculateTotals(activeDocuments);
         var hasInvoiceSource = activeDocuments.Any(item => !InvoiceDocumentAccounting.IsAvoir(item.InvoiceType));
-        var availableCreditBalance = InvoiceDocumentAccounting.AvailableAvoirBalance(
-            invoiceableGross, contract.CedentCommission, totals.TotalAvoirAmount, currencyPrecision);
         if (invoiceableGross <= 0m)
             return PremiumDebitNoteData.Failed("The contract gross premium is missing or zero.", StatusCodes.Status400BadRequest);
-        var panelCreditBalances = CalculatePanelCreditBalances(contract, panels, activeDocuments);
         return new PremiumDebitNoteData(contract, panels, invoiceableGross, invoiceableNet, cedentCommissionAmount,
             currencyPrecision, InvoiceDocumentAccounting.NetInvoiced(activeDocuments),
-            totals.TotalInvoicedAmount, totals.TotalAvoirAmount, availableCreditBalance, panelCreditBalances,
+            totals.TotalInvoicedAmount, totals.TotalAvoirAmount,
             hasInvoiceSource, null, StatusCodes.Status200OK);
-    }
-
-    private static IReadOnlyDictionary<int, decimal> CalculatePanelCreditBalances(
-        Contract contract, IReadOnlyList<ContractPanel> confirmedPanels, IReadOnlyList<Invoice> activeDocuments)
-    {
-        var panelIds = confirmedPanels.Select(panel => panel.IdPanel).ToHashSet();
-        var balances = confirmedPanels.ToDictionary(panel => panel.IdPanel, _ => 0m);
-        foreach (var document in activeDocuments)
-        {
-            var sign = InvoiceDocumentAccounting.IsAvoir(document.InvoiceType) ? -1m : 1m;
-            if (document.PanelAllocations.Count > 0)
-            {
-                foreach (var line in document.PanelAllocations.Where(line => panelIds.Contains(line.IdPanel)))
-                    balances[line.IdPanel] += sign * (line.GrossPremium - line.CedentCommissionAmount);
-                continue;
-            }
-
-            var amount = document.GrossPremium ?? 0m;
-            if (amount <= 0m) continue;
-            foreach (var line in PremiumDebitNoteAllocationCalculator.Calculate(contract, confirmedPanels, amount).Allocations)
-                balances[line.PanelId] += sign * line.AllocationAmount;
-        }
-
-        return balances.ToDictionary(pair => pair.Key, pair => Math.Max(0m, pair.Value));
     }
 
     private static void SetAvoirAllocationSigns(IReadOnlyList<PremiumDebitNoteAllocationDto> allocations)
@@ -3013,8 +2989,6 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
                 && string.Equals(panel.Status?.Trim(), ContractConstants.ConfirmedPanelStatus, StringComparison.OrdinalIgnoreCase)) == true;
             if (!eligiblePanel)
                 return "Avoir allocations may only reference confirmed reinsurer panels belonging to the selected contract.";
-            if (line.AllocationAmount > data.PanelCreditBalances.GetValueOrDefault(line.PanelId))
-                return $"The Avoir allocation for reinsurer {line.ReinsurerName} exceeds its available invoiced allocation.";
         }
 
         return null;
@@ -3023,6 +2997,7 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
     private async Task<ServiceResult<PremiumDebitNoteResponseDto>> MapContractInvoiceAsync(int invoiceId, CancellationToken cancellationToken)
     {
         var invoice = await _db.Invoices.AsNoTracking()
+            .Include(item => item.SourceClaim)
             .Include(item => item.IdCurrencyNavigation)
             .Include(item => item.ReceiptAllocations)
             .Include(item => item.PanelAllocations)
@@ -3089,6 +3064,9 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
 
         return new()
         {
+            ClaimId = invoice.ClaimRef,
+            ClaimNumber = invoice.SourceClaim?.ClaimNumber,
+            SourceType = invoice.ClaimRef.HasValue ? "Claim" : "Contract/Original Premium",
             IdInvoice = invoice.IdInvoice,
             InvoiceId = invoice.IdInvoice,
             IdContract = invoice.IdContract,
@@ -3204,13 +3182,6 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
         return Convert.ToInt32(value, CultureInfo.InvariantCulture);
     }
 
-    private static string FormatAvoirBalanceError(decimal balance, string? currencyCode, int currencyDecimalPlaces)
-    {
-        var precision = PanelRemittanceCalculator.Precision(currencyDecimalPlaces);
-        var amount = balance.ToString($"N{precision}", CultureInfo.InvariantCulture);
-        return $"The Avoir amount cannot exceed the available credit balance of {amount} {currencyCode ?? string.Empty}.".TrimEnd();
-    }
-
     private sealed record PremiumDebitNoteData(
         Contract? Contract,
         IReadOnlyList<ContractPanel>? Panels,
@@ -3221,14 +3192,12 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
         decimal AlreadyInvoiced,
         decimal TotalInvoicedAmount,
         decimal TotalAvoirAmount,
-        decimal AvailableCreditBalance,
-        IReadOnlyDictionary<int, decimal> PanelCreditBalances,
         bool HasActiveInvoiceSource,
         ApiErrorResponseDto? Error,
         int ErrorStatusCode)
     {
         public static PremiumDebitNoteData Failed(string message, int statusCode, IEnumerable<string>? errors = null) => new(
-            null, null, 0m, 0m, 0m, 2, 0m, 0m, 0m, 0m, new Dictionary<int, decimal>(), false,
+            null, null, 0m, 0m, 0m, 2, 0m, 0m, 0m, false,
             new ApiErrorResponseDto { Message = message, Errors = errors ?? [], Code = statusCode == StatusCodes.Status404NotFound ? "NOT_FOUND" : null },
             statusCode);
     }
@@ -3464,6 +3433,9 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
         var recovery = InvoiceRecoveryCalculator.Calculate(gross, paired);
         return new InvoiceResponseDto
         {
+            ClaimId = x.ClaimRef,
+            ClaimNumber = x.SourceClaim == null ? null : x.SourceClaim.ClaimNumber,
+            SourceType = x.ClaimRef.HasValue ? "Claim" : "Contract/Original Premium",
             IdInvoice = x.IdInvoice,
             InvoiceId = x.IdInvoice,
             ContractId = x.IdContract,
@@ -3505,6 +3477,9 @@ public sealed partial class FinancialWorkflowService : IFinancialWorkflowService
 
     private static readonly System.Linq.Expressions.Expression<Func<Invoice, InvoiceResponseDto>> ToInvoiceExpression = x => new()
     {
+        ClaimId = x.ClaimRef,
+        ClaimNumber = x.SourceClaim == null ? null : x.SourceClaim.ClaimNumber,
+        SourceType = x.ClaimRef.HasValue ? "Claim" : "Contract/Original Premium",
         IdInvoice = x.IdInvoice,
         InvoiceId = x.IdInvoice,
         ContractId = x.IdContract,
