@@ -460,7 +460,7 @@ public sealed partial class FinancialWorkflowService
     }
 
     private IQueryable<RemittanceRef> RemittanceDetails() => _db.RemittanceRefs.AsNoTrackingWithIdentityResolution()
-        .Include(x => x.ClaimRefNavigation)
+        .Include(x => x.ClaimRefNavigation).ThenInclude(claim => claim.InvoicingAvoir)
         .Include(x => x.IdCounterpartyNavigation).Include(x => x.IdCurrencyNavigation)
         .Include(x => x.IdPanelNavigation).ThenInclude(x => x.IdContractNavigation).ThenInclude(contract => contract.IdCounterpartyNavigation)
         .Include(x => x.IdPanelNavigation).ThenInclude(panel => panel.IdContractNavigation)
@@ -500,6 +500,8 @@ public sealed partial class FinancialWorkflowService
                     || (x.IdPanelNavigation.IdContractNavigation.IdCounterpartyNavigation != null && x.IdPanelNavigation.IdContractNavigation.IdCounterpartyNavigation.Name.Contains(term))))
             || (x.SourceInvoice != null && (x.SourceInvoice.InvoiceNumber.Contains(term)
                 || (x.SourceInvoice.IdContractNavigation != null && (x.SourceInvoice.IdContractNavigation.Name.Contains(term) || x.SourceInvoice.IdContractNavigation.Umr.Contains(term)))))
+            || (x.ClaimRefNavigation != null && x.ClaimRefNavigation.InvoicingAvoir != null
+                && (x.ClaimRefNavigation.InvoicingAvoir.InvoiceNumber.Contains(term) || (x.ClaimRefNavigation.InvoicingAvoir.Label != null && x.ClaimRefNavigation.InvoicingAvoir.Label.Contains(term))))
             || (x.IdReceiptAllocationNavigation != null && x.IdReceiptAllocationNavigation.IdInvoiceNavigation != null && x.IdReceiptAllocationNavigation.IdInvoiceNavigation.InvoiceNumber.Contains(term))
             || (x.IdReceiptAllocationNavigation != null && x.IdReceiptAllocationNavigation.IdBankReceiptNavigation != null
                 && ((x.IdReceiptAllocationNavigation.IdBankReceiptNavigation.BankReference != null && x.IdReceiptAllocationNavigation.IdBankReceiptNavigation.BankReference.Contains(term))
@@ -618,20 +620,30 @@ public sealed partial class FinancialWorkflowService
         dto.ReceiptReference ??= settlementReceipt?.BusinessReference ?? settlementReceipt?.BankReference;
         dto.BankReceiptId = x.IdReceiptAllocationNavigation?.IdBankReceipt;
         dto.BankReceiptId ??= settlementReceipt?.IdBankReceipt;
-        var sourceDocument = x.SourceInvoice ?? x.IdReceiptAllocationNavigation?.IdInvoiceNavigation;
-        dto.InvoiceId = x.SourceInvoiceId ?? x.IdReceiptAllocationNavigation?.IdInvoice;
-        dto.InvoiceNumber = x.IdReceiptAllocationNavigation?.IdInvoiceNavigation?.InvoiceNumber
-            ?? x.SourceInvoice?.InvoiceNumber;
-        dto.InvoiceLabel = x.IdReceiptAllocationNavigation?.IdInvoiceNavigation?.Label
-            ?? x.SourceInvoice?.Label;
+        // Older Claim remittances may not have source_invoice_id populated; resolve
+        // their existing Avoir through INVOICE.Claim_ref without renumbering any rows.
+        var sourceInvoice = x.ClaimRef.HasValue
+            ? x.ClaimRefNavigation?.InvoicingAvoir ?? (x.SourceInvoice?.ClaimRef == x.ClaimRef ? x.SourceInvoice : null)
+            : x.SourceInvoice;
+        var sourceDocument = x.ClaimRef.HasValue ? sourceInvoice : sourceInvoice ?? x.IdReceiptAllocationNavigation?.IdInvoiceNavigation;
+        dto.InvoiceId = sourceInvoice?.IdInvoice ?? x.IdReceiptAllocationNavigation?.IdInvoice;
+        dto.InvoiceNumber = x.ClaimRef.HasValue ? sourceInvoice?.InvoiceNumber
+            : x.IdReceiptAllocationNavigation?.IdInvoiceNavigation?.InvoiceNumber ?? x.SourceInvoice?.InvoiceNumber;
+        dto.InvoiceLabel = x.ClaimRef.HasValue ? sourceInvoice?.Label
+            : x.IdReceiptAllocationNavigation?.IdInvoiceNavigation?.Label ?? x.SourceInvoice?.Label;
         dto.InvoiceAvoirNumber = sourceDocument?.InvoiceNumber;
         dto.Label = sourceDocument?.Label;
         dto.SourceType = x.SourceType;
-        dto.SourceInvoiceId = x.SourceInvoiceId;
-        dto.SourceInvoiceNumber = x.SourceInvoice?.InvoiceNumber;
+        dto.SourceInvoiceId = sourceInvoice?.IdInvoice;
+        dto.SourceInvoiceNumber = sourceInvoice?.InvoiceNumber;
         dto.SourceDocumentId = x.ClaimRef ?? x.SourceInvoiceId ?? x.IdReceiptAllocationNavigation?.IdInvoice;
-        dto.SourceDocumentNumber = x.ClaimRefNavigation?.CollectionReference ?? dto.InvoiceAvoirNumber;
-        if (x.ClaimRef.HasValue) { dto.Label = x.ClaimRefNavigation?.ClaimNumber; dto.InvoiceAvoirNumber = dto.SourceDocumentNumber; }
+        dto.SourceDocumentNumber = sourceDocument?.InvoiceNumber ?? x.ClaimRefNavigation?.CollectionReference;
+        if (x.ClaimRef.HasValue && sourceDocument is null)
+        {
+            // Pre-Avoir legacy claims retain their original reference until explicitly converted.
+            dto.Label = x.ClaimRefNavigation?.ClaimNumber;
+            dto.InvoiceAvoirNumber = dto.SourceDocumentNumber;
+        }
         dto.Amount = SignedRemittanceAmount(x);
         dto.SignedNetPayableAmount = SignedRemittanceAmount(x);
         dto.AllocationPercentage = x.PartPct;

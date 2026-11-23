@@ -30,10 +30,17 @@ public sealed partial class FinancialWorkflowService
         int CurrencyDecimalPlaces,
         IrisInvoiceBrandingOptions Branding,
         byte[]? LogoBytes,
-        IReadOnlyList<IrisInvoiceBankAccount> BankAccounts);
+        IReadOnlyList<IrisInvoiceBankAccount> BankAccounts)
+    {
+        public ClaimAccountingDetails? ClaimDetails { get; init; }
+    }
+    private sealed record ClaimAccountingDetails(string Number, DateOnly LossDate, string? Description,
+        decimal GrossLoss, decimal? Deductible, string Cedent, decimal? Share, bool IsCollection);
 
     private static byte[] BuildIrisInvoiceAvoirPdf(IrisInvoiceAvoirPdfModel document)
     {
+        if (document.ClaimDetails?.IsCollection == true) return BuildClaimCollectionPdf(document);
+        var claim = document.ClaimDetails;
         var drawing = new StringBuilder();
         var logo = document.LogoBytes is null ? null : DecodePngForPdf(document.LogoBytes);
         if (logo is not null)
@@ -53,9 +60,9 @@ public sealed partial class FinancialWorkflowService
         AddAccountingText(drawing, $"Tunis, le {document.IssueDate:dd/MM/yyyy}", 48, 710, 9);
 
         DrawAccountingRect(drawing, 48, 620, 295, 68);
-        AddAccountingWrappedText(drawing, document.CedentName, 60, 670, 9, 42, 11, bold: true);
-        var addressY = AddAccountingWrappedText(drawing, document.CedentAddress, 60, 653, 7, 48, 9);
-        AddAccountingText(drawing, JoinNonEmpty(document.CedentCity, document.CedentCountry), 60, Math.Min(635, addressY - 1), 7);
+        var nameBottom=AddAccountingWrappedText(drawing, claim == null ? document.CedentName : ClipClaimText(document.CedentName,80), 60, 670, 9, 42, 11, bold: true);
+        var addressY = AddAccountingWrappedText(drawing, claim == null ? document.CedentAddress : ClipClaimText(document.CedentAddress,90), 60, claim == null ? 653 : Math.Min(653,nameBottom-3), 7, 48, 9);
+        AddAccountingText(drawing, claim == null ? JoinNonEmpty(document.CedentCity,document.CedentCountry) : ClipClaimText(JoinNonEmpty(document.CedentCity, document.CedentCountry),60), 60, Math.Min(635, addressY - 1), 7);
         AddAccountingText(drawing, "Affaire suivie par :", 365, 668, 8, bold: true);
         AddAccountingText(drawing, document.AccountManager, 365, 650, 8);
 
@@ -63,13 +70,14 @@ public sealed partial class FinancialWorkflowService
             ? $"FACTURE N\u00b0  {document.DocumentNumber}"
             : $"AVOIR N\u00b0    {document.DocumentNumber}";
         AddAccountingCenteredText(drawing, title, 582, 14, bold: true);
+        if (claim != null) AddAccountingText(drawing, $"Source: Claim {claim.Number} | {document.DocumentNumber}", 48, 559, 8, bold: true);
 
         DrawAccountingRect(drawing, 48, 418, 499, 128);
         AddAccountingText(drawing, "Objet", 62, 516, 8, bold: true);
         AddAccountingText(drawing, ":", 188, 516, 8);
         AddAccountingWrappedText(drawing,
-            string.IsNullOrWhiteSpace(document.Label) ? "Non renseigné" : document.Label,
-            203, 516, 8, 77, 10);
+            string.IsNullOrWhiteSpace(document.Label) ? "Non renseigné" : claim == null ? document.Label : document.Label.Replace("\r", " ").Replace("\n", " "),
+            203, 516, claim == null ? 8 : 7, claim == null ? 77 : 80, claim == null ? 10 : 8);
         AddAccountingText(drawing, "Nature de la garantie", 62, 481, 8, bold: true);
         AddAccountingText(drawing, ":", 188, 481, 8);
         AddAccountingText(drawing, document.MainCover, 203, 481, 8);
@@ -93,7 +101,7 @@ public sealed partial class FinancialWorkflowService
         var displayAmount = document.DocumentType == IrisAccountingDocumentType.Avoir
             ? Math.Abs(document.Amount)
             : document.Amount;
-        var formattedAmount = FormatFrenchAccountingAmount(displayAmount);
+        var formattedAmount = claim == null ? FormatFrenchAccountingAmount(displayAmount) : FormatAmount(displayAmount, document.CurrencyDecimalPlaces);
         AddAccountingRightAlignedText(drawing, formattedAmount, 529, firstAmountY, 10, 245, bold: true);
         var amountInWords = FrenchCurrencyAmountInWords.Convert(
             displayAmount, document.Currency, document.CurrencyDecimalPlaces);
@@ -109,6 +117,8 @@ public sealed partial class FinancialWorkflowService
             : $"{document.Currency}     {formattedAmount}";
         AddAccountingRightAlignedText(drawing, currencyAndAmount, 529, secondAmountY, 10, 245, bold: true);
 
+        if (claim is null)
+        {
         AddAccountingText(drawing,
                 "Le paiement doit \u00eatre effectu\u00e9 par virement sur l'un de nos comptes indiqu\u00e9s ci-dessous.",
                 48, 255, 7);
@@ -148,6 +158,7 @@ public sealed partial class FinancialWorkflowService
                 AddAccountingText(drawing, account.SwiftBic, 461, y, 7);
                 if (index < accounts.Length - 1) DrawAccountingLine(drawing, 48, y - 6, 499);
             }
+        }
         DrawAccountingLine(drawing, 48, 76, 499);
         var companyAddress = JoinNonEmpty(branding.AddressLine1, branding.AddressLine2);
         AddAccountingCenteredText(drawing, JoinNonEmpty(branding.CompanyName, companyAddress) ?? string.Empty, 60, 7);
@@ -155,11 +166,15 @@ public sealed partial class FinancialWorkflowService
         AddAccountingText(drawing, $"RC: {branding.CommercialRegister}", 300, 42, 7);
         AddAccountingText(drawing, "1 / 1", 510, 24, 7);
 
-        var stream = Latin1.GetBytes(drawing.ToString());
+        return AssembleAccountingPages([drawing], document.LogoBytes);
+    }
+
+    private static byte[] AssembleAccountingPages(IReadOnlyList<StringBuilder> pages, byte[]? logoBytes)
+    {
+        var logo = logoBytes is null ? null : DecodePngForPdf(logoBytes);
         var objects = new List<byte[]>
         {
             Ascii("<< /Type /Catalog /Pages 2 0 R >>"),
-            Ascii("<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
             Array.Empty<byte>(),
             Ascii("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"),
             Ascii("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>"),
@@ -183,11 +198,16 @@ public sealed partial class FinancialWorkflowService
                     logo.Alpha));
         }
 
-        var contentObjectId = objects.Count + 1;
-        objects.Add(PdfStream(string.Empty, stream));
+        var pageIds = new List<int>();
         var xObjectResource = logoObjectId.HasValue ? $" /XObject << /Logo {logoObjectId.Value} 0 R >>" : string.Empty;
-        objects[2] = Ascii(
-            $"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R /F3 6 0 R /F4 7 0 R >>{xObjectResource} >> /Contents {contentObjectId} 0 R >>");
+        foreach (var page in pages)
+        {
+            var contentId = objects.Count + 1;
+            objects.Add(PdfStream(string.Empty, Latin1.GetBytes(page.ToString())));
+            pageIds.Add(objects.Count + 1);
+            objects.Add(Ascii($"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R >>{xObjectResource} >> /Contents {contentId} 0 R >>"));
+        }
+        objects[1] = Ascii($"<< /Type /Pages /Kids [{string.Join(" ", pageIds.Select(id => $"{id} 0 R"))}] /Count {pageIds.Count} >>");
         return AssemblePdf(objects);
     }
 
@@ -222,6 +242,8 @@ public sealed partial class FinancialWorkflowService
         AddAccountingText(drawing, value, x, y, fittedSize, bold);
     }
 
+    private static string ClipClaimText(string? value, int limit) => string.IsNullOrWhiteSpace(value) ? "Not provided" : value.Replace("\r", " ").Replace("\n", " ").Length <= limit ? value.Replace("\r", " ").Replace("\n", " ") : value.Replace("\r", " ").Replace("\n", " ")[..(limit-3)] + "...";
+
     private static string FormatFrenchAccountingAmount(decimal value) =>
         value.ToString("N2", System.Globalization.CultureInfo.GetCultureInfo("fr-FR"))
             .Replace('\u202f', ' ')
@@ -240,7 +262,7 @@ public sealed partial class FinancialWorkflowService
         foreach (var inputLine in value.Split(["\r\n", "\n", "\r"], StringSplitOptions.RemoveEmptyEntries))
         {
             var line = new StringBuilder();
-            foreach (var word in inputLine.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            foreach (var word in inputLine.Split(' ', StringSplitOptions.RemoveEmptyEntries).SelectMany(word => Enumerable.Range(0,(word.Length+maxCharacters-1)/maxCharacters).Select(i => word.Substring(i*maxCharacters,Math.Min(maxCharacters,word.Length-i*maxCharacters)))))
             {
                 if (line.Length > 0 && line.Length + word.Length + 1 > maxCharacters)
                 {

@@ -19,7 +19,7 @@ using SecurityClaim = System.Security.Claims.Claim;
 
 namespace IRISBackend.Tests;
 
-public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
+public sealed partial class OutgoingRemittanceIntegrationTests : IAsyncLifetime
 {
     private readonly string _database = $"IRISBackend_OutgoingTests_{Guid.NewGuid():N}";
     private IRISBackendContext _db = null!;
@@ -1856,8 +1856,9 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AvoirRejectsCreditExceedingOneConfirmedReinsurersRemainingInvoicedAllocation()
+    public async Task AvoirAllowsCreditExceedingOneConfirmedReinsurersRemainingInvoicedAllocation()
     {
+        await ConfigureDirectAvoirContractAsync();
         var contract = await _db.Contracts.SingleAsync(item => item.IdContract == _invoice.IdContract);
         contract.GrossPremium = 10m;
         contract.CedentCommission = 0m;
@@ -1888,11 +1889,11 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
             InvoiceType = "AVOIR", ProcessingMode = "DIRECT_TO_REMITTANCES", GrossAmount = 10m, InvoiceDate = new(2026, 10, 19), IdempotencyKey = "panel-cap-exceeded"
         }, default);
 
-        Assert.False(result.Succeeded);
-        Assert.Equal(StatusCodes.Status400BadRequest, result.StatusCode);
-        Assert.Contains("available invoiced allocation", result.Error!.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain(await _db.Invoices.ToListAsync(), invoice => invoice.InvoiceType == "AVOIR");
-        Assert.Equal(2, await _db.InvoicePanelAllocations.CountAsync());
+        Assert.True(result.Succeeded, result.Error?.Message);
+        Assert.Equal(10m, result.Value!.Allocations.Sum(line => line.AllocationAmount));
+        Assert.Equal(2, result.Value.CreatedRemittances.Count);
+        Assert.All(result.Value.CreatedRemittances, row => Assert.True(row.SignedNetPayableAmount < 0m));
+        Assert.Equal(4, await _db.InvoicePanelAllocations.CountAsync());
     }
 
     [Fact]
@@ -2291,7 +2292,7 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AvoirCannotExceedGrossPremiumLessCedentCommissionAndExistingAvoirs()
+    public async Task AvoirCanExceedGrossPremiumLessCedentCommissionAndExistingAvoirs()
     {
         var contract = await _db.Contracts.SingleAsync(item => item.IdContract == _invoice.IdContract);
         contract.GrossPremium = 100m;
@@ -2307,10 +2308,10 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
             InvoiceType = "AVOIR", ProcessingMode = "PAIR_WITH_ENCAISSEMENT", GrossAmount = 90.01m, InvoiceDate = new(2026, 10, 16)
         }, default);
 
-        Assert.False(result.Succeeded);
-        Assert.Equal(StatusCodes.Status400BadRequest, result.StatusCode);
-        Assert.Contains("available credit balance", result.Error!.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain(await _db.Invoices.ToListAsync(), row => row.InvoiceType == "AVOIR");
+        Assert.True(result.Succeeded, result.Error?.Message);
+        Assert.Equal(90.01m, result.Value!.Amount);
+        Assert.Equal(-90.01m, result.Value.SignedAmount);
+        Assert.Equal(90.01m, result.Value.Allocations.Sum(row => row.AllocationAmount));
     }
 
     [Fact]
@@ -2560,6 +2561,50 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
         Assert.Equal(10000m, context.Value.TotalAvoirAmount);
         Assert.Equal(5000m, context.Value.RemainingInvoiceAmount);
         Assert.Equal(30500m, context.Value.AvailableCreditBalance);
+    }
+
+    [Theory]
+    [InlineData("PAIR_WITH_ENCAISSEMENT")]
+    [InlineData("DIRECT_TO_REMITTANCES")]
+    public async Task AvoirAcceptsAmountsAboveContractAndPanelBalancesIncludingZeroRemainingCredit(string mode)
+    {
+        await ConfigureDirectAvoirContractAsync();
+        var service = Service(_db);
+        foreach (var amount in new[] { 2500m, 3000m })
+        {
+            var request = new PremiumDebitNoteRequestDto { InvoiceType = "AVOIR", ProcessingMode = mode,
+                GrossAmount = amount, InvoiceDate = new(2026, 11, 18), IdempotencyKey = Guid.NewGuid().ToString("N") };
+            var preview = await service.PreviewPremiumInvoiceAsync(_invoice.IdContract, request, default);
+            Assert.True(preview.Succeeded, preview.Error?.Message);
+            Assert.Equal(amount, preview.Value!.Allocations.Sum(row => row.AllocationAmount));
+            Assert.All(preview.Value.Allocations, row => Assert.True(row.SignedNetPayableAmount < 0));
+            var result = await service.CreatePremiumInvoiceAsync(_invoice.IdContract, request, default);
+            Assert.True(result.Succeeded, result.Error?.Message);
+            Assert.Equal(-amount, result.Value!.SignedAmount);
+            Assert.Equal(amount, result.Value.Allocations.Sum(row => row.AllocationAmount));
+            Assert.Equal(mode == "PAIR_WITH_ENCAISSEMENT", result.Value.PairingRequired);
+            Assert.Equal(mode == "DIRECT_TO_REMITTANCES" ? 2 : 0, result.Value.CreatedRemittances.Count);
+            Assert.All(result.Value.CreatedRemittances, row => Assert.True(row.SignedNetPayableAmount < 0));
+            var context = await service.GetInvoiceContextAsync(_invoice.IdContract, default);
+            Assert.True(context.Value!.CanCreateAvoir);
+            Assert.Null(context.Value.AvoirBlockingReason);
+            Assert.Equal(0m, context.Value.AvailableCreditBalance);
+        }
+        Assert.Equal(5500m, await _db.Invoices.Where(i => i.InvoiceType == "AVOIR").SumAsync(i => i.GrossPremium));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(1.0001)]
+    public async Task AvoirStillRejectsNonpositiveAmountsAndInvalidCurrencyPrecision(decimal amount)
+    {
+        await ConfigureDirectAvoirContractAsync();
+        var request = new PremiumDebitNoteRequestDto { InvoiceType = "AVOIR", ProcessingMode = "PAIR_WITH_ENCAISSEMENT",
+            GrossAmount = amount, InvoiceDate = new(2026, 11, 18) };
+        Assert.False((await Service(_db).PreviewPremiumInvoiceAsync(_invoice.IdContract, request, default)).Succeeded);
+        Assert.False((await Service(_db).CreatePremiumInvoiceAsync(_invoice.IdContract, request, default)).Succeeded);
+        Assert.Empty(await _db.Invoices.Where(i => i.InvoiceType == "AVOIR").ToListAsync());
     }
 
     [Fact]
@@ -3551,36 +3596,24 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ClaimsDirectCollectionCalculates950LocksFinancialsAndCreatesNegativeRemittances()
+    public async Task ClaimsDirectCollectionUsesNetLossSignedSharesAndLocksFinancials()
     {
-        var request = await PrepareClaimRequest();
-        var front = Service(_db, "Front Officer"); var back = Service(_db);
-        var created = await front.SaveClaimAsync(_invoice.IdContract, null, request, default);
-        Assert.True(created.Succeeded, created.Error?.Message);
-        Assert.Equal(10500m, created.Value!.Amount100Percent); Assert.Equal(950m, created.Value.CollectionAmount);
-        Assert.Equal(99999m, created.Value.Reserve); Assert.Equal(2026, created.Value.UnderwritingYear);
-        Assert.Equal("PaidLoss", created.Value.Status);
+        var request=await PrepareClaimRequest();var front=Service(_db,"Front Officer");var back=Service(_db);
+        var created=await front.SaveClaimAsync(_invoice.IdContract,null,request,default);Assert.True(created.Succeeded);
+        Assert.Equal(10500m,created.Value!.Amount100Percent);Assert.Equal(10000m,created.Value.CollectionAmount);
+        Assert.True((await front.SaveClaimAsync(_invoice.IdContract,created.Value.ClaimId,request,default)).Succeeded);
         Assert.Single(await _db.Notifications.Where(n => n.NotificationType == "ClaimReady").ToListAsync());
-        var again = await front.SaveClaimAsync(_invoice.IdContract, created.Value.ClaimId, request, default);
-        Assert.True(again.Succeeded); Assert.Single(await _db.Notifications.Where(n => n.NotificationType == "ClaimReady").ToListAsync());
-        var issued = await back.IssueClaimCollectionAsync(created.Value.ClaimId, new() { ProcessingMode = "DIRECT_TO_REMITTANCES" }, default);
-        Assert.True(issued.Succeeded, issued.Error?.Message);
-        var retry = await back.IssueClaimCollectionAsync(created.Value.ClaimId, new() { ProcessingMode = "DIRECT_TO_REMITTANCES" }, default);
-        Assert.True(retry.Succeeded); Assert.Equal(2, await _db.CollectionNotes.CountAsync()); Assert.Equal(2, await _db.RemittanceRefs.CountAsync());
-        Assert.Equal(950m, await _db.CollectionNotes.SumAsync(n => n.AmountClaimed));
-        var rows = await back.ListRemittancesAsync(new() { PageSize = 20 }, default);
-        Assert.True(rows.Succeeded, rows.Error?.Message); Assert.Equal(-950m, rows.Value!.Items.Sum(r => r.SignedNetPayableAmount));
-        Assert.All(rows.Value.Items, row => { Assert.Equal("Claim", row.SourceType); Assert.True(row.ClosingEligible); });
-        Assert.False((await front.SaveClaimAsync(_invoice.IdContract, created.Value.ClaimId, request, default)).Succeeded);
-        Assert.False((await back.CloseClaimAsync(created.Value.ClaimId, default)).Succeeded);
-        var pdf = await back.GetClaimCollectionDocumentAsync(created.Value.ClaimId, default);
-        Assert.True(pdf.Succeeded); Assert.StartsWith("%PDF-", Encoding.Latin1.GetString(pdf.Value!.Content));
-        Assert.Contains("CLAIM COLLECTION NOTE", Encoding.Latin1.GetString(pdf.Value.Content));
-        Assert.Equal(pdf.Value.Content, (await back.GetClaimCollectionDocumentAsync(created.Value.ClaimId, default)).Value!.Content);
-        var preview = Environment.GetEnvironmentVariable("IRIS_CLAIM_PDF_PREVIEW");
-        if (!string.IsNullOrWhiteSpace(preview)) { Directory.CreateDirectory(Path.GetDirectoryName(preview)!); await File.WriteAllBytesAsync(preview, pdf.Value.Content); }
-        var soa = await front.ListClaimsAsync(_invoice.IdContract, 1, 20, true, default); Assert.Single(soa.Value!.Items);
-        Assert.False((await back.IssueClaimCollectionAsync(created.Value.ClaimId, new() { ProcessingMode = "PAIR_WITH_ENCAISSEMENT" }, default)).Succeeded);
+        var decisions=await ClaimDecisions(created.Value);
+        Assert.True((await back.ApproveClaimInvoicingAsync(created.Value.ClaimId,decisions,default)).Succeeded);
+        Assert.True((await back.ApproveClaimInvoicingAsync(created.Value.ClaimId,decisions,default)).Succeeded);
+        Assert.Equal(1050m,await _db.CollectionNotes.SumAsync(n => n.AmountClaimed));
+        var rows=await back.ListRemittancesAsync(new(){PageSize=20},default);Assert.True(rows.Succeeded);
+        Assert.Equal(-1050m,rows.Value!.Items.Sum(r => r.SignedNetPayableAmount));
+        Assert.All(rows.Value.Items,r => {Assert.Equal("Claim",r.SourceType);Assert.True(r.ClosingEligible);});
+        Assert.Equal(409,(await front.SaveClaimAsync(_invoice.IdContract,created.Value.ClaimId,request,default)).StatusCode);
+        Assert.False((await back.CloseClaimAsync(created.Value.ClaimId,default)).Succeeded);
+        var soa=await front.ListClaimsAsync(_invoice.IdContract,1,20,true,default);Assert.Single(soa.Value!.Items);
+        Assert.Equal(409,(await back.IssueClaimCollectionAsync(created.Value.ClaimId,new(){ProcessingMode="PAIR_WITH_ENCAISSEMENT"},default)).StatusCode);
     }
 
     [Theory]
@@ -3588,7 +3621,7 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
     [InlineData(1000)]
     public async Task ClaimsAtOrBelowDeductibleCloseAndAreExcludedFromFinancials(decimal amount)
     {
-        var request = await PrepareClaimRequest(amount, 0);
+        var request = await PrepareClaimRequest(amount, 0); request.Deductible=1000m;request.Status="UnderDeductible";
         var front = Service(_db, "Front Officer");
         var result = await front.SaveClaimAsync(_invoice.IdContract, null, request, default);
         Assert.True(result.Succeeded, result.Error?.Message); Assert.Equal("UnderDeductible", result.Value!.Status); Assert.True(result.Value.IsClosed);
@@ -3603,7 +3636,7 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
     {
         var request = await PrepareClaimRequest(); var front = Service(_db, "Front Officer"); var back = Service(_db);
         var claim = (await front.SaveClaimAsync(_invoice.IdContract, null, request, default)).Value!;
-        Assert.True((await back.IssueClaimCollectionAsync(claim.ClaimId, new() { ProcessingMode = "PAIR_WITH_ENCAISSEMENT" }, default)).Succeeded);
+        await SeedLegacyClaimCollection(claim.ClaimId);
         Assert.Empty(await _db.RemittanceRefs.ToListAsync());
         Assert.False((await back.PairClaimAsync(claim.ClaimId, new() { BankReceiptId = -1 }, default)).Succeeded);
         var euro = new Currency { CurrencyCode = "EUR", Name = "Euro", DecimalPlaces = 2, IsActive = true };
@@ -3630,7 +3663,7 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
         request.CurrencyId = -1; Assert.False((await front.SaveClaimAsync(_invoice.IdContract, null, request, default)).Succeeded);
         request.CurrencyId = _receipt.IdCurrency; request.Status = "Outstanding"; request.NotificationDate = null; request.PaidLoss = null; request.NatureOfLoss = null;
         var outstanding = await front.SaveClaimAsync(_invoice.IdContract, null, request, default); Assert.True(outstanding.Succeeded); Assert.Equal("Outstanding", outstanding.Value!.Status);
-        Assert.Empty((await Service(_db).ListClaimsAsync(null, 1, 20, false, default)).Value!.Items);
+        Assert.Single((await Service(_db).ListClaimsAsync(null, 1, 20, false, default)).Value!.Items);
         var contract = await _db.Contracts.SingleAsync(c => c.IdContract == _invoice.IdContract); contract.Status = "Draft"; await _db.SaveChangesAsync();
         Assert.False((await front.SaveClaimAsync(contract.IdContract, null, request, default)).Succeeded);
     }
@@ -3638,11 +3671,11 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task ClaimsCreditNetsWithPremiumThroughClosingAndFinancePayment()
     {
-        var request = await PrepareClaimRequest();
+        var request = await PrepareClaimRequest(9500m,0m);
         _panels[0].SignedSharePct = 10m; _panels[1].Status = "Cancelled"; await _db.SaveChangesAsync();
         var claim = (await Service(_db, "Front Officer").SaveClaimAsync(_invoice.IdContract, null, request, default)).Value!;
         var back = Service(_db); var finance = Service(_db, "Finance Officer");
-        Assert.True((await back.IssueClaimCollectionAsync(claim.ClaimId, new() { ProcessingMode = "DIRECT_TO_REMITTANCES" }, default)).Succeeded);
+        Assert.True((await back.ApproveClaimInvoicingAsync(claim.ClaimId, await ClaimDecisions(claim), default)).Succeeded);
         var claimRemittance = await _db.RemittanceRefs.SingleAsync(r => r.ClaimRef == claim.ClaimId);
         var allocation = await _db.InvoicePanelAllocations.SingleAsync(a => a.IdPanel == _panels[0].IdPanel);
         var premium = new RemittanceRef { IdPanel = _panels[0].IdPanel, IdCounterparty = _panels[0].IdCounterparty, IdCurrency = _receipt.IdCurrency,
@@ -3667,14 +3700,14 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
         var claim = (await Service(_db, "Front Officer").SaveClaimAsync(_invoice.IdContract, null, request, default)).Value!;
         var script = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Deployment", "20261111_claims_workflow.sql"));
         await _db.Database.ExecuteSqlRawAsync(script); await _db.Database.ExecuteSqlRawAsync(script);
-        Assert.Equal(950m, (await _db.Claims.AsNoTracking().SingleAsync(c => c.ClaimRef == claim.ClaimId)).CollectionAmount);
+        Assert.Equal(10000m, (await _db.Claims.AsNoTracking().SingleAsync(c => c.ClaimRef == claim.ClaimId)).CollectionAmount);
         Assert.Equal(1000m, (await _db.Invoices.AsNoTracking().SingleAsync()).GrossPremium);
     }
 
     [Fact]
     public async Task ClaimsSmallAmountsAllocateCurrencyUnitsWithoutNegativeRemainders()
     {
-        var request = await PrepareClaimRequest(1000.02m, 0m);
+        var request = await PrepareClaimRequest(0.02m, 0m);
         _panels[0].SignedSharePct = 2.5m; _panels[1].SignedSharePct = 2.5m;
         foreach (var name in new[] { "Rounding A", "Rounding B" })
         {
@@ -3685,8 +3718,8 @@ public sealed class OutgoingRemittanceIntegrationTests : IAsyncLifetime
         }
         await _db.SaveChangesAsync();
         var claim = (await Service(_db, "Front Officer").SaveClaimAsync(_invoice.IdContract, null, request, default)).Value!;
-        Assert.Equal(0.002m, claim.CollectionAmount);
-        var result = await Service(_db).IssueClaimCollectionAsync(claim.ClaimId, new() { ProcessingMode = "DIRECT_TO_REMITTANCES" }, default);
+        Assert.Equal(0.02m, claim.CollectionAmount);
+        var result = await Service(_db).ApproveClaimInvoicingAsync(claim.ClaimId, await ClaimDecisions(claim), default);
         Assert.True(result.Succeeded, result.Error?.Message);
         Assert.Equal(0.002m, await _db.CollectionNotes.SumAsync(n => n.AmountClaimed));
         Assert.All(await _db.CollectionNotes.ToListAsync(), note => Assert.True(note.AmountClaimed >= 0m));

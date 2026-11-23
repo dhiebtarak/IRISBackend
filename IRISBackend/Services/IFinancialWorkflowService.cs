@@ -4,8 +4,13 @@ namespace IRISBackend.Services;
 
 public interface IFinancialWorkflowService
 {
+    Task<ServiceResult<ClaimResponseDto>> GetClaimAsync(int claimId, CancellationToken ct);
+    Task<ServiceResult<ClaimInvoicingPreviewDto>> PreviewClaimInvoicingAsync(int claimId, CancellationToken ct);
+    Task<ServiceResult<ClaimInvoicingResultDto>> ApproveClaimInvoicingAsync(int claimId, ClaimInvoicingRequestDto request, CancellationToken ct);
+    Task<ServiceResult<ClaimInvoicingResultDto>> GetClaimInvoicingAsync(int claimId, CancellationToken ct);
+    Task<ServiceResult<PrintablePaymentDocumentDto>> GetClaimInvoicingDocumentAsync(int claimId, string kind, int? noteId, CancellationToken ct);
     Task<ServiceResult<ClaimContextDto>> GetClaimContextAsync(int contractId, CancellationToken ct);
-    Task<ServiceResult<PagedResponseDto<ClaimResponseDto>>> ListClaimsAsync(int? contractId, int page, int pageSize, bool soaOnly, CancellationToken ct);
+    Task<ServiceResult<PagedResponseDto<ClaimResponseDto>>> ListClaimsAsync(int? contractId, int page, int pageSize, bool soaOnly, CancellationToken ct, ClaimListQueryDto? filters = null);
     Task<ServiceResult<ClaimResponseDto>> SaveClaimAsync(int contractId, int? claimId, ClaimRequestDto request, CancellationToken ct);
     Task<ServiceResult<ClaimResponseDto>> IssueClaimCollectionAsync(int claimId, ClaimIssueRequestDto request, CancellationToken ct);
     Task<ServiceResult<ClaimResponseDto>> PairClaimAsync(int claimId, ClaimPairRequestDto request, CancellationToken ct);

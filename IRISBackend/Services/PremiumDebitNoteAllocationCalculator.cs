@@ -29,7 +29,8 @@ public static class PremiumDebitNoteAllocationCalculator
         Contract contract,
         IReadOnlyList<ContractPanel> panels,
         decimal invoiceNetAmount,
-        int? currencyDecimalPlaces = null)
+        int? currencyDecimalPlaces = null,
+        bool enforceInvoiceableLimit = true)
     {
         var precision = PanelRemittanceCalculator.Precision(currencyDecimalPlaces ?? contract.IdCurrencyNavigation?.DecimalPlaces);
         if (invoiceNetAmount <= 0m ||
@@ -43,7 +44,9 @@ public static class PremiumDebitNoteAllocationCalculator
         if (panels.Count == 0 || panels.Any(panel => panel.SignedSharePct is null or <= 0m)
             || totalSignedShare <= 0m)
             throw new ArgumentException("Confirmed reinsurer panels must each have a positive signed share.", nameof(panels));
-        if (invoiceNetAmount > invoiceableValues!.InvoiceableNetPremium)
+        if (invoiceableValues!.InvoiceableNetPremium <= 0m)
+            throw new ArgumentException("The contract must have a positive net premium to allocate this document.", nameof(contract));
+        if (enforceInvoiceableLimit && invoiceNetAmount > invoiceableValues.InvoiceableNetPremium)
             throw new ArgumentOutOfRangeException(nameof(invoiceNetAmount), "Invoice amount exceeds the contract's remaining invoiceable net premium.");
 
         var invoiceFraction = invoiceNetAmount / invoiceableValues.InvoiceableNetPremium;

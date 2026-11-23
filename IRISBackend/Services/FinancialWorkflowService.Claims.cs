@@ -13,7 +13,7 @@ public sealed partial class FinancialWorkflowService
         && user.HasClaim(ModuleAccessCatalog.ClaimType, ModuleAccessCatalog.Claims);
     private bool CanReadClaims() => CanManageClaims() || CanBack();
     private IQueryable<Claim> ClaimQuery() => _db.Claims.Include(c => c.IdContractNavigation).ThenInclude(c => c.ContractFac)
-        .Include(c => c.IdCurrencyNavigation);
+        .Include(c => c.IdCurrencyNavigation).Include(c => c.IdContractNavigation.IdCounterpartyNavigation).Include(c => c.InvoicingAvoir);
     private async Task ClaimLock(int id, CancellationToken ct) => await _db.Database.ExecuteSqlInterpolatedAsync(
         $"DECLARE @r int; EXEC @r=sys.sp_getapplock @Resource={"IRIS:Claim:" + id},@LockMode='Exclusive',@LockOwner='Transaction',@LockTimeout=10000; IF @r<0 THROW 51000,'Claim is busy; retry.',1;", ct);
 
@@ -37,16 +37,16 @@ public sealed partial class FinancialWorkflowService
         });
     }
 
-    public async Task<ServiceResult<PagedResponseDto<ClaimResponseDto>>> ListClaimsAsync(int? contractId, int page, int pageSize, bool soaOnly, CancellationToken ct)
+    public async Task<ServiceResult<PagedResponseDto<ClaimResponseDto>>> ListClaimsAsync(int? contractId, int page, int pageSize, bool soaOnly, CancellationToken ct, ClaimListQueryDto? filters = null)
     {
         if (!CanReadClaims()) return Forbidden<PagedResponseDto<ClaimResponseDto>>();
         if (page < 1 || pageSize is < 1 or > 100) return Failure<PagedResponseDto<ClaimResponseDto>>("Invalid claim paging.");
         var query = ClaimQuery().AsNoTracking();
         if (contractId.HasValue) query = query.Where(c => c.IdContract == contractId);
-        if (!CanManageClaims()) query = query.Where(c => c.Status == "PaidLoss" || c.CollectionIssuedAt != null);
+        query = FilterClaims(query, filters ?? new());
         if (soaOnly) query = query.Where(c => c.CollectionIssuedAt != null && c.CollectionAmount > 0 && (c.Status == "PaidLoss" || c.Status == "Closed"));
         var count = await query.CountAsync(ct);
-        var claims = await query.OrderByDescending(c => c.CreatedAt).ThenByDescending(c => c.ClaimRef).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+        var claims = await OrderClaims(query, filters ?? new()).ThenByDescending(c => c.ClaimRef).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
         var ids = claims.Select(c => c.ClaimRef).ToArray();
         var paired = (await _db.ReceiptAllocations.Where(a => a.IsActive && a.ClaimRef.HasValue && ids.Contains(a.ClaimRef.Value)).Select(a => a.ClaimRef!.Value).ToListAsync(ct)).ToHashSet();
         return ServiceResult<PagedResponseDto<ClaimResponseDto>>.Success(new()
@@ -59,12 +59,12 @@ public sealed partial class FinancialWorkflowService
         var user = CurrentUser(); if (user is null) return Unauthorized<ClaimResponseDto>();
         await using var tx = await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         await ClaimLock(claimId ?? -contractId, ct);
-        var contract = await _db.Contracts.Include(c => c.ContractFac).Include(c => c.IdCurrencyNavigation).SingleOrDefaultAsync(c => c.IdContract == contractId, ct);
+        var contract = await _db.Contracts.Include(c => c.IdCounterpartyNavigation).Include(c => c.ContractFac).Include(c => c.IdCurrencyNavigation).SingleOrDefaultAsync(c => c.IdContract == contractId, ct);
         if (contract is null) return NotFound<ClaimResponseDto>("Contract was not found.");
         if (ContractConstants.NormalizeStatus(contract.Status) != ContractConstants.BoundStatus) return Failure<ClaimResponseDto>("Claims can only be added or edited on Bound contracts.", status: 409);
         Claim? claim = claimId.HasValue ? await ClaimQuery().SingleOrDefaultAsync(c => c.ClaimRef == claimId && c.IdContract == contractId, ct) : null;
         if (claimId.HasValue && claim is null) return NotFound<ClaimResponseDto>("Claim was not found on this contract.");
-        if (claim?.CollectionIssuedAt != null || claim?.Status is "Closed" or "UnderDeductible") return Failure<ClaimResponseDto>("This claim is locked. Issued financial details cannot be edited.", status: 409);
+        if (claim?.InvoicedAt != null || claim?.CollectionIssuedAt != null || claim?.Status is "Closed" or "UnderDeductible") return Failure<ClaimResponseDto>("This claim is locked. Issued financial details cannot be edited.", status: 409);
         var errors = new List<string>();
         var status = request.Status;
         if (status is not ("Outstanding" or "PaidLoss" or "Closed" or "UnderDeductible")) errors.Add("Status: Select a supported claim status.");
@@ -72,9 +72,12 @@ public sealed partial class FinancialWorkflowService
         if (request.DateOfLoss > DateOnly.FromDateTime(DateTime.UtcNow)) errors.Add("DateOfLoss: Date of loss cannot be in the future.");
         if (request.DateOfLoss < contract.InceptionDate || request.DateOfLoss > contract.ExpiryDate) errors.Add("DateOfLoss: Date of loss must fall within the contract period.");
         if (request.NotificationDate.HasValue && request.NotificationDate < request.DateOfLoss) errors.Add("NotificationDate: Notification cannot precede the loss.");
-        if (contract.IdCurrency != request.CurrencyId || contract.IdCurrencyNavigation is null) errors.Add("CurrencyId: Select the contract currency.");
+        var currency = await _db.Currencies.SingleOrDefaultAsync(c => c.IdCurrency == request.CurrencyId && c.IsActive, ct);
+        if (currency is null) errors.Add("CurrencyId: Select an active currency.");
+        if (request.Deductible < 0 || request.Deductible > 999999999999999.9999m || (request.Deductible.HasValue && decimal.Round(request.Deductible.Value, 4) != request.Deductible.Value))
+            errors.Add("Deductible: Enter a nonnegative decimal with at most four decimal places.");
         if ((request.NatureOfLoss?.Length ?? 0) > 10000) errors.Add("NatureOfLoss: Use 10,000 characters or fewer.");
-        var precision = PanelRemittanceCalculator.Precision(contract.IdCurrencyNavigation?.DecimalPlaces);
+        var precision = PanelRemittanceCalculator.Precision(currency?.DecimalPlaces);
         foreach (var (name, value) in new[] { ("Reserve", request.Reserve), ("PaidLoss", request.PaidLoss), ("ExpertFees", request.ExpertFees), ("OtherFees", request.OtherFees) })
             if (value < 0 || value > 999999999999999m || (value.HasValue && RoundMoney(value.Value, precision) != value.Value)) errors.Add($"{name}: Enter a nonnegative amount using the currency precision.");
         if (contract.InceptionDate is null) errors.Add("UnderwritingYear: The contract inception date is missing.");
@@ -82,37 +85,35 @@ public sealed partial class FinancialWorkflowService
         {
             if (string.IsNullOrWhiteSpace(request.NatureOfLoss)) errors.Add("NatureOfLoss: Describe the loss before marking it as paid loss.");
             if (!request.NotificationDate.HasValue) errors.Add("NotificationDate: Notification date is required before processing.");
-            if (!request.PaidLoss.HasValue) errors.Add("PaidLoss: Enter the paid loss amount (zero is allowed).");
-            if (contract.ContractFac?.Deductible is null or < 0) errors.Add("Deductible: The contract deductible must be specified before processing.");
+            if (status == "PaidLoss" && request.PaidLoss is (null or <= 0)) errors.Add("PaidLoss: A positive paid loss / approved settlement amount is required for Paid Claim.");
+
             if (contract.SignedSharePctCedent is null or <= 0 or > 100) errors.Add("SignedShare: The contract signed share must be valid before processing.");
         }
         if (errors.Count > 0) return Failure<ClaimResponseDto>("Claim validation failed.", errors);
         var gross = RoundMoney((request.PaidLoss ?? 0) + (request.ExpertFees ?? 0) + (request.OtherFees ?? 0), precision);
         if (gross > 999999999999999m) return Failure<ClaimResponseDto>("Claim amount is too large.");
-        var deductible = contract.ContractFac?.Deductible;
-        if (status is "PaidLoss" or "UnderDeductible")
-        {
-            if (gross <= deductible) status = "UnderDeductible";
-            else if (status == "UnderDeductible") return Failure<ClaimResponseDto>("An above-deductible loss cannot have Under-deductible status.");
-        }
+        var deductible = request.Deductible;
+        if (status == "UnderDeductible" && (!deductible.HasValue || gross > deductible))
+            return Failure<ClaimResponseDto>("Under-deductible status requires a provided deductible covering the gross loss.");
         var wasPaid = claim?.Status == "PaidLoss";
         var now = DateTime.UtcNow;
         if (claim is null)
         {
-            claim = new Claim { IdContract = contractId, IdContractNavigation = contract, IdCurrencyNavigation = contract.IdCurrencyNavigation!, IdUser = user, CreatedBy = user, CreatedAt = now, ClaimNumber = "PENDING-" + Guid.NewGuid().ToString("N") };
+            claim = new Claim { IdContract = contractId, IdContractNavigation = contract, IdCurrencyNavigation = currency!, IdUser = user, CreatedBy = user, CreatedAt = now, ClaimNumber = "PENDING-" + Guid.NewGuid().ToString("N") };
             _db.Claims.Add(claim);
         }
         claim.DateOfLoss = request.DateOfLoss!.Value; claim.NotificationDate = request.NotificationDate; claim.Description = request.NatureOfLoss?.Trim();
         claim.EstimatedLoss = request.Reserve; claim.PaidLoss = request.PaidLoss; claim.ExpertFees = request.ExpertFees; claim.OtherFees = request.OtherFees;
         claim.GrossLossAmount = gross; claim.Deductible = deductible; claim.SignedShareSnapshot = contract.SignedSharePctCedent;
-        claim.CollectionAmount = deductible.HasValue && claim.SignedShareSnapshot.HasValue ? RoundMoney(Math.Max(0, gross - deductible.Value) * claim.SignedShareSnapshot.Value / 100m, precision) : null;
+        claim.CollectionAmount = status == "UnderDeductible" ? 0m : request.PaidLoss; // Approved settlement is authoritative; no further deductible/share deduction.
+        claim.IdCurrencyNavigation = currency!; claim.InvoicingVersion++;
         claim.UnderwritingYear = contract.InceptionDate!.Value.Year; claim.IdCurrency = request.CurrencyId; claim.Status = status;
         claim.ClosingDate = status is "Closed" or "UnderDeductible" ? DateOnly.FromDateTime(now) : null;
         claim.UpdatedAt = now; claim.UpdatedBy = user;
         await _db.SaveChangesAsync(ct);
         if (claim.ClaimNumber.StartsWith("PENDING-", StringComparison.Ordinal)) claim.ClaimNumber = $"CL-{claim.UnderwritingYear}-{claim.ClaimRef:000000}";
         if (!wasPaid && status == "PaidLoss")
-            await NotifyRoleAsync("Back Officer", "Claim ready for processing", $"Claim {claim.ClaimNumber} is ready for its collection note.", "CLAIM", claim.ClaimRef, ct, "ClaimReady", $"/workspace/reassurance/back-officer/claims?claimId={claim.ClaimRef}");
+            await NotifyRoleAsync("Back Officer", "Claim ready for invoicing", $"Claim {claim.ClaimNumber} is paid and ready for invoicing. {contract.Name} / {contract.Umr}; Cedent: {(await _db.Counterparties.FindAsync([contract.IdCounterparty], ct))?.Name}; Paid loss: {request.PaidLoss} {currency!.CurrencyCode}.", "CLAIM", claim.ClaimRef, ct, "ClaimReady", $"/workspace/reassurance/back-officer/claims?claimId={claim.ClaimRef}");
         await _db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
         return ServiceResult<ClaimResponseDto>.Success(ClaimDto(claim, false), claimId.HasValue ? 200 : 201);
     }
@@ -130,52 +131,7 @@ public sealed partial class FinancialWorkflowService
             if (claim.ProcessingMode != request.ProcessingMode) return Failure<ClaimResponseDto>("The collection note was already issued with a different processing mode.", status: 409);
             await tx.CommitAsync(ct); return ServiceResult<ClaimResponseDto>.Success(ClaimDto(claim, await ClaimIsPaired(claimId, ct)));
         }
-        if (claim.Status != "PaidLoss" || claim.CollectionAmount is null or <= 0) return Failure<ClaimResponseDto>("Only an above-deductible Paid loss claim can be processed.", status: 409);
-        if (ContractConstants.NormalizeStatus(claim.IdContractNavigation.Status) != ContractConstants.BoundStatus) return Failure<ClaimResponseDto>("The claim contract must be Bound.", status: 409);
-        var panels = await _db.ContractPanels.Include(p => p.IdCounterpartyNavigation).ThenInclude(p => p.TypeAssignments)
-            .Where(p => p.IdContract == claim.IdContract && p.Status == ContractConstants.ConfirmedPanelStatus && p.Role != null && p.Role.ToLower() == "reinsurer")
-            .OrderBy(p => p.IdPanel).ToListAsync(ct);
-        if (panels.Count == 0 || panels.Any(p => p.SignedSharePct is null or <= 0 || !p.IdCounterpartyNavigation.IsActive || !p.IdCounterpartyNavigation.TypeAssignments.Any(t => t.Type == CounterpartyTypes.Reinsurer))
-            || panels.Sum(p => p.SignedSharePct ?? 0) != claim.SignedShareSnapshot)
-            return Failure<ClaimResponseDto>("Confirmed active reinsurer shares must reconcile to the claim's contract signed share before issuance.", status: 409);
-        var precision = PanelRemittanceCalculator.Precision(claim.IdCurrencyNavigation.DecimalPlaces);
-        var now = DateTime.UtcNow;
-        claim.CollectionReference = $"CCN-{claim.ClaimNumber}"; claim.ProcessingMode = request.ProcessingMode; claim.CollectionIssuedAt = now; claim.CollectionIssuedBy = user;
-        claim.ContractNameSnapshot = claim.IdContractNavigation.Name; claim.UmrSnapshot = claim.IdContractNavigation.Umr; claim.CurrencyCodeSnapshot = claim.IdCurrencyNavigation.CurrencyCode;
-        var unit = PanelRemittanceCalculator.Unit(precision);
-        var totalUnits = claim.CollectionAmount.Value / unit;
-        var exactUnits = panels.Select(p => totalUnits * p.SignedSharePct!.Value / claim.SignedShareSnapshot!.Value).ToArray();
-        var allocatedUnits = exactUnits.Select(decimal.Floor).ToArray();
-        var remainingUnits = (int)(totalUnits - allocatedUnits.Sum());
-        foreach (var index in Enumerable.Range(0, panels.Count).OrderByDescending(i => exactUnits[i] - allocatedUnits[i]).ThenBy(i => panels[i].IdPanel).Take(remainingUnits))
-            allocatedUnits[index]++;
-        var notes = new List<CollectionNote>();
-        for (var index = 0; index < panels.Count; index++)
-        {
-            var panel = panels[index];
-            var amount = allocatedUnits[index] * unit;
-            notes.Add(new CollectionNote
-            {
-                IdClaim = claimId,
-                ClaimRef = claimId,
-                IdPanel = panel.IdPanel,
-                IdCounterparty = panel.IdCounterparty,
-                IdCurrency = claim.IdCurrency,
-                AmountClaimed = amount,
-                PartPct = panel.SignedSharePct,
-                Status = "Issued",
-                EmissionDate = DateOnly.FromDateTime(now),
-                CreatedAt = now,
-                CreatedBy = user,
-                ReinsurerNameSnapshot = panel.IdCounterpartyNavigation.Name,
-                Description = claim.CollectionReference
-            });
-        }
-        _db.CollectionNotes.AddRange(notes);
-        claim.CollectionPdf = BuildClaimCollectionPdf(claim, notes, precision);
-        if (request.ProcessingMode == InvoiceDocumentAccounting.DirectToRemittances) CreateClaimRemittances(claim, notes, null, user);
-        await _db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
-        return ServiceResult<ClaimResponseDto>.Success(ClaimDto(claim, false));
+        return Failure<ClaimResponseDto>("Use Pass to invoicing with a required Avoir label and approved panel allocations.", status: 409);
     }
 
     private IQueryable<BankReceipt> ClaimReceiptQuery(Claim claim) => _db.BankReceipts.AsNoTracking().Where(r =>
@@ -230,12 +186,14 @@ public sealed partial class FinancialWorkflowService
         return ServiceResult<ClaimResponseDto>.Success(ClaimDto(claim, true));
     }
 
-    private void CreateClaimRemittances(Claim claim, IReadOnlyList<CollectionNote> notes, int? allocationId, string user)
+    private void CreateClaimRemittances(Claim claim, IReadOnlyList<CollectionNote> notes, int? allocationId, string user, Invoice? sourceInvoice = null)
     {
-        foreach (var note in notes.Where(n => n.AmountClaimed > 0))
+        foreach (var note in notes.Where(n => n.AmountClaimed > 0 || claim.InvoicedAt.HasValue))
             _db.RemittanceRefs.Add(new RemittanceRef
             {
                 ClaimRef = claim.ClaimRef,
+                SourceInvoiceId = sourceInvoice?.IdInvoice,
+                IdCollectionNote = note.IdCollectionNote == 0 ? null : note.IdCollectionNote,
                 IdPanel = note.IdPanel,
                 IdCounterparty = note.IdCounterparty,
                 IdCurrency = claim.IdCurrency,
@@ -247,8 +205,8 @@ public sealed partial class FinancialWorkflowService
                 NetPremiumDue = note.AmountClaimed,
                 NetPayableAmount = note.AmountClaimed,
                 Deductions = 0m,
-                Description = claim.CollectionReference,
-                Status = "Draft",
+                Description = sourceInvoice?.Label ?? claim.CollectionReference,
+                Status = note.AmountClaimed == 0 ? "Closed" : "Draft",
                 SignatureStatus = "Draft",
                 CreatedAt = DateTime.UtcNow,
                 CreatedBy = user,
@@ -271,6 +229,7 @@ public sealed partial class FinancialWorkflowService
         await using var tx = await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct); await ClaimLock(claimId, ct);
         var claim = await ClaimQuery().SingleOrDefaultAsync(c => c.ClaimRef == claimId, ct);
         if (claim is null) return NotFound<ClaimResponseDto>("Claim was not found.");
+        if (!CanManageClaims() && claim.CollectionIssuedAt is null) return Forbidden<ClaimResponseDto>();
         if (claim.CollectionIssuedAt.HasValue && (!await _db.RemittanceRefs.AnyAsync(r => r.ClaimRef == claimId && r.IsActive, ct)
             || await _db.RemittanceRefs.AnyAsync(r => r.ClaimRef == claimId && r.IsActive && r.Status != "Closed" && r.Status != "Paid", ct)))
             return Failure<ClaimResponseDto>("Complete pairing and settlement before closing an issued claim.", status: 409);
@@ -280,9 +239,23 @@ public sealed partial class FinancialWorkflowService
         return ServiceResult<ClaimResponseDto>.Success(ClaimDto(claim, await ClaimIsPaired(claimId, ct)));
     }
 
+    // The gross component total remains stored for existing documents and compatibility.
+    // Net loss is derived using the claim's own deductible, never the contract deductible.
+    internal static decimal CalculateClaimNetLoss(decimal? paidLoss, decimal? expertFees, decimal? otherFees, decimal? deductible, int precision) =>
+        RoundMoney((paidLoss ?? 0m) + (expertFees ?? 0m) + (otherFees ?? 0m) - (deductible ?? 0m), precision);
+
     private Task<bool> ClaimIsPaired(int claimId, CancellationToken ct) => _db.ReceiptAllocations.AnyAsync(a => a.IsActive && a.ClaimRef == claimId, ct);
     private ClaimResponseDto ClaimDto(Claim c, bool paired) => new()
     {
+        Version = c.InvoicingVersion,
+        InvoicingStatus = c.InvoicedAt.HasValue ? "Invoiced" : c.CollectionIssuedAt.HasValue ? "LegacyIssued" : c.Status == "PaidLoss" && c.PaidLoss > 0 ? "Ready" : "NotInvoiced",
+        CedentId = c.IdContractNavigation.IdCounterparty,
+        CedentName = c.IdContractNavigation.IdCounterpartyNavigation?.Name ?? "",
+        CurrencyName = c.IdCurrencyNavigation.Name,
+        CurrencySymbol = c.IdCurrencyNavigation.CurrencySymbol,
+        CanPassToInvoicing = CanBack() && c.Status == "PaidLoss" && c.PaidLoss > 0 && CalculateClaimNetLoss(c.PaidLoss, c.ExpertFees, c.OtherFees, c.Deductible, PanelRemittanceCalculator.Precision(c.IdCurrencyNavigation.DecimalPlaces)) > 0 && c.IdCurrencyNavigation.IsActive && c.InvoicedAt == null && c.CollectionIssuedAt == null
+            && ContractConstants.NormalizeStatus(c.IdContractNavigation.Status) == ContractConstants.BoundStatus
+            && EligibleClaimPanels(c.IdContract).Any(),
         ClaimId = c.ClaimRef,
         ClaimNumber = c.ClaimNumber,
         ContractId = c.IdContract,
@@ -297,6 +270,8 @@ public sealed partial class FinancialWorkflowService
         ExpertFees = c.ExpertFees,
         OtherFees = c.OtherFees,
         Amount100Percent = c.GrossLossAmount ?? 0,
+        NetLoss = CalculateClaimNetLoss(c.PaidLoss, c.ExpertFees, c.OtherFees, c.Deductible,
+            PanelRemittanceCalculator.Precision(c.IdCurrencyNavigation.DecimalPlaces)),
         Deductible = c.Deductible,
         SignedSharePercentage = c.SignedShareSnapshot,
         CollectionAmount = c.CollectionAmount,
@@ -307,10 +282,10 @@ public sealed partial class FinancialWorkflowService
         IsClosed = c.Status is "Closed" or "UnderDeductible",
         IncludeInSoa = c.CollectionIssuedAt.HasValue && c.CollectionAmount > 0 && c.Status is "PaidLoss" or "Closed",
         CanEdit = CanManageClaims() && c.CollectionIssuedAt is null && c.Status is not ("Closed" or "UnderDeductible"),
-        CanIssue = CanBack() && c.Status == "PaidLoss" && c.CollectionAmount > 0 && c.CollectionIssuedAt is null,
+        CanIssue = false,
         CanPair = CanBack() && c.Status == "PaidLoss" && c.CollectionIssuedAt.HasValue && c.ProcessingMode == InvoiceDocumentAccounting.PairWithEncaissement && !paired,
         ProcessingMode = c.ProcessingMode,
-        CollectionReference = c.CollectionReference,
+        CollectionReference = c.InvoicingAvoir?.InvoiceNumber ?? c.CollectionReference,
         CollectionIssuedAt = c.CollectionIssuedAt,
         IsPaired = paired
     };

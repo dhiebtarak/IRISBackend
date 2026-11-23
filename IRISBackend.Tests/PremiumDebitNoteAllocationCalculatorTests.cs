@@ -7,6 +7,24 @@ namespace IRISBackend.Tests;
 public sealed class PremiumDebitNoteAllocationCalculatorTests
 {
     [Fact]
+    public void Calculate_AvoirMayExceedPremiumWhileOrdinaryInvoiceKeepsItsLimit()
+    {
+        var (contract, panels) = CreateExample();
+        Assert.Throws<ArgumentOutOfRangeException>(() => PremiumDebitNoteAllocationCalculator.Calculate(contract, panels, 100m, 3));
+        var avoir = PremiumDebitNoteAllocationCalculator.Calculate(contract, panels, 100m, 3, enforceInvoiceableLimit: false);
+        Assert.Equal(100m, avoir.TotalAllocatedNetPremium);
+        Assert.Equal(100m, avoir.Allocations.Sum(line => line.AllocationAmount));
+    }
+
+    [Fact]
+    public void Calculate_AvoirRejectsInvalidZeroNetBasisWithoutDividingByZero()
+    {
+        var (contract, panels) = CreateExample();
+        contract.CedentCommission = 100m;
+        Assert.Throws<ArgumentException>(() => PremiumDebitNoteAllocationCalculator.Calculate(contract, panels, 100m, 3, enforceInvoiceableLimit: false));
+    }
+
+    [Fact]
     public void Calculate_GrossesUpNetInvoiceAndAllocatesCommissionOnce()
     {
         var (contract, panels) = CreateExample();
